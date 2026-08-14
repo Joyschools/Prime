@@ -1,42 +1,22 @@
-const CACHE_NAME = "school-system-v1";
-const ASSETS = [
-  "/",
-  "/login",
-  "/dashboard",
-  "/profile",
-  "/static/css/style.css",
-  "/static/js/app.js",
-  "/static/manifest.json",
-  "/sw.js",
-  "/static/icons/icon-192.png",
-  "/static/icons/icon-512.png"
-];
-
-self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)).catch(() => {}));
-  self.skipWaiting();
-});
-
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.map((key) => key !== CACHE_NAME ? caches.delete(key) : Promise.resolve())))
-  );
-  self.clients.claim();
-});
-
-self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
-  event.respondWith((async () => {
-    try {
-      const networkResponse = await fetch(event.request);
-      const cache = await caches.open(CACHE_NAME);
-      cache.put(event.request, networkResponse.clone());
-      return networkResponse;
-    } catch {
-      const cached = await caches.match(event.request);
-      if (cached) return cached;
-      const fallback = await caches.match("/");
-      return fallback || Response.error();
-    }
-  })());
+const CACHE_PREFIX = "school-system";
+const CACHE_VERSION = "v4";
+const CACHE_NAME = `${CACHE_PREFIX}-${CACHE_VERSION}`;
+const OFFLINE_URL = "/offline";
+const SHELL = ["/","/login","/static/css/style.css","/static/js/app.js","/static/manifest.json","/static/icons/icon-192.png","/static/icons/icon-512.png","/favicon.ico",OFFLINE_URL];
+self.addEventListener("install", event => { event.waitUntil((async()=>{ const cache=await caches.open(CACHE_NAME); await Promise.all(SHELL.map(async url=>{try{await cache.add(url);}catch(_){}})); await self.skipWaiting(); })()); });
+self.addEventListener("activate", event => { event.waitUntil((async()=>{ const keys=await caches.keys(); await Promise.all(keys.filter(k=>k.startsWith(`${CACHE_PREFIX}-`)&&k!==CACHE_NAME).map(k=>caches.delete(k))); await self.clients.claim(); })()); });
+async function networkFirst(request){ const cache=await caches.open(CACHE_NAME); try{ const response=await fetch(request); if(response&&response.ok&&new URL(request.url).origin===self.location.origin){ await cache.put(request,response.clone()); } return response; } catch(_){ const cached=await cache.match(request); if(cached)return cached; if(request.mode==="navigate") return (await cache.match(OFFLINE_URL)) || (await cache.match("/login")) || Response.error(); return Response.error(); } }
+self.addEventListener("fetch", event => {
+  const request = event.request;
+  if(request.method !== "GET") return;
+  const url = new URL(request.url);
+  if(url.origin !== self.location.origin) return;
+  if(url.pathname === "/logout") {
+    event.respondWith((async()=>{
+      await caches.delete(CACHE_NAME);
+      return networkFirst(request);
+    })());
+    return;
+  }
+  event.respondWith(networkFirst(request));
 });

@@ -68,3 +68,11 @@ Wrap-up changes: passwords are minimum 4 characters with show/hide controls; Adm
 - Finance receipts are stored under a protected upload path rather than as anonymously retrievable files.
 - Database restore now validates SQLite integrity and required core tables before replacement and attempts an automatic rollback if migration fails.
 - Secure session cookies are enabled automatically on Render/when `COOKIE_SECURE=1`.
+
+## Render persistence / heartbeat
+
+For production on Render, attach a persistent disk mounted at `/var/data`. The app automatically keeps the live SQLite database, session secret, and uploads there when the disk is present. You can also set `DATA_DIR` or `PERSISTENT_DATA_DIR` explicitly.
+
+Optional environment variables: `SECRET_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `PULSE_PEER_URL` (defaults to `https://breathe-xozy.onrender.com`), `PULSE_TIMEOUT_SECONDS`, and `PULSE_ALLOWED_CALLBACK_HOSTS` (comma-separated HTTPS hosts allowed for an incoming `reply_to`).
+
+Heartbeat endpoints: `/pulse_receiver` and `/pulse`. They acknowledge incoming pulses with JSON and schedule a reply to the configured peer.

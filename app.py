@@ -6,6 +6,10 @@ import io
 import os
 import sqlite3
 import uuid
+import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections.abc import MutableMapping
 from datetime import datetime
 from functools import wraps
@@ -35,8 +39,21 @@ from pypdf import PdfReader, PdfWriter
 
 BASE_DIR = Path(__file__).resolve().parent
 INSTANCE_DIR = BASE_DIR / "instance"
-DB_PATH = INSTANCE_DIR / "school.db"
-UPLOAD_DIR = BASE_DIR / "uploads"
+_render_data_dir = Path(os.environ.get("PERSISTENT_DATA_DIR", "/var/data"))
+if os.environ.get("DATA_DIR"):
+    DATA_DIR = Path(os.environ["DATA_DIR"]).expanduser()
+elif os.environ.get("RENDER") and _render_data_dir.exists():
+    DATA_DIR = _render_data_dir
+else:
+    DATA_DIR = INSTANCE_DIR
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DATA_DIR / "school.db"
+SECRET_FILE = DATA_DIR / "secret.key"
+UPLOAD_DIR = DATA_DIR / "uploads"
+PERSISTENT_STORAGE = DATA_DIR != INSTANCE_DIR
+PULSE_PEER_URL = os.environ.get("PULSE_PEER_URL", "https://breathe-xozy.onrender.com").strip().rstrip("/")
+PULSE_TIMEOUT_SECONDS = max(1, min(10, int(os.environ.get("PULSE_TIMEOUT_SECONDS", "4"))))
+PULSE_ALLOWED_CALLBACK_HOSTS = {h.strip().lower() for h in os.environ.get("PULSE_ALLOWED_CALLBACK_HOSTS", "").split(",") if h.strip()}
 ALLOWED_RESTORE_EXT = {"db", "sqlite", "sqlite3"}
 PUBLIC_ROLES = ("Teacher", "Student", "Parent")
 HIDDEN_ROLES = ("Admin", "ICT", "Finance", "Librarian")
@@ -56,22 +73,35 @@ app.config.update(
 # -------------------------------------------------------------------
 # Signed authentication session
 # -------------------------------------------------------------------
-SECRET_FILE = INSTANCE_DIR / "secret.key"
-if os.environ.get("SECRET_KEY"):
-    _secret_key = os.environ["SECRET_KEY"]
-elif SECRET_FILE.exists():
-    _secret_key = SECRET_FILE.read_text().strip()
-else:
-    _secret_key = uuid.uuid4().hex + uuid.uuid4().hex
-    INSTANCE_DIR.mkdir(exist_ok=True)
-    SECRET_FILE.write_text(_secret_key)
+def _load_or_create_secret() -> str:
+    if os.environ.get("SECRET_KEY"):
+        return os.environ["SECRET_KEY"]
+    if SECRET_FILE.exists():
+        value = SECRET_FILE.read_text(encoding="utf-8").strip()
+        if value:
+            return value
+    legacy_secret = INSTANCE_DIR / "secret.key"
+    if SECRET_FILE != legacy_secret and legacy_secret.exists():
+        value = legacy_secret.read_text(encoding="utf-8").strip()
+        if value:
+            SECRET_FILE.write_text(value, encoding="utf-8")
+            return value
+    value = uuid.uuid4().hex + uuid.uuid4().hex
+    SECRET_FILE.write_text(value, encoding="utf-8")
+    try:
+        SECRET_FILE.chmod(0o600)
+    except OSError:
+        pass
+    return value
 
+_secret_key = _load_or_create_secret()
 app.config.update(
     SECRET_KEY=_secret_key,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=bool(os.environ.get("COOKIE_SECURE") == "1" or os.environ.get("RENDER")),
     SESSION_COOKIE_NAME="school_portal_session",
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,
 )
 session = flask_session
 
@@ -118,7 +148,15 @@ def ensure_column(conn: sqlite3.Connection, table: str, column_def: str) -> None
 
 def init_db() -> None:
     INSTANCE_DIR.mkdir(exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    legacy_db = INSTANCE_DIR / "school.db"
+    if PERSISTENT_STORAGE and not DB_PATH.exists() and legacy_db.exists():
+        import shutil
+        shutil.copy2(legacy_db, DB_PATH)
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=FULL")
+        conn.execute("PRAGMA busy_timeout=30000")
         conn.row_factory = sqlite3.Row
         conn.executescript(
             """
@@ -951,6 +989,77 @@ def inject_globals():
 # -------------------------
 # Routes
 # -------------------------
+@app.route("/offline")
+def offline():
+    settings = school_settings()
+    return render_template("offline.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"])
+
+
+@app.route("/pulse_receiver", methods=["POST", "GET"])
+def pulse_receiver():
+    payload = request.get_json(silent=True) or {}
+    request_id = str(payload.get("request_id") or request.headers.get("X-Pulse-ID") or uuid.uuid4().hex)
+    source = str(payload.get("source") or payload.get("sender") or request.headers.get("X-Pulse-Source") or "unknown")[:200]
+    reply_payload = {
+        "type": "school_portal_pulse",
+        "event": "received",
+        "request_id": request_id,
+        "received_from": source,
+        "timestamp": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "reply": True,
+    }
+    requested_reply = str(payload.get("reply_to") or "").strip()
+    configured_peer_host = (urllib.parse.urlparse(PULSE_PEER_URL).hostname or "").lower()
+    allowed_hosts = set(PULSE_ALLOWED_CALLBACK_HOSTS)
+    if configured_peer_host:
+        allowed_hosts.add(configured_peer_host)
+    reply_url = PULSE_PEER_URL
+    if requested_reply:
+        parsed_reply = urllib.parse.urlparse(requested_reply)
+        if parsed_reply.scheme == "https" and parsed_reply.netloc and (parsed_reply.hostname or "").lower() in allowed_hosts:
+            reply_url = requested_reply.rstrip("/")
+
+    def post_json(target: str) -> tuple[bool, int]:
+        parsed = urllib.parse.urlparse(target)
+        if parsed.scheme != "https" or not parsed.netloc:
+            return False, 0
+        body = json.dumps(reply_payload, separators=(",", ":")).encode("utf-8")
+        req = urllib.request.Request(target, data=body, method="POST", headers={"Content-Type":"application/json","Accept":"application/json","User-Agent":"SchoolPortal-Pulse/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=PULSE_TIMEOUT_SECONDS) as response:
+                return True, int(getattr(response, "status", 200))
+        except urllib.error.HTTPError as exc:
+            return False, int(exc.code)
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            return False, 0
+
+    def reply_worker():
+        ok, status = post_json(reply_url)
+        # The configured peer was supplied as a bare origin in the request.
+        # If that origin does not expose POST, retry its conventional pulse route.
+        parsed = urllib.parse.urlparse(reply_url)
+        if not ok and status == 404 and parsed.path in ("", "/"):
+            post_json(reply_url.rstrip("/") + "/pulse_receiver")
+    threading.Thread(target=reply_worker, daemon=True, name="pulse-peer-reply").start()
+    threading.Thread(target=reply_worker, daemon=True, name="pulse-peer-reply").start()
+    return jsonify({"ok": True, "received": True, "reply_scheduled": True, "request_id": request_id, "service": "school-portal", "timestamp": datetime.utcnow().isoformat(timespec="seconds") + "Z"}), 200
+
+
+@app.route("/pulse", methods=["POST", "GET"])
+def pulse():
+    return pulse_receiver()
+
+
+@app.route("/health")
+def health():
+    db_ok = True
+    try:
+        q("SELECT 1", one=True)
+    except Exception:
+        db_ok = False
+    return jsonify({"ok": db_ok, "database": "ok" if db_ok else "error", "persistent_storage": PERSISTENT_STORAGE, "pulse_peer": PULSE_PEER_URL, "timestamp": datetime.utcnow().isoformat(timespec="seconds") + "Z"}), (200 if db_ok else 503)
+
+
 @app.route("/")
 def index():
     settings = school_settings()
@@ -976,6 +1085,7 @@ def login():
             flash("Invalid username, password, or role.", "danger")
             return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username, password, or role.", setup_required=not auth_initialized())
         session.clear()
+        session.permanent = True
         session["user_id"] = user["id"]
         return redirect({"Admin":url_for("admin_dashboard"),"ICT":url_for("ict_dashboard"),"Finance":url_for("finance_dashboard"),"Teacher":url_for("teacher_dashboard"),"Student":url_for("student_dashboard"),"Parent":url_for("parent_dashboard"),"Librarian":url_for("librarian_dashboard")}[user["role"]])
     return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, setup_required=not auth_initialized())
@@ -1039,6 +1149,11 @@ def coming_soon(feature: str):
 def logout():
     session.clear()
     return redirect(url_for("index"))
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return send_file(BASE_DIR / "static" / "icons" / "favicon.ico", mimetype="image/vnd.microsoft.icon", conditional=True, max_age=86400)
 
 
 @app.route("/sw.js")
