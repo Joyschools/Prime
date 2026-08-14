@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ portal_title }} | Login</title><link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}"><meta name="theme-color" content="{{ theme_color }}"><link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"></head>
+<body class="auth-body" style="--primary-blue: {{ school_settings.primary_color }};--deep-accent-blue:{{ school_settings.accent_color }};--bg:{{ school_settings.background_color }};--panel:{{ school_settings.panel_color }}">
+<main class="auth-shell"><section class="auth-card glass portal-selector">
+<div class="brand-line">{% if school_settings.logo_path %}<img src="/{{ school_settings.logo_path }}" alt="School logo" style="width:44px;height:44px;object-fit:contain;border-radius:10px">{% else %}<span class="brand-dot"></span>{% endif %}<div><div class="brand-name">{{ portal_title }}</div><div class="brand-subtitle">{{ school_settings.portal_subtitle }}</div></div></div>
+{% if not login_role %}
+{% set pre = (school_settings.prelogin_sections or '').split(',') %}
+<div class="prelogin-info">
+{% if 'institution' in pre %}<details open><summary>About the institution</summary><p>{{ school_settings.institution_history or 'School information will appear here.' }}</p>{% if school_settings.institution_religion %}<p><strong>Values:</strong> {{ school_settings.institution_religion }}</p>{% endif %}</details>{% endif %}
+{% if 'history' in pre and school_settings.institution_history %}<details><summary>History</summary><p>{{ school_settings.institution_history }}</p></details>{% endif %}
+{% if 'achievements' in pre and school_settings.institution_performance %}<details><summary>Achievements & performance</summary><p>{{ school_settings.institution_performance }}</p></details>{% endif %}
+{% if 'owners' in pre and school_settings.institution_owners %}<details><summary>School owners / management</summary><p>{{ school_settings.institution_owners }}</p></details>{% endif %}
+{% if 'developer' in pre %}<details><summary>About the developer</summary><p><strong>{{ school_settings.developer_name }}</strong></p><p>{{ school_settings.developer_about or 'Developer information.' }}</p></details>{% endif %}
+{% if 'company' in pre %}<details><summary>About the company</summary><p><strong>{{ school_settings.company_name }}</strong></p><p>{{ school_settings.company_about or 'Company information.' }}</p></details>{% endif %}
+</div>
+
+<div class="eyebrow">School Portal</div><h1>Log in</h1><p class="muted">Choose your school role.</p>
+<div class="role-grid"><a class="role-card" href="/teacher"><strong>Teacher</strong><span>Assignments, marks, classes & communication</span></a><a class="role-card" href="/student"><strong>Student</strong><span>Learning, assignments, results & classes</span></a><a class="role-card" href="/parent"><strong>Parent</strong><span>Your child’s fees, results & communication</span></a></div>
+{% if setup_required %}<div class="setup-link"><a class="btn btn-ghost btn-block" href="/register">First-time Administrator setup</a></div>{% endif %}
+{% else %}
+<div class="eyebrow">{{ login_role }} access</div><h1>Log in</h1>{% if error %}<div class="flash danger">{{ error }}</div>{% endif %}<form method="post" action="/login?role={{ login_role }}" class="stack-form"><input type="hidden" name="role" value="{{ login_role }}"><label><span>Username</span><input name="username" autocomplete="username" required></label><label><span>Password</span><div class="password-wrap"><input id="loginPassword" type="password" name="password" autocomplete="current-password" required><button class="password-toggle" type="button" data-password-target="loginPassword" aria-label="Show password">Show</button></div></label><button class="btn btn-primary" type="submit">Log in as {{ login_role }}</button></form><p class="muted" style="margin-top:14px"><a href="/">Choose another role</a></p>
+{% endif %}
+</section></main><script>document.addEventListener('click',function(e){const b=e.target.closest('.password-toggle');if(!b)return;const i=document.getElementById(b.dataset.passwordTarget);if(!i)return;i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'Show':'Hide';});</script><footer class="portal-watermark">© 2026 Toror Technology and Innovations Ltd. All rights reserved.</footer></body></html>

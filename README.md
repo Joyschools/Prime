@@ -1,0 +1,70 @@
+# School Portal System
+
+A local-first Flask school portal with interconnected Admin, ICT, Finance, Teacher, Student and Parent workspaces.
+
+## Local startup
+
+For a normal Python setup, run `py -m pip install -r requirements.txt` once, then `py app.py`. The project also includes a bundled pypdf fallback so the finance PDF features do not fail at startup when pypdf was not installed separately.
+
+## Local role entry points
+- `/` — public role selector (Teacher, Student, Parent)
+- `/teacher` — Teacher dashboard
+- `/student` — Student dashboard
+- `/parent` — Parent dashboard
+- `/admin` — hidden Admin entry
+- `/finance` — hidden Finance entry
+- `/ict` — hidden ICT entry
+
+Authentication starts disabled for non-Administrator users. The Administrator always authenticates. After setup, Admin can enable or disable the login page from Users → Login Page Access; disabling it sends every non-Administrator role directly to its dashboard, while enabling it inserts the login page before those dashboards.
+
+## Core additions
+- Teacher assignment posting and submission collection
+- Student assignment uploads (Word, PDF, PNG/JPG/WebP)
+- Parent child-linked academic/fee view
+- Teacher-parent messaging
+- Google Meet entry point
+- ICT-wide branding, colors, logo and navigation blueprint controls
+- Existing pupil, payment, examination, backups and exports preserved
+
+
+Copyright © 2026 Toror Technology and Innovations Ltd. All rights reserved.
+
+## Finance, Results & Document Verification
+
+The Finance workspace now supports:
+- Posting student payments with optional receipt/proof uploads.
+- Automatic recalculation of the student's outstanding balance and Paid/Pending status.
+- A configurable result-download balance threshold (default: KES 500).
+- Finance approval or rejection of submitted exam-result batches before release.
+- Admin override for result release when necessary.
+- Official result PDF generation with a QR verification code.
+- Exam-card generation or upload. Uploaded PDF/image cards receive a verified copy with an embedded QR where supported.
+- Public `/verify/<token>` verification pages for issued result and exam-card documents.
+
+Student and Parent dashboards show the current finance release state and only expose the official result download when the batch is Finance-approved and the student's balance is within the configured threshold.
+
+
+## Authentication
+
+Fresh installations begin with a one-time Administrator registration at `/register`. Once the Administrator account is created, registration disappears and only login remains. Public role login is available for Teacher, Student, and Parent; `/admin`, `/ict`, and `/finance` are direct role login entry points. Admin can create or disable any non-System account. ICT can create ICT, Finance, Teacher, Student, and Parent accounts but cannot create or disable Administrator accounts.
+
+
+Wrap-up changes: passwords are minimum 4 characters with show/hide controls; Admin can enable/disable authentication globally and manage before-login public sections (institution, history, achievements, owners, developer, company).
+## Final authentication behavior
+- New installations begin with the non-Administrator **Login Page disabled**.
+- Admin always requires username/password authentication.
+- Admin → Users contains **Login Page Access** with Enable/Disable controls.
+- Changing the setting requires confirmation plus the current Administrator password.
+- When disabled, Teacher, Student, Parent, ICT, Finance and Librarian entries go directly to their dashboards.
+- When enabled, those same roles must authenticate before the dashboard is opened.
+- The Public Information page no longer changes authentication; it only controls the pre-login information sections.
+
+
+## 2026 production-hardening additions
+
+- Administrator entry uses the non-advertised route configured in `ADMIN_LOGIN_PATH`; legacy `/admin` no longer exposes the administrator entry point.
+- Passwordless role entry is automatically restricted to roles with exactly one active account; multiple accounts require credentials.
+- Student, parent, document and student-API access is checked against the authenticated user's relationship/role.
+- Finance receipts are stored under a protected upload path rather than as anonymously retrievable files.
+- Database restore now validates SQLite integrity and required core tables before replacement and attempts an automatic rollback if migration fails.
+- Secure session cookies are enabled automatically on Render/when `COOKIE_SECURE=1`.

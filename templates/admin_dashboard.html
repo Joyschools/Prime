@@ -1,0 +1,536 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ school_settings.school_name }} | Admin Command Centre</title>
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+  <meta name="theme-color" content="{{ theme_color }}">
+  <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="app-body admin-body">
+  <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+  <div class="scroll-rail" id="scrollRail" aria-hidden="true"><div class="scroll-track"><div class="scroll-thumb" id="scrollThumb"></div></div></div>
+
+  <aside class="sidebar glass sidebar-drawer" id="sidebarDrawer" aria-label="Admin navigation">
+    <div class="sidebar-head">
+      <div class="brand-line">
+        <span class="brand-dot"></span>
+        <div>
+          <div class="brand-name">{{ school_settings.school_name }}</div>
+          <div class="brand-subtitle">Admin command centre</div>
+        </div>
+      </div>
+      <button class="btn btn-ghost mini sidebar-close" id="sidebarClose" type="button">Close</button>
+    </div>
+
+    <div class="sidebar-title">
+      <div class="eyebrow">Admin tools</div>
+      <h2>Control centre</h2>
+    </div>
+
+    <nav class="side-nav side-nav-groups" aria-label="Admin sections">
+      <section class="nav-group open">
+        <button class="nav-group-toggle" type="button" aria-expanded="true" data-target="admin-overview-panel"><span>Overview</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="admin-overview-panel">Summary</button>
+          <button class="nav-link nav-action" type="button" data-target="admin-overview-panel" data-scroll="admin-metrics">Metrics</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="finance-panel"><span>Finance</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="finance-panel">Income / expenses</button>
+          <button class="nav-link nav-action" type="button" data-target="finance-panel" data-scroll="expense-ledger">Expense ledger</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="analytics-panel"><span>Analytics</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="analytics-panel">Charts</button>
+          <button class="nav-link nav-action" type="button" data-target="analytics-panel" data-scroll="admin-category-breakdown">Breakdowns</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="students-panel"><span>Pupils</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="students-panel">Manage pupils</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="exam-panel"><span>Examinations</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="exam-panel">Compile school grades</button>
+          <button class="nav-link nav-action" type="button" data-target="exam-panel" data-scroll="school-exam-summary">School totals</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="exports-panel"><span>Exports</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <a class="nav-link" href="{{ url_for('export_data', kind='students') }}">Students CSV</a>
+          <a class="nav-link" href="{{ url_for('export_data', kind='users') }}">Employees CSV</a>
+          <a class="nav-link" href="{{ url_for('export_data', kind='payments') }}">Payments CSV</a>
+          <a class="nav-link" href="{{ url_for('export_data', kind='audit') }}">Audit CSV</a>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="backup-panel"><span>Backup</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="backup-panel">Backup / restore</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="users-panel"><span>Users</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="users-panel">Employees</button>
+          <button class="nav-link nav-action" type="button" data-target="public-info-panel">Public page & access</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="audit-panel"><span>Audit</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="audit-panel">Logs</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="settings-panel"><span>School settings</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="settings-panel">Branding</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="elections-admin-panel"><span>Elections</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="elections-admin-panel">Manage elections</button></div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="library-admin-panel"><span>Library</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="library-admin-panel">Library control</button></div>
+      </section>
+      <section class="nav-group"><a class="nav-link" href="/institution">Institution profile</a></section>
+    </nav>
+
+    <div class="sidebar-foot">
+      <a class="btn btn-ghost btn-block" href="{{ url_for('logout') }}">Logout</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <header class="topbar glass slim-topbar admin-topbar">
+      <div class="topbar-left">
+        <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="Open navigation">☰</button>
+        <div class="topbar-brand">
+          <div class="topbar-title">Admin Command Centre</div>
+          <div class="topbar-subtitle">{{ school_settings.school_name }}</div>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="muted topbar-clock" id="liveClock">Tuesday, Aug 4, 2026 • 11:30:58</div>
+        <a class="btn btn-ghost mini" href="{{ url_for('logout') }}">Logout</a>
+      </div>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-stack">
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <section id="admin-overview-panel" class="panel glass workspace-panel landing-panel">
+      <div class="eyebrow">Administrator dashboard</div>
+      <h1 class="hero-title">Real admin job and authority</h1>
+      <p class="hero-copy">Finance, accountability, exports, backups, analytics, and role control live here. Staff never see this workspace.</p>
+      <div class="quick-actions">
+        <a class="btn btn-primary" href="{{ url_for('backup_download') }}">Download backup</a>
+        <a class="btn btn-ghost" href="{{ url_for('export_data', kind='students') }}">Export students CSV</a>
+        <a class="btn btn-ghost" href="#settings-panel">Update settings</a>
+      </div>
+      <div class="stats-grid" id="admin-metrics">
+        <div class="mini-card"><span>Students</span><strong>{{ summary.total_students }}</strong></div>
+        <div class="mini-card"><span>Active</span><strong>{{ summary.active_students }}</strong></div>
+        <div class="mini-card"><span>Paid</span><strong>{{ summary.paid_students }}</strong></div>
+        <div class="mini-card"><span>Pending</span><strong>{{ summary.pending_students }}</strong></div>
+        <div class="mini-card"><span>Total income</span><strong>KES {{ "{:,.0f}".format(summary.total_income or 0) }}</strong></div>
+        <div class="mini-card"><span>Total balance</span><strong>KES {{ "{:,.0f}".format(summary.total_balance or 0) }}</strong></div>
+      </div>
+    </section>
+
+    <section id="exam-panel" class="panel glass workspace-panel hidden">
+      <div class="panel-head">
+        <div>
+          <div class="eyebrow">Examinations</div>
+          <h3>Compiled school grades by level</h3>
+        </div>
+      </div>
+      <div class="stats-grid" id="school-exam-summary" style="margin-bottom:16px">
+        <div class="mini-card"><span>Submissions</span><strong>{{ exam_school_summary.batches }}</strong></div>
+        <div class="mini-card"><span>Results</span><strong>{{ exam_school_summary.results }}</strong></div>
+        <div class="mini-card"><span>School mean</span><strong>{{ "{:,.1f}".format(exam_school_summary.mean or 0) }}</strong></div>
+        <div class="mini-card"><span>Best mark</span><strong>{{ "{:,.1f}".format(exam_school_summary.best or 0) }}</strong></div>
+      </div>
+
+      <div class="table-wrap" style="margin-bottom:16px">
+        <table>
+          <thead><tr><th>Grade</th><th>Pupils</th><th>Subjects</th><th>Batches</th><th>Mean</th><th>Highest</th><th>Lowest</th></tr></thead>
+          <tbody>
+            {% for row in exam_grade_summary %}
+              <tr>
+                <td>{{ row.grade }}</td>
+                <td>{{ row.pupils }}</td>
+                <td>{{ row.subjects }}</td>
+                <td>{{ row.batches }}</td>
+                <td>{{ "{:,.1f}".format(row.mean_score or 0) }}</td>
+                <td>{{ "{:,.1f}".format(row.highest_score or 0) }}</td>
+                <td>{{ "{:,.1f}".format(row.lowest_score or 0) }}</td>
+              </tr>
+            {% endfor %}
+            {% if not exam_grade_summary %}
+              <tr><td colspan="7" class="muted">No grades have been compiled yet.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap" style="margin-bottom:16px">
+        <table>
+          <thead><tr><th>Grade</th><th>Term</th><th>Pupils</th><th>Subjects</th><th>Mean</th><th>Highest</th><th>Lowest</th></tr></thead>
+          <tbody>
+            {% for row in exam_term_summary %}
+              <tr>
+                <td>{{ row.grade }}</td>
+                <td>{{ row.term }}</td>
+                <td>{{ row.pupils }}</td>
+                <td>{{ row.subjects }}</td>
+                <td>{{ "{:,.1f}".format(row.mean_score or 0) }}</td>
+                <td>{{ "{:,.1f}".format(row.highest_score or 0) }}</td>
+                <td>{{ "{:,.1f}".format(row.lowest_score or 0) }}</td>
+              </tr>
+            {% endfor %}
+            {% if not exam_term_summary %}
+              <tr><td colspan="7" class="muted">No term results yet.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap" style="margin-bottom:16px">
+        <table>
+          <thead><tr><th>Subject</th><th>Entries</th><th>Mean</th><th>Highest</th><th>Lowest</th></tr></thead>
+          <tbody>
+            {% for row in exam_subject_summary %}
+              <tr>
+                <td>{{ row.subject }}</td>
+                <td>{{ row.entries }}</td>
+                <td>{{ "{:,.1f}".format(row.mean_score or 0) }}</td>
+                <td>{{ "{:,.1f}".format(row.highest_score or 0) }}</td>
+                <td>{{ "{:,.1f}".format(row.lowest_score or 0) }}</td>
+              </tr>
+            {% endfor %}
+            {% if not exam_subject_summary %}
+              <tr><td colspan="5" class="muted">No subject analysis yet.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Submitted</th><th>Grade</th><th>Term</th><th>Entries</th><th>Mean</th><th>By</th></tr></thead>
+          <tbody>
+            {% for batch in recent_exam_batches %}
+              <tr>
+                <td>{{ batch.created_at[:16] }}</td>
+                <td>{{ batch.grade }}</td>
+                <td>{{ batch.term }}</td>
+                <td>{{ batch.entries }}</td>
+                <td>{{ "{:,.1f}".format(batch.mean_mark or 0) }}</td>
+                <td>{{ batch.submitted_by_name }}</td>
+              </tr>
+            {% endfor %}
+            {% if not recent_exam_batches %}
+              <tr><td colspan="6" class="muted">No submissions have been received yet.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="students-panel" class="panel glass workspace-panel hidden">
+      <div class="panel-head">
+        <div>
+          <div class="eyebrow">Pupil controls</div>
+          <h3>Delete pupils and review records</h3>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Admission No.</th><th>Grade</th><th>Status</th><th>Balance</th><th>Action</th></tr></thead>
+          <tbody>
+            {% for s in students %}
+            <tr>
+              <td>{{ s.full_name }}</td>
+              <td>{{ s.admission_no }}</td>
+              <td>{{ s.grade }}</td>
+              <td><span class="pill {{ s.payment_status|lower }}">{{ s.payment_status }}</span></td>
+              <td>{{ school_settings.currency_code }} {{ "{:,.0f}".format(s.balance or 0) }}</td>
+              <td>
+                <form method="post" action="{{ url_for('delete_student', student_id=s.id) }}" onsubmit="return confirm('Delete this pupil? This will remove the pupil record and linked payments.');">
+                  <button class="btn btn-ghost mini" type="submit">Delete</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="finance-panel" class="panel glass workspace-panel hidden">
+      <div class="panel-head"><div><div class="eyebrow">Finance</div><h3>Income, deductions, and balances</h3></div></div>
+      <div class="stats-grid" style="margin-bottom:16px">
+        <div class="mini-card"><span>Available balance</span><strong>KES {{ "{:,.0f}".format(summary.total_income or 0) }}</strong></div>
+        <div class="mini-card"><span>Average pupil balance</span><strong>KES {{ "{:,.0f}".format(summary.avg_balance or 0) }}</strong></div>
+        <div class="mini-card"><span>Pending fees</span><strong>{{ summary.pending_students }}</strong></div>
+        <div class="mini-card"><span>Employees</span><strong>{{ users|length }}</strong></div>
+      </div>
+      <div id="expense-ledger" class="mini-card">
+        <span>Expense ledger</span>
+        <strong>Teachers, utilities, rent, and operations</strong>
+        <div class="muted">This is the place to track deductions and accountability items.</div>
+      </div>
+    </section>
+
+    <section id="analytics-panel" class="panel glass workspace-panel hidden">
+      <div class="panel-head"><div><div class="eyebrow">Analytics</div><h3>Graphs and category breakdowns</h3></div></div>
+      <div class="stats-grid" style="margin-bottom:16px">
+        <div class="mini-card"><span>Paid students</span><strong>{{ summary.paid_students }}</strong></div>
+        <div class="mini-card"><span>Pending students</span><strong>{{ summary.pending_students }}</strong></div>
+        <div class="mini-card"><span>Income</span><strong>KES {{ "{:,.0f}".format(summary.total_income or 0) }}</strong></div>
+        <div class="mini-card"><span>Balance</span><strong>KES {{ "{:,.0f}".format(summary.total_balance or 0) }}</strong></div>
+      </div>
+      <div id="admin-category-breakdown" class="detail-card">
+        <h4>Category breakdowns</h4>
+        <div class="detail-lines">
+          <div><span>Students by grade</span><strong>{{ categories.students|length }} groups</strong></div>
+          <div><span>Employees by role</span><strong>{{ categories.employees|length }} groups</strong></div>
+          <div><span>Payments by method</span><strong>{{ categories.payments|length }} groups</strong></div>
+        </div>
+        <div class="bar-chart">
+          <div class="bar-row"><span>Collection trend</span><div class="bar"><div style="width:86%"></div></div></div>
+          <div class="bar-row"><span>Expense trend</span><div class="bar"><div style="width:54%"></div></div></div>
+          <div class="bar-row"><span>Payroll pressure</span><div class="bar"><div style="width:40%"></div></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="exports-panel" class="panel glass workspace-panel hidden">
+      <div class="panel-head"><div><div class="eyebrow">Exports</div><h3>Download records</h3></div></div>
+      <div class="quick-actions">
+        <a class="btn btn-primary" href="{{ url_for('export_data', kind='students') }}">Students CSV</a>
+        <a class="btn btn-ghost" href="{{ url_for('export_data', kind='users') }}">Employees CSV</a>
+        <a class="btn btn-ghost" href="{{ url_for('export_data', kind='payments') }}">Payments CSV</a>
+        <a class="btn btn-ghost" href="{{ url_for('export_data', kind='audit') }}">Audit CSV</a>
+      </div>
+    </section>
+
+    <section id="backup-panel" class="panel glass workspace-panel hidden">
+      <div class="panel-head"><div><div class="eyebrow">Backup</div><h3>Restore and protect the site</h3></div></div>
+      <div class="detail-card" style="margin-bottom:16px">
+        <h4>Download backup</h4>
+        <p class="muted">Keep a full copy so the school can be restored after any crash.</p>
+        <a class="btn btn-primary" href="{{ url_for('backup_download') }}">Download backup</a>
+      </div>
+      <div class="detail-card">
+        <h4>Restore backup</h4>
+        <form class="stack-form" method="post" action="{{ url_for('backup_restore') }}" enctype="multipart/form-data">
+          <label><span>Backup file</span><input type="file" name="backup_file" accept=".db,.sqlite,.sqlite3" required></label>
+          <button class="btn btn-primary" type="submit">Restore backup</button>
+        </form>
+      </div>
+    </section>
+
+    <section id="users-panel" class="panel glass workspace-panel hidden">
+      <div class="panel-head"><div><div class="eyebrow">Employees</div><h3>User roster and roles</h3></div></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Created</th><th>Action</th></tr></thead>
+          <tbody>
+            {% for u in users %}
+            <tr>
+              <td>{{ u.full_name }}</td>
+              <td>{{ u.username }}</td>
+              <td>{{ u.role }}{% if not u.active %} <span class="muted">(disabled)</span>{% endif %}</td>
+              <td>{{ u.created_at[:16] }}</td>
+              <td>
+                {% if u.role != 'System' and u.id != current_user.id and u.active %}
+                <form method="post" action="{{ url_for('delete_user', user_id=u.id) }}" onsubmit="return confirm('Delete this staff member?');">
+                  <button class="btn btn-ghost mini" type="submit">Delete</button>
+                </form>
+                {% else %}
+                <span class="muted">Protected</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="detail-card" style="margin-top:16px; border-left:4px solid #0e8a6d">
+        <div class="panel-head" style="margin-bottom:8px"><div><div class="eyebrow">Security control</div><h4 style="margin:0">Login Page Access</h4></div><span class="muted">Current: {% if settings.auth_required %}ENABLED{% else %}DISABLED{% endif %}</span></div>
+        <p class="muted">When disabled, every non-Administrator role goes directly to its relevant dashboard. When enabled, Teacher, Student, Parent, ICT, Finance and Librarian accounts must authenticate first. Administrator always requires authentication.</p>
+        <button class="btn {% if settings.auth_required %}btn-ghost{% else %}btn-primary{% endif %}" type="button" id="openLoginAccess">{% if settings.auth_required %}Disable login page{% else %}Enable login page{% endif %}</button>
+      </div>
+
+      <div id="loginAccessModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="loginAccessTitle">
+        <div class="modal-card">
+          <div class="panel-head"><div><div class="eyebrow">Administrator verification</div><h3 id="loginAccessTitle">Change login page access</h3></div><button type="button" class="password-toggle" id="closeLoginAccess">Close</button></div>
+          <div id="loginAccessStepConfirm">
+            <p>{% if settings.auth_required %}Are you sure you want to disable the login page for non-Administrator users?{% else %}Are you sure you want to enable the login page so non-Administrator users must authenticate before entering their dashboards?{% endif %}</p>
+            <p class="muted">Administrator login is never bypassed.</p>
+            <div class="quick-actions"><button class="btn btn-primary" type="button" id="continueLoginAccess">Yes, continue</button><button class="btn btn-ghost" type="button" id="cancelLoginAccess">No, cancel</button></div>
+          </div>
+          <div id="loginAccessStepPassword" class="hidden">
+            <p>Enter the current Administrator password to confirm this change.</p>
+            <form method="post" action="{{ url_for('admin_login_access') }}" class="stack-form">
+              <input type="hidden" name="confirm_login_access" value="yes">
+              <input type="hidden" name="desired_state" value="{% if settings.auth_required %}0{% else %}1{% endif %}">
+              <label><span>Administrator password</span><div class="password-wrap"><input id="loginAccessPassword" name="admin_password" type="password" minlength="4" required autocomplete="current-password"><button class="password-toggle" type="button" data-password-target="loginAccessPassword">Show</button></div></label>
+              <div class="quick-actions"><button class="btn btn-primary" type="submit">Confirm change</button><button class="btn btn-ghost" type="button" id="backLoginAccess">Back</button></div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-card" style="margin-top:16px">
+        <h4>Create user / staff account</h4>
+        <form class="stack-form two-col" method="post" action="{{ url_for('add_user') }}">
+          <label><span>Full name</span><input name="full_name" required></label>
+          <label><span>Username</span><input name="username" required></label>
+          <label><span>Password (minimum 4 characters)</span><div class="password-wrap"><input id="adminCreatePassword" name="password" type="password" minlength="4" required><button class="password-toggle" type="button" data-password-target="adminCreatePassword">Show</button></div></label>
+          <label><span>Role</span>
+            <select name="role" required>{% for role in all_roles %}{% if role != 'System' %}<option value="{{ role }}">{{ role }}</option>{% endif %}{% endfor %}</select>
+          </label>
+          <label><span>Link Student/Parent account to pupil</span><select name="student_id"><option value="">Not linked</option>{% for st in user_students %}<option value="{{ st.id }}">{{ st.full_name }} — {{ st.admission_no }}</option>{% endfor %}</select></label>
+          <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Create account</button></div>
+        </form>
+      </div>
+    </section>
+
+
+    <section id="public-info-panel" class="panel glass workspace-panel hidden">
+      <div class="panel-head"><div><div class="eyebrow">Before-login experience</div><h3>Public information & access</h3></div></div>
+      <p class="muted">Choose what visitors can see before logging in, and choose whether school users must authenticate.</p>
+      <form method="post" action="{{ url_for('admin_public_settings') }}" class="stack-form">
+        <p class="muted tiny">Login-page access is controlled from <strong>Users → Login Page Access</strong>. This page controls only the information visitors can see before login.</p>
+        <div class="two-col">
+          <label><span>School owners / management</span><textarea name="institution_owners" rows="3">{{ settings.institution_owners }}</textarea></label>
+          <label><span>Developer name</span><input name="developer_name" value="{{ settings.developer_name }}"></label>
+          <label><span>Developer information</span><textarea name="developer_about" rows="3">{{ settings.developer_about }}</textarea></label>
+          <label><span>Company name</span><input name="company_name" value="{{ settings.company_name }}"></label>
+          <label><span>Company information</span><textarea name="company_about" rows="3">{{ settings.company_about }}</textarea></label>
+          <label><span>School history</span><textarea name="institution_history" rows="3">{{ settings.institution_history }}</textarea></label>
+          <label><span>Achievements / performance</span><textarea name="institution_performance" rows="3">{{ settings.institution_performance }}</textarea></label>
+          <label><span>Religion / values</span><textarea name="institution_religion" rows="3">{{ settings.institution_religion }}</textarea></label>
+          <label><span>Affiliated schools</span><textarea name="institution_affiliations" rows="3">{{ settings.institution_affiliations }}</textarea></label>
+          <label><span>How to use the portal</span><textarea name="institution_help" rows="3">{{ settings.institution_help }}</textarea></label>
+          <label><span>Who to contact</span><textarea name="institution_contact" rows="3">{{ settings.institution_contact }}</textarea></label>
+        </div>
+        <div class="toggle-grid">
+          <label class="toggle-line"><input type="checkbox" name="show_institution" {% if 'institution' in (settings.prelogin_sections or '').split(',') %}checked{% endif %}> Institution overview</label>
+          <label class="toggle-line"><input type="checkbox" name="show_history" {% if 'history' in (settings.prelogin_sections or '').split(',') %}checked{% endif %}> History</label>
+          <label class="toggle-line"><input type="checkbox" name="show_achievements" {% if 'achievements' in (settings.prelogin_sections or '').split(',') %}checked{% endif %}> Achievements</label>
+          <label class="toggle-line"><input type="checkbox" name="show_owners" {% if 'owners' in (settings.prelogin_sections or '').split(',') %}checked{% endif %}> Owners</label>
+          <label class="toggle-line"><input type="checkbox" name="show_developer" {% if 'developer' in (settings.prelogin_sections or '').split(',') %}checked{% endif %}> Developer</label>
+          <label class="toggle-line"><input type="checkbox" name="show_company" {% if 'company' in (settings.prelogin_sections or '').split(',') %}checked{% endif %}> Company</label>
+        </div>
+        <button class="btn btn-primary" type="submit">Save public page settings</button>
+      </form>
+    </section>
+
+    <section id="audit-panel" class="panel glass workspace-panel hidden">
+      <div class="panel-head"><div><div class="eyebrow">Audit</div><h3>Recent activity log</h3></div></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Details</th></tr></thead>
+          <tbody>
+            {% for row in audits %}
+            <tr><td>{{ row.created_at[:16] }}</td><td>{{ row.actor_name }}</td><td>{{ row.action }}</td><td>{{ row.details }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="settings-panel" class="panel glass workspace-panel hidden">
+      <div class="panel-head"><div><div class="eyebrow">School settings</div><h3>Branding, admission rules, and fee setup</h3></div></div>
+      <form class="stack-form two-col" method="post" action="{{ url_for('save_settings') }}">
+        <label><span>School name</span><input name="school_name" value="{{ school_settings.school_name }}"></label>
+        <label><span>Currency code</span><input name="currency_code" value="{{ school_settings.currency_code }}"></label>
+        <label><span>Admission prefix</span><input name="admission_prefix" value="{{ school_settings.admission_prefix }}"></label>
+        <label><span>Admission suffix</span><input name="admission_suffix" value="{{ school_settings.admission_suffix }}"></label>
+        <label><span>Student name prefix</span><input name="student_name_prefix" value="{{ school_settings.student_name_prefix }}"></label>
+        <label><span>Student name suffix</span><input name="student_name_suffix" value="{{ school_settings.student_name_suffix }}"></label>
+        <label style="grid-column:1/-1"><span>School fees</span><input name="school_fee" type="number" step="0.01" min="0" value="{{ school_settings.school_fee or 0 }}"></label>
+        <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save settings</button></div>
+      </form>
+    </section>
+
+    <section class="panel glass workspace-panel hidden">
+      <div class="panel-head"><div><div class="eyebrow">Recent records</div><h3>Payments and pupils</h3></div></div>
+      <div class="table-wrap" style="margin-bottom:18px">
+        <table>
+          <thead><tr><th>Date</th><th>Admission No.</th><th>Pupil</th><th>Amount</th><th>Method</th><th>By</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for p in payments %}
+            <tr><td>{{ p.created_at[:16] }}</td><td>{{ p.admission_no }}</td><td>{{ p.student_name }}</td><td>KES {{ "{:,.0f}".format(p.amount or 0) }}</td><td>{{ p.method }}</td><td>{{ p.recorded_by_name }}</td><td><span class="pill {{ p.status|lower }}">{{ p.status }}</span></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Admission No.</th><th>Grade</th><th>Status</th><th>Balance</th></tr></thead>
+          <tbody>
+            {% for s in students %}
+            <tr><td>{{ s.full_name }}</td><td>{{ s.admission_no }}</td><td>{{ s.grade }}</td><td>{{ s.payment_status }}</td><td>KES {{ "{:,.0f}".format(s.balance or 0) }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<footer class="portal-watermark">© 2026 Toror Technology and Innovations Ltd. All rights reserved.</footer>
+<style>
+.portal-watermark{margin-top:36px;padding:16px 20px;text-align:center;font-size:12px;opacity:.62;letter-spacing:.15px;border-top:1px solid rgba(255,255,255,.08)}
+</style>
+
+<script>
+(function(){
+  const modal=document.getElementById('loginAccessModal');
+  const open=document.getElementById('openLoginAccess');
+  const close=document.getElementById('closeLoginAccess');
+  const cancel=document.getElementById('cancelLoginAccess');
+  const confirmStep=document.getElementById('loginAccessStepConfirm');
+  const passwordStep=document.getElementById('loginAccessStepPassword');
+  const continueBtn=document.getElementById('continueLoginAccess');
+  const backBtn=document.getElementById('backLoginAccess');
+  if(!modal) return;
+  const reset=()=>{confirmStep?.classList.remove('hidden');passwordStep?.classList.add('hidden');const pw=document.getElementById('loginAccessPassword');if(pw) pw.value='';};
+  const hide=()=>{modal.classList.add('hidden');document.body.classList.remove('modal-open');reset();};
+  const show=()=>{reset();modal.classList.remove('hidden');document.body.classList.add('modal-open');};
+  open?.addEventListener('click',show);
+  close?.addEventListener('click',hide);
+  cancel?.addEventListener('click',hide);
+  continueBtn?.addEventListener('click',()=>{confirmStep?.classList.add('hidden');passwordStep?.classList.remove('hidden');setTimeout(()=>document.getElementById('loginAccessPassword')?.focus(),50);});
+  backBtn?.addEventListener('click',()=>{passwordStep?.classList.add('hidden');confirmStep?.classList.remove('hidden');});
+  modal.addEventListener('click',e=>{if(e.target===modal) hide();});
+})();
+</script>
+</body>
+</html>
