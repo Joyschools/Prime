@@ -127,3 +127,156 @@ tbody tr:hover{background:rgba(255,255,255,.03)}
   .auth-card{padding:20px}
   .auth-card h1{font-size:28px}
 }
+
+/* Landing page refresh — scoped to auth/portal entry so existing dashboards remain intact. */
+.auth-body{
+  --landing-navy:#102a43;
+  --landing-blue:#1d4ed8;
+  --landing-red:#b91c1c;
+  --landing-red-soft:#ef4444;
+  --landing-white:#f8fafc;
+  --landing-muted:#64748b;
+  --landing-line:rgba(15,23,42,.10);
+  display:block;
+  min-height:100vh;
+  padding:0;
+  color:#102033;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(29,78,216,.10), transparent 32%),
+    radial-gradient(circle at 90% 10%, rgba(185,28,28,.07), transparent 30%),
+    linear-gradient(180deg,#eef1f5 0%,#e2e7ed 100%);
+}
+.auth-body .landing-shell{
+  width:min(1240px,calc(100% - 48px));
+  margin:0 auto;
+  padding:38px 0 22px;
+}
+.auth-body .landing-card{
+  max-width:none;
+  padding:0;
+  overflow:hidden;
+  border:1px solid rgba(15,23,42,.11);
+  border-radius:20px;
+  background:rgba(248,250,252,.96);
+  box-shadow:0 28px 80px rgba(15,23,42,.14);
+  backdrop-filter:blur(8px);
+}
+.auth-body .landing-card::before{
+  content:"";
+  display:block;
+  height:6px;
+  background:linear-gradient(90deg,var(--landing-navy) 0 54%,var(--landing-red) 54% 77%,var(--landing-blue) 77% 100%);
+}
+.auth-body .landing-topbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:20px;
+  padding:24px 34px 18px;
+  border-bottom:1px solid var(--landing-line);
+  background:rgba(255,255,255,.72);
+}
+.auth-body .landing-topbar .brand-line{margin:0;gap:14px}
+.auth-body .landing-logo{width:56px;height:56px;object-fit:contain;border-radius:12px;border:1px solid rgba(15,23,42,.10);background:#fff;padding:5px}
+.auth-body .brand-name{font-size:20px;color:var(--landing-navy)}
+.auth-body .brand-subtitle{color:#667085}
+.auth-body .landing-badge{display:inline-flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid rgba(29,78,216,.16);border-radius:999px;background:rgba(29,78,216,.06);color:var(--landing-navy);font-size:12px;font-weight:800;letter-spacing:.03em}
+.auth-body .landing-badge-dot{width:8px;height:8px;border-radius:50%;background:var(--landing-red);box-shadow:0 0 0 4px rgba(185,28,28,.09)}
+.auth-body .prelogin-info{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:24px 34px 8px}
+.auth-body .prelogin-info details{border:1px solid rgba(15,23,42,.10);border-radius:14px;padding:0;background:#fff;box-shadow:0 8px 20px rgba(15,23,42,.04)}
+.auth-body .prelogin-info details[open]{background:#fff;border-color:rgba(29,78,216,.20)}
+.auth-body .prelogin-info summary{list-style:none;padding:15px 16px;color:var(--landing-navy);font-size:14px}
+.auth-body .prelogin-info summary::-webkit-details-marker{display:none}
+.auth-body .prelogin-info summary::after{content:"+";float:right;color:var(--landing-blue);font-size:18px;font-weight:800;line-height:1}
+.auth-body .prelogin-info details[open] summary::after{content:"−"}
+.auth-body .prelogin-info p{padding:0 16px 15px;margin:0;color:#667085;line-height:1.65;font-size:13px}
+.auth-body .landing-hero{
+  display:grid;
+  grid-template-columns:minmax(0,1.55fr) minmax(260px,.65fr);
+  gap:24px;
+  align-items:stretch;
+  padding:42px 34px 28px;
+}
+.auth-body .hero-copy{align-self:center;max-width:760px}
+.auth-body .hero-copy .eyebrow{color:var(--landing-red);font-size:12px;letter-spacing:.14em}
+.auth-body .hero-copy h1{margin:10px 0 12px;font-size:clamp(38px,5vw,64px);line-height:1.02;letter-spacing:-.055em;color:var(--landing-navy)}
+.auth-body .hero-copy h1 span{color:var(--landing-blue)}
+.auth-body .landing-lead{margin:0;max-width:720px;color:#526174;font-size:17px;line-height:1.7}
+.auth-body .landing-rule{display:flex;align-items:center;gap:10px;margin-top:24px;color:#344054;font-size:12px;text-transform:uppercase;letter-spacing:.11em}
+.auth-body .landing-rule span{height:1px;background:rgba(15,23,42,.18);width:62px}
+.auth-body .landing-rule b{font-size:11px}
+.auth-body .landing-accent-panel{
+  position:relative;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-end;
+  min-height:240px;
+  padding:26px;
+  border-radius:18px;
+  background:
+    linear-gradient(145deg,rgba(16,42,67,.98),rgba(29,78,216,.90));
+  color:#fff;
+  box-shadow:0 18px 34px rgba(16,42,67,.22);
+}
+.auth-body .landing-accent-panel::before,
+.auth-body .landing-accent-panel::after{content:"";position:absolute;border-radius:50%;pointer-events:none}
+.auth-body .landing-accent-panel::before{width:170px;height:170px;right:-58px;top:-58px;border:28px solid rgba(255,255,255,.07)}
+.auth-body .landing-accent-panel::after{width:120px;height:120px;left:-42px;bottom:-56px;border:20px solid rgba(239,68,68,.18)}
+.auth-body .accent-title{font-size:24px;font-weight:850;letter-spacing:-.03em;max-width:240px;position:relative;z-index:1}
+.auth-body .accent-points{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px;position:relative;z-index:1}
+.auth-body .accent-points span{padding:7px 9px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:rgba(255,255,255,.08);font-size:11px;font-weight:700}
+.auth-body .portal-section-title{display:flex;justify-content:space-between;gap:24px;align-items:end;padding:8px 34px 16px}
+.auth-body .portal-section-title h2{margin:6px 0 0;font-size:26px;letter-spacing:-.035em;color:var(--landing-navy)}
+.auth-body .section-note{color:#7a8697;font-size:13px}
+.auth-body .role-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:0 34px 34px}
+.auth-body .role-card{
+  min-height:190px;
+  padding:24px;
+  border:1px solid rgba(15,23,42,.10);
+  border-radius:16px;
+  background:#fff;
+  color:var(--landing-navy);
+  box-shadow:0 10px 25px rgba(15,23,42,.05);
+  transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease;
+}
+.auth-body .role-card:hover{transform:translateY(-4px);box-shadow:0 18px 34px rgba(15,23,42,.10);border-color:rgba(29,78,216,.30);background:#fff}
+.auth-body .role-card .role-kicker{font-size:10px;text-transform:uppercase;letter-spacing:.12em;font-weight:900;color:#7b8798}
+.auth-body .role-card strong{font-size:25px;letter-spacing:-.035em;margin-top:2px}
+.auth-body .role-card > span:not(.role-kicker){font-size:14px;line-height:1.55;color:#657286;max-width:290px}
+.auth-body .role-card::after{display:none}
+.auth-body .role-arrow{margin-top:auto;display:flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:12px;background:rgba(29,78,216,.08);color:var(--landing-blue);font-size:20px;transition:transform .2s ease,background .2s ease}
+.auth-body .role-card:hover .role-arrow{transform:translateX(4px);background:rgba(185,28,28,.10);color:var(--landing-red)}
+.auth-body .role-teacher-card{border-top:4px solid var(--landing-blue)}
+.auth-body .role-student-card{border-top:4px solid var(--landing-red)}
+.auth-body .role-parent-card{border-top:4px solid var(--landing-navy)}
+.auth-body .setup-link{margin:0 34px 34px}
+.auth-body .auth-card h1,.auth-body .auth-card .eyebrow,.auth-body .auth-card .muted{color:var(--landing-navy)}
+.auth-body .portal-selector > .stack-form,.auth-body .portal-selector > .flash,.auth-body .portal-selector > p{margin-left:34px;margin-right:34px}
+.auth-body .portal-selector > .stack-form{max-width:620px;margin-bottom:34px}
+.auth-body .portal-selector > .stack-form label span{color:#64748b}
+.auth-body .portal-selector input{background:#fff;color:#102033;border-color:rgba(15,23,42,.12)}
+.auth-body .portal-selector .btn-primary{background:linear-gradient(135deg,var(--landing-blue),#1e3a8a);box-shadow:0 12px 24px rgba(29,78,216,.18)}
+.auth-body .portal-selector .btn-primary:hover{box-shadow:0 16px 28px rgba(29,78,216,.24)}
+.auth-body .portal-watermark{width:min(1240px,calc(100% - 48px));margin:0 auto;padding:0 0 26px;text-align:center;color:#667085;font-size:12px}
+@media(max-width:900px){
+  .auth-body .prelogin-info{grid-template-columns:1fr}
+  .auth-body .landing-hero{grid-template-columns:1fr}
+  .auth-body .landing-accent-panel{min-height:180px}
+}
+@media(max-width:760px){
+  .auth-body .landing-shell{width:min(100% - 20px,1240px);padding:10px 0 16px}
+  .auth-body .landing-topbar{padding:18px 18px 14px;align-items:flex-start;flex-direction:column}
+  .auth-body .landing-badge{align-self:flex-start}
+  .auth-body .prelogin-info{margin:18px 18px 8px}
+  .auth-body .landing-hero{padding:28px 18px 20px}
+  .auth-body .hero-copy h1{font-size:38px}
+  .auth-body .landing-lead{font-size:15px}
+  .auth-body .portal-section-title{padding:8px 18px 14px;align-items:flex-start;flex-direction:column}
+  .auth-body .portal-section-title h2{font-size:22px}
+  .auth-body .role-grid{grid-template-columns:1fr;margin:0 18px 22px}
+  .auth-body .role-card{min-height:160px}
+  .auth-body .setup-link{margin:0 18px 22px}
+  .auth-body .portal-selector > .stack-form,.auth-body .portal-selector > .flash,.auth-body .portal-selector > p{margin-left:18px;margin-right:18px}
+  .auth-body .portal-watermark{width:min(100% - 20px,1240px)}
+}
