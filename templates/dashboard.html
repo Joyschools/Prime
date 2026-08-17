@@ -9,7 +9,7 @@
   <meta name="theme-color" content="{{ theme_color }}">
   <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
+<style>{{theme_style|safe}}</style></head>
 <body class="app-body">
   <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
   <div class="scroll-rail" id="scrollRail" aria-hidden="true"><div class="scroll-track"><div class="scroll-thumb" id="scrollThumb"></div></div></div>
@@ -98,7 +98,7 @@
     <div class="sidebar-foot">
       <a class="btn btn-ghost btn-block" href="{{ url_for('logout') }}">Logout</a>
     </div>
-  </aside>
+  <div class="sidebar-help"><a class="nav-link" href="/system-help">System Help</a><a class="nav-link" href="/ai-assistant">AI Assistant</a></div></aside>
 
   <main class="content">
     <header class="topbar glass slim-topbar">
@@ -113,7 +113,7 @@
         <div class="muted topbar-clock" id="liveClock">Tuesday, Aug 4, 2026 • 11:30:58</div>
         <a class="btn btn-ghost mini" href="{{ url_for('logout') }}">Logout</a>
       </div>
-    </header>
+    <div class="quick-actions" style="margin:0 0 10px 0"><a class="btn btn-ghost mini" href="{{ '/users/' ~ current_user.id ~ '/qr' }}">Open portal QR</a><a class="btn btn-ghost mini" href="/system-help">System Help</a><a class="btn btn-primary mini" href="/ai-assistant">AI Assistant</a></div></header>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}

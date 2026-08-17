@@ -601,6 +601,104 @@ def init_db() -> None:
         ensure_column(conn, "school_settings", "academic_period_label TEXT NOT NULL DEFAULT 'Term'")
         ensure_column(conn, "school_settings", "class_label TEXT NOT NULL DEFAULT 'Class'")
         ensure_column(conn, "school_settings", "department_label TEXT NOT NULL DEFAULT 'Department'")
+        ensure_column(conn, "school_settings", "theme_mode TEXT NOT NULL DEFAULT 'dark'")
+        ensure_column(conn, "school_settings", "font_family TEXT NOT NULL DEFAULT 'Inter'")
+        ensure_column(conn, "school_settings", "heading_font TEXT NOT NULL DEFAULT 'Inter'")
+        ensure_column(conn, "school_settings", "radius_px INTEGER NOT NULL DEFAULT 12")
+        ensure_column(conn, "school_settings", "sidebar_color TEXT NOT NULL DEFAULT '#40414f'")
+        ensure_column(conn, "school_settings", "header_color TEXT NOT NULL DEFAULT '#40414f'")
+        ensure_column(conn, "school_settings", "text_color TEXT NOT NULL DEFAULT '#ececf1'")
+        ensure_column(conn, "school_settings", "muted_text_color TEXT NOT NULL DEFAULT '#b5bac7'")
+        ensure_column(conn, "school_settings", "button_radius_px INTEGER NOT NULL DEFAULT 10")
+        ensure_column(conn, "school_settings", "sidebar_style TEXT NOT NULL DEFAULT 'drawer'")
+        ensure_column(conn, "school_settings", "custom_css TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "ai_enabled INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "school_settings", "ai_provider TEXT NOT NULL DEFAULT 'openai_responses'")
+        ensure_column(conn, "school_settings", "ai_model TEXT NOT NULL DEFAULT 'gpt-5.6'")
+        ensure_column(conn, "school_settings", "help_phone TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "help_email TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "qr_access_token TEXT")
+        ensure_column(conn, "users", "position_code TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "library_items", "class_level TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "library_items", "subject TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "library_items", "image_path TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "library_items", "youtube_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "library_items", "source_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "library_items", "source_name TEXT NOT NULL DEFAULT ''")
+
+        conn.executescript("""
+        CREATE TABLE IF NOT EXISTS system_help (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT 'Getting Started',
+            content TEXT NOT NULL,
+            role_scope TEXT NOT NULL DEFAULT 'All',
+            sort_order INTEGER NOT NULL DEFAULT 100,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS ai_usage_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            role TEXT,
+            provider TEXT NOT NULL,
+            model TEXT,
+            prompt_preview TEXT,
+            response_preview TEXT,
+            status TEXT NOT NULL DEFAULT 'Success',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE TABLE IF NOT EXISTS finance_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_type TEXT NOT NULL CHECK(entry_type IN ('Income','Expense','Payroll','Adjustment')),
+            category TEXT NOT NULL,
+            payee_user_id INTEGER,
+            amount REAL NOT NULL CHECK(amount > 0),
+            description TEXT NOT NULL,
+            reference_no TEXT,
+            status TEXT NOT NULL DEFAULT 'Posted' CHECK(status IN ('Posted','Reversed')),
+            posted_by INTEGER NOT NULL,
+            posted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            reversed_by INTEGER,
+            reversed_at TEXT,
+            FOREIGN KEY(payee_user_id) REFERENCES users(id) ON DELETE SET NULL,
+            FOREIGN KEY(posted_by) REFERENCES users(id) ON DELETE RESTRICT,
+            FOREIGN KEY(reversed_by) REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE TABLE IF NOT EXISTS finance_accounts (
+            id INTEGER PRIMARY KEY CHECK(id=1),
+            account_name TEXT NOT NULL DEFAULT 'Institution Operating Account',
+            opening_balance REAL NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS backup_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            backup_type TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            row_count INTEGER NOT NULL DEFAULT 0,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_library_class ON library_items(class_level, subject, active);
+        CREATE INDEX IF NOT EXISTS idx_users_role_active ON users(role, active);
+        CREATE INDEX IF NOT EXISTS idx_finance_status_date ON finance_ledger(status, posted_at);
+        """)
+        conn.execute("INSERT OR IGNORE INTO finance_accounts(id, account_name, opening_balance) VALUES(1, 'Institution Operating Account', 0)")
+        conn.execute("UPDATE users SET qr_access_token=lower(hex(randomblob(16))) WHERE role!='System' AND (qr_access_token IS NULL OR qr_access_token='')")
+        if conn.execute("SELECT COUNT(*) FROM system_help").fetchone()[0] == 0:
+            help_rows=[
+                ('Getting started','Getting Started','Use the navigation to open your workspace. Administrators manage people, institution settings, security, backups and permissions.','All',10),
+                ('Managing people','People & Access','Open People & Access to create, edit, archive and restore accounts. Role controls the security boundary; title and department describe institutional responsibility.','Admin',20),
+                ('Learner records','Learners','Learner profiles contain identity, class/grade, guardian links, contact details, accountability information, academic and finance references.','All',30),
+                ('Finance posting','Finance','Finance officers can post institutional income, expenses and payroll. Posted transactions are immutable; only an Administrator may reverse one.','Finance,Admin',40),
+                ('Library resources','Library','Library staff can catalogue books, past papers, notes, images, uploaded documents, YouTube resources and external websites and assign resources to classes or subjects.','Teacher,Student,Parent,Librarian,Admin,ICT',50),
+                ('Backup and recovery','Administration','A full JSON backup contains database records, system settings and available uploaded assets. Restore it through Administration > Backup & Recovery. Keep an additional SQLite backup for fast rollback.','Admin',60),
+                ('AI assistant','AI','AI features require an OpenAI API key on the server environment. The assistant uses the configured provider/model and records a small audit preview without storing API keys in the database.','All',70),
+            ]
+            conn.executemany('INSERT INTO system_help(title,category,content,role_scope,sort_order) VALUES(?,?,?,?,?)',help_rows)
 
         # Convert legacy seeded accounts to an inert System account on this build.
         auth_row = conn.execute("SELECT auth_initialized FROM school_settings WHERE id=1").fetchone()
@@ -842,9 +940,45 @@ def selected_role_from_request(default=""):
     return role if role in ALL_PORTAL_ROLES else default
 
 
+
+
+def theme_style(settings=None) -> str:
+    settings = settings or school_settings()
+    def esc(v):
+        return str(v).replace('<','').replace('>','').replace('"','').replace(';','')
+    bg=esc(settings['background_color']); panel=esc(settings['panel_color']); text=esc(settings['text_color']); muted=esc(settings['muted_text_color'])
+    if settings['theme_mode']=='light':
+        bg='#f5f7fb'; panel='#ffffff'; text='#18212f'; muted='#667085'
+    css=(
+        f":root{{--bg:{bg};--panel:{panel};"
+        f"--primary-blue:{esc(settings['primary_color'])};--deep-accent-blue:{esc(settings['accent_color'])};"
+        f"--primary-text:{text};--muted-text:{muted};"
+        f"--font:'{esc(settings['font_family'])}',Inter,system-ui,sans-serif;--heading-font:'{esc(settings['heading_font'])}',{esc(settings['font_family'])},Inter,sans-serif;--radius:{int(settings['radius_px'] or 12)}px;"
+        f"--radius-sm:{int(settings['button_radius_px'] or 10)}px;--sidebar-bg:{esc(settings['sidebar_color'])};"
+        f"--header-bg:{esc(settings['header_color'])};}}"
+    )
+    extra=settings['custom_css'] or ''
+    # Admin-entered CSS is deliberately limited to a length bound and unsafe import/javascript patterns.
+    if len(extra)>12000 or re.search(r'@import|javascript:|expression\s*\(', extra, re.I):
+        extra=''
+    return css+extra
+
+
+def current_landing_url() -> str:
+    return url_for('index', _external=True)
+
 @app.context_processor
 def auth_template_context():
-    return {"current_user": current_user(), "all_roles": ALL_PORTAL_ROLES, "public_roles": PUBLIC_ROLES}
+    settings=school_settings()
+    return {
+        "current_user": current_user(), "school_settings": settings, "portal_title": settings["school_name"], "theme_color": settings["primary_color"], "all_roles": ALL_PORTAL_ROLES, "public_roles": PUBLIC_ROLES,
+        "theme_style": theme_style(settings), "portal_landing_url": current_landing_url(),
+        "institution_type": settings['institution_type'], "learner_label": settings['learner_label'],
+        "learner_plural": "Pupils" if settings['learner_label'].lower().startswith('pupil') else "Students",
+        "staff_label": settings['staff_label'],
+        "staff_plural": "Teachers / Lecturers" if 'Lecturer' in (settings['staff_label'] or '') else "Employees",
+        "help_enabled": True,
+    }
 
 
 def workspace_for(role: str) -> str:
@@ -1557,9 +1691,15 @@ def parent_dashboard():
 @login_required
 def library():
     if not school_settings()["library_enabled"] and current_user()["role"] not in {"Admin","ICT","Librarian"}: abort(404)
-    items=q("SELECT * FROM library_items WHERE active=1 ORDER BY category,title")
+    class_level=request.args.get("class","").strip(); subject=request.args.get("subject","").strip()
+    where=["active=1"]; params=[]
+    if class_level: where.append("(class_level=? OR class_level='')"); params.append(class_level)
+    if subject: where.append("(subject=? OR subject='')"); params.append(subject)
+    items=q(f"SELECT * FROM library_items WHERE {' AND '.join(where)} ORDER BY class_level,subject,category,title",params)
     loans=q("""SELECT l.*, i.title, s.full_name AS student_name, s.admission_no FROM library_loans l JOIN library_items i ON i.id=l.item_id JOIN students s ON s.id=l.student_id WHERE l.status='Issued' ORDER BY l.due_date, l.issued_at""")
-    return render_template("library.html", items=items, loans=loans, settings=school_settings(), actor_name=current_user()["full_name"])
+    classes=[r["grade"] for r in q("SELECT DISTINCT grade FROM students WHERE active=1 ORDER BY grade")]
+    subjects=[r["subject"] for r in q("SELECT DISTINCT subject FROM library_items WHERE active=1 AND subject!='' ORDER BY subject")]
+    return render_template("library.html", items=items, loans=loans, settings=school_settings(), actor_name=current_user()["full_name"], selected_class=class_level, selected_subject=subject, library_classes=classes, library_subjects=subjects)
 
 @app.route("/librarian-dashboard")
 @login_required
@@ -1605,8 +1745,14 @@ def finance_dashboard():
     students=q("SELECT * FROM students WHERE active=1 ORDER BY grade, full_name")
     batches=q("""SELECT b.*,u.full_name AS submitted_by_name,COUNT(r.id) AS entries,ROUND(AVG(r.mark),1) AS mean_mark FROM exam_batches b JOIN users u ON u.id=b.submitted_by LEFT JOIN exam_results r ON r.batch_id=b.id GROUP BY b.id ORDER BY b.created_at DESC,b.id DESC LIMIT 30""")
     documents=q("""SELECT d.*,s.full_name AS student_name,s.admission_no FROM portal_documents d JOIN students s ON s.id=d.student_id ORDER BY d.issued_at DESC LIMIT 30""")
+    ledger=q("""SELECT f.*,u.full_name AS poster,pu.full_name AS payee_name FROM finance_ledger f JOIN users u ON u.id=f.posted_by LEFT JOIN users pu ON pu.id=f.payee_user_id ORDER BY f.posted_at DESC,f.id DESC LIMIT 60""")
+    ledger_income=q("SELECT COALESCE(SUM(amount),0) AS n FROM finance_ledger WHERE status='Posted' AND entry_type='Income'",one=True)["n"]
+    ledger_expense=q("SELECT COALESCE(SUM(amount),0) AS n FROM finance_ledger WHERE status='Posted' AND entry_type IN ('Expense','Payroll')",one=True)["n"]
+    account=q("SELECT * FROM finance_accounts WHERE id=1",one=True)
+    system_balance=float(account["opening_balance"] if account else 0)+float(ledger_income or 0)-float(ledger_expense or 0)
+    employees=q("SELECT id,full_name,username,role,title,department FROM users WHERE active=1 AND role NOT IN ('System','Student','Parent') ORDER BY full_name")
     nav_items=navigation_items("Finance", settings)
-    return render_template("role_dashboard.html", role="Finance", workspace=workspace_for("Finance"), settings=settings, payments=payments, total_income=total_income, total_balance=balance, students=students, batches=batches, documents=documents, actor_name=current_user()["full_name"], nav_items=nav_items)
+    return render_template("finance_dashboard.html", role="Finance", workspace=workspace_for("Finance"), settings=settings, payments=payments, total_income=total_income, total_balance=balance, students=students, batches=batches, documents=documents, actor_name=current_user()["full_name"], nav_items=nav_items, ledger=ledger, ledger_income=ledger_income, ledger_expense=ledger_expense, system_balance=system_balance, employees=employees)
 
 
 @app.route("/ict-dashboard")
@@ -1633,11 +1779,25 @@ def ict_settings():
     accent=request.form.get("accent_color", "#0e8a6d").strip() or "#0e8a6d"
     bg=request.form.get("background_color", "#343541").strip() or "#343541"
     panel=request.form.get("panel_color", "#40414f").strip() or "#40414f"
+    sidebar=request.form.get("sidebar_color", panel).strip() or panel
+    header=request.form.get("header_color", panel).strip() or panel
+    text_color=request.form.get("text_color", "#ececf1").strip() or "#ececf1"
+    muted=request.form.get("muted_text_color", "#b5bac7").strip() or "#b5bac7"
+    font_family=request.form.get("font_family", "Inter").strip() or "Inter"
+    heading_font=request.form.get("heading_font", font_family).strip() or font_family
+    try: radius=max(4,min(28,int(request.form.get("radius_px", "12"))))
+    except ValueError: radius=12
+    try: button_radius=max(4,min(28,int(request.form.get("button_radius_px", "10"))))
+    except ValueError: button_radius=10
+    theme_mode=request.form.get("theme_mode", "dark").strip().lower() if request.form.get("theme_mode") else "dark"
+    if theme_mode not in {"dark","light","system"}: theme_mode="dark"
     menu_order=request.form.get("menu_order", "Home,Assignments,Submissions,Online classes").strip() or "Home,Assignments,Submissions,Online classes"
     labels={k: request.form.get(k, defaults).strip() or defaults for k,defaults in [("home_label","Home"),("assignments_label","Assignments"),("results_label","Results"),("messages_label","Messages"),("finance_label","Finance"),("branding_label","Branding")]}
-    execute("""UPDATE school_settings SET school_name=?, portal_subtitle=?, primary_color=?, accent_color=?, background_color=?, panel_color=?, menu_order=?, home_label=?, assignments_label=?, results_label=?, messages_label=?, finance_label=?, branding_label=? WHERE id=1""", (school_name,portal_subtitle,primary,accent,bg,panel,menu_order,labels["home_label"],labels["assignments_label"],labels["results_label"],labels["messages_label"],labels["finance_label"],labels["branding_label"]))
-    audit(current_user()["id"], current_user()["full_name"], "ICT Branding Update", f"Portal branding/customization updated for {school_name}.")
-    flash("ICT customization saved. All dashboards now use the new portal identity and theme.", "success")
+    custom_css=request.form.get("custom_css", "").strip()[:12000]
+    if re.search(r'@import|javascript:|expression\s*\(', custom_css, re.I): custom_css=''
+    execute("""UPDATE school_settings SET school_name=?, portal_subtitle=?, primary_color=?, accent_color=?, background_color=?, panel_color=?, sidebar_color=?, header_color=?, text_color=?, muted_text_color=?, font_family=?, heading_font=?, radius_px=?, button_radius_px=?, theme_mode=?, menu_order=?, home_label=?, assignments_label=?, results_label=?, messages_label=?, finance_label=?, branding_label=?, custom_css=? WHERE id=1""", (school_name,portal_subtitle,primary,accent,bg,panel,sidebar,header,text_color,muted,font_family,heading_font,radius,button_radius,theme_mode,menu_order,labels["home_label"],labels["assignments_label"],labels["results_label"],labels["messages_label"],labels["finance_label"],labels["branding_label"],custom_css))
+    audit(current_user()["id"], current_user()["full_name"], "Portal Theme Update", f"Institution-wide interface theme updated for {school_name}.")
+    flash("The institution-wide interface has been redesigned and saved.", "success")
     return redirect(url_for("ict_dashboard"))
 
 
@@ -1812,13 +1972,25 @@ def upload_election_candidates():
 @login_required
 @role_required("Admin","ICT","Librarian")
 def add_library_item():
-    title=request.form.get("title","").strip(); category=request.form.get("category","Book").strip() or "Book"; author=request.form.get("author","").strip(); code=request.form.get("item_code","").strip(); location=request.form.get("location","").strip(); resource_type=request.form.get("resource_type","Physical").strip(); qty=max(1,request.form.get("quantity",type=int) or 1); description=request.form.get("description","").strip(); external_url=request.form.get("external_url","").strip()
+    title=request.form.get("title","").strip(); category=request.form.get("category","Book").strip() or "Book"
+    author=request.form.get("author","").strip(); code=request.form.get("item_code","").strip(); location=request.form.get("location","").strip()
+    resource_type=request.form.get("resource_type","Physical").strip(); qty=max(1,request.form.get("quantity",type=int) or 1)
+    description=request.form.get("description","").strip(); external_url=request.form.get("external_url","").strip()
+    youtube_url=request.form.get("youtube_url","").strip(); source_url=request.form.get("source_url","").strip(); source_name=request.form.get("source_name","").strip()
+    class_level=request.form.get("class_level","").strip(); subject=request.form.get("subject","").strip()
     if not title: flash("Library title is required.","danger"); return redirect(request.referrer or url_for("librarian_dashboard"))
     file=request.files.get("resource"); file_path=""
     if file and file.filename:
         fname=secure_filename(file.filename); dest=UPLOAD_DIR/"library"; dest.mkdir(exist_ok=True); out=dest/f"{uuid.uuid4().hex}-{fname}"; file.save(out); file_path="uploads/library/"+out.name; resource_type="Digital"
-    execute("INSERT INTO library_items(title,category,author,item_code,quantity,available_quantity,location,resource_type,file_path,external_url,description,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(title,category,author,code,qty,qty,location,resource_type,file_path,external_url,description,current_user()["id"]))
-    flash("Library item added.","success"); return redirect((url_for("ict_dashboard") if current_user()["role"]=="ICT" else url_for("librarian_dashboard") if current_user()["role"]=="Librarian" else url_for("admin_dashboard"))+"#library")
+    image=request.files.get("resource_image"); image_path=""
+    if image and image.filename:
+        ext=image.filename.rsplit('.',1)[-1].lower() if '.' in image.filename else ''
+        if ext not in {"png","jpg","jpeg","webp"}: flash("Resource image must be PNG/JPG/JPEG/WEBP.","danger"); return redirect(request.referrer or url_for("librarian_dashboard"))
+        dest=UPLOAD_DIR/"library"; dest.mkdir(exist_ok=True); out=dest/f"{uuid.uuid4().hex}-cover.{ext}"; image.save(out); image_path="uploads/library/"+out.name
+    execute("""INSERT INTO library_items(title,category,author,item_code,quantity,available_quantity,location,resource_type,file_path,external_url,description,created_by,class_level,subject,image_path,youtube_url,source_url,source_name) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(title,category,author,code,qty,qty,location,resource_type,file_path,external_url,description,current_user()["id"],class_level,subject,image_path,youtube_url,source_url,source_name))
+    audit(current_user()["id"],current_user()["full_name"],"Library Resource Added",f"Added {title} for class '{class_level or 'All'}' and subject '{subject or 'General'}'.")
+    flash("Library resource added to the institutional catalogue.","success")
+    return redirect((url_for("ict_dashboard") if current_user()["role"]=="ICT" else url_for("librarian_dashboard") if current_user()["role"]=="Librarian" else url_for("admin_dashboard"))+"#library")
 
 @app.route("/library/<int:item_id>/remove", methods=["POST"])
 @login_required
@@ -2516,6 +2688,233 @@ def export_data(kind: str):
     audit(current_user()["id"], current_user()["full_name"], "Export Data", f"{title} downloaded.")
     return send_file(data, as_attachment=True, download_name=filename, mimetype="text/csv")
 
+
+
+@app.route("/system-help")
+@login_required
+def system_help():
+    user=current_user(); rows=q("SELECT * FROM system_help WHERE active=1 ORDER BY category,sort_order,title")
+    visible=[]
+    for row in rows:
+        scope=(row["role_scope"] or "All").split(",")
+        if "All" in scope or user["role"] in [x.strip() for x in scope]: visible.append(row)
+    return render_template("system_help.html", role=user["role"], workspace=workspace_for(user["role"]), help_rows=visible, settings=school_settings(), actor_name=user["full_name"])
+
+@app.route("/ai-assistant")
+@login_required
+def ai_assistant():
+    return render_template("ai_assistant.html", role=current_user()["role"], workspace=workspace_for(current_user()["role"]), settings=school_settings(), actor_name=current_user()["full_name"])
+
+@app.route("/ai/ask", methods=["POST"])
+@login_required
+def ai_ask():
+    settings=school_settings(); user=current_user()
+    if not int(settings["ai_enabled"] or 0): return jsonify({"error":"AI assistance is disabled by the administrator."}),403
+    prompt=(request.form.get("prompt") or (request.get_json(silent=True) or {}).get("prompt") or "").strip()
+    if not prompt: return jsonify({"error":"Enter a question."}),400
+    if len(prompt)>8000: return jsonify({"error":"Question is too long."}),400
+    provider=settings["ai_provider"] or "openai_responses"; model=settings["ai_model"] or "gpt-5.6"
+    api_key=os.environ.get("OPENAI_API_KEY","").strip()
+    if not api_key: return jsonify({"error":"OpenAI API is not configured on this server yet. Set OPENAI_API_KEY in the deployment environment."}),503
+    system_prompt=f"You are the institutional AI assistant for {settings['school_name']}. User role: {user['role']}. Be practical, concise, safe, and never invent private institutional data. If data is not supplied in the conversation, say so."
+    try:
+        if provider=="openai_chat_completions":
+            payload=json.dumps({"model":model,"messages":[{"role":"system","content":system_prompt},{"role":"user","content":prompt}],"temperature":0.2}).encode()
+            req=urllib.request.Request("https://api.openai.com/v1/chat/completions",data=payload,headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"},method="POST")
+            with urllib.request.urlopen(req,timeout=45) as resp: data=json.loads(resp.read().decode())
+            answer=data.get("choices",[{}])[0].get("message",{}).get("content","")
+        else:
+            payload=json.dumps({"model":model,"input":[{"role":"system","content":system_prompt},{"role":"user","content":prompt}]}).encode()
+            req=urllib.request.Request("https://api.openai.com/v1/responses",data=payload,headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"},method="POST")
+            with urllib.request.urlopen(req,timeout=45) as resp: data=json.loads(resp.read().decode())
+            answer=(data.get("output_text") or "").strip()
+            if not answer:
+                chunks=[]
+                for item in data.get("output",[]) or []:
+                    for content in item.get("content",[]) or []:
+                        if content.get("type") in {"output_text","text"}: chunks.append(content.get("text","") or content.get("output_text",""))
+                answer="\n".join(chunks).strip()
+        if not answer: raise RuntimeError("AI returned an empty response.")
+        execute("INSERT INTO ai_usage_log(user_id,role,provider,model,prompt_preview,response_preview,status) VALUES(?,?,?,?,?,?,?)",(user["id"],user["role"],provider,model,prompt[:300],answer[:500],"Success"))
+        return jsonify({"answer":answer,"provider":provider,"model":model})
+    except Exception as exc:
+        execute("INSERT INTO ai_usage_log(user_id,role,provider,model,prompt_preview,response_preview,status) VALUES(?,?,?,?,?,?,?)",(user["id"],user["role"],provider,model,prompt[:300],str(exc)[:500],"Failed"))
+        return jsonify({"error":f"AI request failed: {exc}"}),502
+
+@app.route("/admin/ai-settings", methods=["POST"])
+@login_required
+@role_required("Admin")
+def admin_ai_settings():
+    enabled=1 if request.form.get("ai_enabled") else 0
+    provider=request.form.get("ai_provider","openai_responses")
+    if provider not in {"openai_responses","openai_chat_completions"}: provider="openai_responses"
+    model=request.form.get("ai_model","gpt-5.6").strip() or "gpt-5.6"
+    execute("UPDATE school_settings SET ai_enabled=?, ai_provider=?, ai_model=? WHERE id=1",(enabled,provider,model))
+    audit(current_user()["id"],current_user()["full_name"],"AI Settings",f"AI {'enabled' if enabled else 'disabled'} using {provider} / {model}.")
+    flash("AI configuration saved. API keys remain server-side only.","success")
+    return redirect(url_for("admin_dashboard"))
+
+@app.route("/admin/help/save", methods=["POST"])
+@login_required
+@role_required("Admin")
+def admin_help_save():
+    title=request.form.get("title","").strip(); category=request.form.get("category","Getting Started").strip(); content=request.form.get("content","").strip(); scope=request.form.get("role_scope","All").strip() or "All"
+    if not title or not content: flash("Help title and content are required.","danger"); return redirect(url_for("admin_dashboard"))
+    execute("INSERT INTO system_help(title,category,content,role_scope,sort_order) VALUES(?,?,?,?,?)",(title,category,content,scope,100))
+    audit(current_user()["id"],current_user()["full_name"],"System Help",f"Added help article: {title}.")
+    flash("System help article published.","success"); return redirect(url_for("admin_dashboard"))
+
+@app.route("/admin/learners")
+@login_required
+@role_required("Admin","ICT")
+def all_learners():
+    rows=q("SELECT * FROM students ORDER BY active DESC,grade,full_name")
+    guardians=q("""SELECT gl.student_id, GROUP_CONCAT(gu.full_name || ' (' || gl.relationship || ')', ', ') AS guardians FROM guardian_links gl JOIN users gu ON gu.id=gl.guardian_user_id WHERE gl.active=1 GROUP BY gl.student_id""")
+    guardian_map={r["student_id"]:r["guardians"] for r in guardians}
+    return render_template("directory.html", directory_type="Learners", rows=rows, settings=school_settings(), role=current_user()["role"], actor_name=current_user()["full_name"], guardian_map=guardian_map)
+
+@app.route("/admin/employees")
+@login_required
+@role_required("Admin","ICT")
+def all_employees():
+    rows=q("SELECT * FROM users WHERE role NOT IN ('Student','Parent','System') ORDER BY active DESC,role,full_name")
+    return render_template("directory.html", directory_type="Employees", rows=rows, settings=school_settings(), role=current_user()["role"], actor_name=current_user()["full_name"], guardian_map={})
+
+@app.route("/users/<int:user_id>/qr")
+@login_required
+def user_qr(user_id:int):
+    user=q("SELECT * FROM users WHERE id=? AND role!='System'",(user_id,),one=True)
+    if not user: abort(404)
+    if current_user()["role"] not in {"Admin","ICT"} and current_user()["id"]!=user_id: abort(403)
+    token=user["qr_access_token"]
+    if not token:
+        token=uuid.uuid4().hex; execute("UPDATE users SET qr_access_token=? WHERE id=?",(token,user_id))
+    payload=url_for("qr_landing", token=token, _external=True)
+    qr=qrcode.QRCode(version=1,box_size=8,border=3); qr.add_data(payload); qr.make(fit=True)
+    buf=io.BytesIO(); qr.make_image().save(buf,format="PNG"); buf.seek(0)
+    return send_file(buf,mimetype="image/png",download_name=f"{secure_filename(user['username'])}-portal-qr.png")
+
+@app.route("/qr/<token>")
+def qr_landing(token:str):
+    user=q("SELECT id FROM users WHERE qr_access_token=? AND active=1 AND role!='System'",(token,),one=True)
+    if not user: return redirect(url_for("index"))
+    # QR code intentionally opens the institution portal rather than granting passwordless login.
+    return redirect(url_for("login", user=user["id"]))
+
+@app.route("/finance/ledger", methods=["POST"])
+@login_required
+@role_required("Finance","Admin")
+def finance_post_ledger():
+    entry_type=request.form.get("entry_type","Expense"); category=request.form.get("category","General").strip() or "General"; amount=float(request.form.get("amount",0) or 0)
+    description=request.form.get("description","").strip(); reference=request.form.get("reference_no","").strip(); payee=request.form.get("payee_user_id",type=int) or None
+    if entry_type not in {"Income","Expense","Payroll","Adjustment"} or amount<=0 or not description:
+        flash("Enter a valid ledger transaction.","danger"); return redirect(url_for("finance_dashboard"))
+    if entry_type=="Payroll" and (not payee or not q("SELECT id FROM users WHERE id=? AND active=1 AND role NOT IN ('Student','Parent','System')",(payee,),one=True)):
+        flash("Select a valid active employee for payroll.","danger"); return redirect(url_for("finance_dashboard"))
+    execute("INSERT INTO finance_ledger(entry_type,category,payee_user_id,amount,description,reference_no,posted_by) VALUES(?,?,?,?,?,?,?)",(entry_type,category,payee,amount,description,reference,current_user()["id"]))
+    audit(current_user()["id"],current_user()["full_name"],"Finance Transaction",f"Posted {entry_type} of {amount:.2f} ({reference or 'no reference'}).")
+    flash("Transaction posted and locked. Only an Administrator can reverse it.","success"); return redirect(url_for("finance_dashboard"))
+
+@app.route("/finance/ledger/<int:entry_id>/reverse", methods=["POST"])
+@login_required
+@role_required("Admin")
+def finance_reverse_ledger(entry_id:int):
+    row=q("SELECT * FROM finance_ledger WHERE id=?",(entry_id,),one=True)
+    if not row: abort(404)
+    if row["status"]=="Reversed": flash("Transaction is already reversed.","warning"); return redirect(url_for("finance_dashboard"))
+    execute("UPDATE finance_ledger SET status='Reversed',reversed_by=?,reversed_at=CURRENT_TIMESTAMP WHERE id=? AND status='Posted'",(current_user()["id"],entry_id))
+    audit(current_user()["id"],current_user()["full_name"],"Reverse Finance Transaction",f"Reversed ledger entry #{entry_id}.")
+    flash("Transaction reversed by Administrator. Original record remains visible for audit.","success"); return redirect(url_for("finance_dashboard"))
+
+@app.route("/admin/theme", methods=["POST"])
+@login_required
+@role_required("Admin")
+def admin_theme():
+    return ict_settings()
+
+
+def _backup_tables():
+    names=[r[0] for r in get_db().execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()]
+    return names
+
+def _json_backup_payload(include_assets=True):
+    conn=get_db(); tables={}
+    for name in _backup_tables():
+        rows=conn.execute(f"SELECT * FROM [{name}]").fetchall()
+        tables[name]={"columns":list(rows[0].keys()) if rows else list(table_columns(conn,name)),"rows":[dict(r) for r in rows]}
+    assets=[]
+    if include_assets and UPLOAD_DIR.exists():
+        for path in UPLOAD_DIR.rglob('*'):
+            if not path.is_file() or path.name.endswith('.bak'): continue
+            try:
+                data=path.read_bytes()
+                if len(data)<=30*1024*1024:
+                    assets.append({"path":str(path.relative_to(DATA_DIR)).replace('\\','/'),"mime":mimetypes.guess_type(str(path))[0] or 'application/octet-stream',"data_base64":base64.b64encode(data).decode('ascii')})
+            except OSError:
+                continue
+    settings=dict(q("SELECT * FROM school_settings WHERE id=1",one=True) or {})
+    return {"format":"Prime Institution OS Full System JSON","version":2,"created_at":datetime.utcnow().isoformat(timespec='seconds')+'Z',"settings":settings,"tables":tables,"assets":assets,"notes":"Restore through Administration > Backup & Recovery. Password hashes are preserved; plaintext passwords and API keys are never exported."}
+
+@app.route("/backup/json")
+@login_required
+@role_required("Admin")
+def backup_json_download():
+    payload=_json_backup_payload(include_assets=True)
+    raw=json.dumps(payload,ensure_ascii=False,indent=2).encode('utf-8')
+    name=f"prime-institution-full-backup-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.json"
+    execute("INSERT INTO backup_registry(backup_type,file_name,row_count,created_by) VALUES(?,?,?,?)",("JSON",name,sum(v.get('row_count',0) if isinstance(v,dict) else 0 for v in []),current_user()["id"]))
+    return send_file(io.BytesIO(raw),mimetype='application/json',as_attachment=True,download_name=name)
+
+@app.route("/backup/json/restore", methods=["POST"])
+@login_required
+@role_required("Admin")
+def backup_json_restore():
+    file=request.files.get('json_backup')
+    if not file or not file.filename or not file.filename.lower().endswith('.json'):
+        flash('Choose a .json full system backup first.','danger'); return redirect(request.referrer or url_for('admin_dashboard'))
+    try: payload=json.load(file.stream)
+    except Exception as exc:
+        flash(f'Backup JSON could not be read: {exc}','danger'); return redirect(request.referrer or url_for('admin_dashboard'))
+    if payload.get('format')!='Prime Institution OS Full System JSON' or not isinstance(payload.get('tables'),dict):
+        flash('This file is not a valid Prime Institution OS backup.','danger'); return redirect(request.referrer or url_for('admin_dashboard'))
+    conn=get_db(); old_autocommit=conn.isolation_level
+    try:
+        session['_restore_actor_username']=current_user()['username']
+        conn.execute('PRAGMA foreign_keys=OFF')
+        conn.execute('BEGIN')
+        existing=_backup_tables()
+        for table in existing:
+            conn.execute(f'DELETE FROM [{table}]')
+        for table,data in payload['tables'].items():
+            if table.startswith('sqlite_') or table not in existing: continue
+            columns=data.get('columns') or []
+            for row in data.get('rows') or []:
+                cols=[c for c in columns if c in table_columns(conn,table)]
+                if not cols: continue
+                vals=[row.get(c) for c in cols]
+                placeholders=','.join('?' for _ in cols)
+                conn.execute(f"INSERT INTO [{table}] ({','.join('['+c+']' for c in cols)}) VALUES ({placeholders})",vals)
+        for asset in payload.get('assets') or []:
+            rel=str(asset.get('path',''))
+            if not rel.startswith('uploads/'): continue
+            target=(DATA_DIR/rel).resolve(); root=UPLOAD_DIR.resolve()
+            if root not in target.parents: continue
+            target.parent.mkdir(parents=True,exist_ok=True)
+            target.write_bytes(base64.b64decode(asset.get('data_base64','')))
+        conn.commit()
+        conn.execute('PRAGMA foreign_keys=ON')
+        init_db()
+        restored_actor=q('SELECT id,full_name FROM users WHERE username=? AND active=1 LIMIT 1',(session.get('_restore_actor_username',''),),one=True)
+        if not restored_actor:
+            restored_actor=q("SELECT id,full_name FROM users WHERE role='Admin' AND active=1 ORDER BY id LIMIT 1",one=True)
+        if restored_actor:
+            audit(restored_actor['id'],restored_actor['full_name'],'Restore JSON Backup',f"Full system JSON backup restored: {file.filename}.")
+        flash('Full system JSON restored successfully. Database records, settings and included uploaded assets are back in place.','success')
+    except Exception as exc:
+        conn.rollback(); conn.execute('PRAGMA foreign_keys=ON'); flash(f'JSON restore failed safely: {exc}','danger')
+    finally:
+        conn.isolation_level=old_autocommit
+    return redirect(request.referrer or url_for('admin_dashboard'))
 
 @app.route("/backup/download")
 @login_required

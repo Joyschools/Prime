@@ -28,3 +28,16 @@ This build upgrades the existing school portal toward a unified institutional pl
 ## Runtime note
 
 The available execution environment for this packaging pass does not have Flask and the application's runtime dependencies installed, so a live Flask server boot was not performed here.
+
+
+## Institution OS expansion v2
+- Real System Help centre and role-scoped help articles.
+- OpenAI Responses API and Chat Completions API adapters; key stays in OPENAI_API_KEY server environment.
+- AI usage audit log.
+- Library catalogue supports class/grade, subject, cover images, YouTube links, websites, source names and uploaded digital resources.
+- Separate complete learner and employee directories.
+- Institution mode labels (Primary, Secondary, TVET, College, University, Mixed) remain configurable through Administration.
+- Finance ledger supports locked Income/Expense/Payroll/Adjustment transactions; only Admin can reverse a posted transaction.
+- Full JSON system backup with database records, settings and included uploaded assets; JSON restore plus SQLite rollback.
+- User portal QR opens the institution login/landing page without storing plaintext credentials.
+- Advanced admin theme engine: colors, typography, radius, sidebar/header colors, navigation and bounded custom CSS.

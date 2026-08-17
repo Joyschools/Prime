@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ current_user.role }} | Profile</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
+<style>{{theme_style|safe}}</style></head>
 <body class="app-body">
   <div class="scroll-rail" id="scrollRail" aria-hidden="true"><div class="scroll-track"><div class="scroll-thumb" id="scrollThumb"></div></div></div>
   <main class="content single">
@@ -44,5 +44,5 @@
 <style>
 .portal-watermark{margin-top:36px;padding:16px 20px;text-align:center;font-size:12px;opacity:.62;letter-spacing:.15px;border-top:1px solid rgba(255,255,255,.08)}
 </style>
-</body>
+<div style="position:fixed;right:14px;bottom:14px;z-index:90;display:flex;gap:8px"><a class="btn btn-ghost mini" href="/system-help">Help</a><a class="btn btn-primary mini" href="/ai-assistant">AI</a></div></body>
 </html>
