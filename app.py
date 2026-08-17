@@ -7,6 +7,7 @@ import os
 import sqlite3
 import uuid
 import hashlib
+import hmac
 import secrets
 import smtplib
 from email.message import EmailMessage
@@ -668,11 +669,19 @@ def init_db() -> None:
                 conn.execute("INSERT OR IGNORE INTO departments(name,code) VALUES(?,?)", (name, code))
         conn.commit()
 
+        # Render/environment Administrator credentials are authoritative.
+        # Read them before any legacy-account cleanup so a production deployment
+        # can never delete the only Admin account and then leave the portal locked.
+        env_admin_username = os.environ.get("ADMIN_USERNAME", "").strip()
+        env_admin_password = os.environ.get("ADMIN_PASSWORD", "")
+        env_admin_name = os.environ.get("ADMIN_NAME", "").strip() or env_admin_username or "Administrator"
+        env_admin_configured = bool(env_admin_username and env_admin_password)
+
         # Convert legacy seeded accounts to an inert System account on this build.
         auth_row = conn.execute("SELECT auth_initialized FROM school_settings WHERE id=1").fetchone()
         auth_ready = bool(auth_row and auth_row["auth_initialized"])
         admin_count = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='Admin' AND active=1").fetchone()["c"]
-        if admin_count == 0 and not auth_ready:
+        if admin_count == 0 and not auth_ready and not env_admin_configured:
             # New installations start with the non-Administrator login page disabled.
             conn.execute("UPDATE school_settings SET auth_required=0 WHERE id=1")
             # Preserve FK-backed sample data by using a single disabled system identity.
@@ -753,23 +762,17 @@ def init_db() -> None:
                     conn.execute(f"DROP TRIGGER IF EXISTS [{obj_name}]")
 
         # Provision the production Administrator from environment variables when supplied.
-        # This keeps credentials out of source control and makes Render deployment deterministic.
-        env_admin_username = os.environ.get("ADMIN_USERNAME", "").strip()
-        env_admin_password = os.environ.get("ADMIN_PASSWORD", "")
-        env_admin_name = os.environ.get("ADMIN_NAME", "").strip()
-        if env_admin_username and env_admin_password and env_admin_name:
+        # These credentials are authoritative on every boot: the Render password can
+        # therefore recover the Admin account even after a database migration/reset.
+        if env_admin_configured:
             existing = conn.execute(
                 "SELECT id, role FROM users WHERE username=? LIMIT 1",
                 (env_admin_username,),
             ).fetchone()
             password_hash = generate_password_hash(env_admin_password)
             if existing:
-                if existing["role"] != "Admin":
-                    raise RuntimeError(
-                        f"ADMIN_USERNAME '{env_admin_username}' already belongs to a non-Administrator account."
-                    )
                 conn.execute(
-                    "UPDATE users SET full_name=?, password_hash=?, active=1 WHERE id=?",
+                    "UPDATE users SET full_name=?, password_hash=?, role='Admin', active=1 WHERE id=?",
                     (env_admin_name, password_hash, existing["id"]),
                 )
             else:
@@ -1211,6 +1214,34 @@ def login():
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         role = selected_role_from_request()
+
+        # Render Admin credentials are authoritative.  Keep this compatibility
+        # path at login time as well as in init_db(): a stale SQLite database,
+        # interrupted migration, or old seeded Admin record must never lock the
+        # production administrator out when ADMIN_USERNAME/ADMIN_PASSWORD are set.
+        env_admin_username = os.environ.get("ADMIN_USERNAME", "").strip()
+        env_admin_password = os.environ.get("ADMIN_PASSWORD", "")
+        if role == "Admin" and env_admin_username and env_admin_password:
+            if username == env_admin_username and hmac.compare_digest(password, env_admin_password):
+                admin = q("SELECT id FROM users WHERE username=? LIMIT 1", (env_admin_username,), one=True)
+                if not admin:
+                    admin_name = os.environ.get("ADMIN_NAME", "").strip() or env_admin_username or "Administrator"
+                    admin_id = execute(
+                        "INSERT INTO users(full_name,username,password_hash,role,active) VALUES(?,?,?,?,1)",
+                        (admin_name, env_admin_username, generate_password_hash(env_admin_password), "Admin"),
+                    )
+                else:
+                    admin_id = admin["id"]
+                    execute(
+                        "UPDATE users SET role='Admin', active=1, password_hash=? WHERE id=?",
+                        (generate_password_hash(env_admin_password), admin_id),
+                    )
+                execute("UPDATE school_settings SET auth_initialized=1, auth_required=1 WHERE id=1")
+                session.clear()
+                session.permanent = True
+                session["user_id"] = admin_id
+                return redirect(url_for("upgrade_hub"))
+
         user = q("SELECT * FROM users WHERE username=? AND active=1 AND role=?", (username, role), one=True)
         if not user or not check_password_hash(user["password_hash"], password):
             flash("Invalid username, password, or role.", "danger")
