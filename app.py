@@ -4,6 +4,7 @@ import re
 import csv
 import json
 import io
+import base64
 import os
 import sqlite3
 import uuid
@@ -90,12 +91,17 @@ def _load_or_create_secret() -> str:
             SECRET_FILE.write_text(value, encoding="utf-8")
             return value
     value = uuid.uuid4().hex + uuid.uuid4().hex
-    SECRET_FILE.write_text(value, encoding="utf-8")
     try:
-        SECRET_FILE.chmod(0o600)
+        fd = os.open(str(SECRET_FILE), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(value)
+        return value
+    except FileExistsError:
+        # Another Gunicorn worker created the shared secret at the same time.
+        return SECRET_FILE.read_text(encoding="utf-8").strip()
     except OSError:
-        pass
-    return value
+        SECRET_FILE.write_text(value, encoding="utf-8")
+        return value
 
 _secret_key = _load_or_create_secret()
 app.config.update(
@@ -104,6 +110,8 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=bool(os.environ.get("COOKIE_SECURE") == "1" or os.environ.get("RENDER")),
     SESSION_COOKIE_NAME="school_portal_session",
+    SESSION_COOKIE_PATH="/",
+    SESSION_REFRESH_EACH_REQUEST=True,
     PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,
 )
 session = flask_session
@@ -451,6 +459,7 @@ def init_db() -> None:
         ensure_column(conn, "school_settings", "institution_help TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "institution_contact TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "institution_image_path TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "parent_portal_enabled INTEGER NOT NULL DEFAULT 1")
 
         ensure_column(conn, "students", "guardian_name TEXT")
         ensure_column(conn, "students", "guardian_phone TEXT")
@@ -651,6 +660,20 @@ def init_db() -> None:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
         );
+        CREATE TABLE IF NOT EXISTS student_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL,
+            author_user_id INTEGER NOT NULL,
+            category TEXT NOT NULL DEFAULT 'General',
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            visible_to_parent INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY(author_user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_student_records_student ON student_records(student_id, created_at);
         CREATE TABLE IF NOT EXISTS finance_ledger (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entry_type TEXT NOT NULL CHECK(entry_type IN ('Income','Expense','Payroll','Adjustment')),
@@ -866,6 +889,8 @@ def load_current_user() -> None:
     user_id = session.get("user_id")
     if user_id:
         g.user = q("SELECT id, full_name, username, role, student_id, active FROM users WHERE id = ? AND active = 1 AND role != 'System'", (user_id,), one=True)
+        if g.user:
+            session.permanent = True
 
 
 def current_user():
@@ -916,6 +941,9 @@ def role_target(role: str) -> str:
 
 
 def enter_role_without_login(role: str):
+    if role == "Parent" and not parent_portal_enabled():
+        flash("Parent accounts are disabled for this institution mode.", "warning")
+        return redirect(url_for("index"))
     # Passwordless mode is intended only as a controlled demo/single-user setup.
     # Once a role has multiple active accounts, require an actual identity so one
     # user's dashboard cannot silently become another user's account.
@@ -968,6 +996,11 @@ def theme_style(settings=None) -> str:
 def current_landing_url() -> str:
     return url_for('index', _external=True)
 
+def portal_qr_data_uri() -> str:
+    payload=url_for("index", _external=True)
+    qr=qrcode.QRCode(version=2,box_size=5,border=2); qr.add_data(payload); qr.make(fit=True)
+    buf=io.BytesIO(); qr.make_image().save(buf,format="PNG"); return "data:image/png;base64,"+base64.b64encode(buf.getvalue()).decode("ascii")
+
 @app.context_processor
 def auth_template_context():
     settings=school_settings()
@@ -979,6 +1012,8 @@ def auth_template_context():
         "staff_label": settings['staff_label'],
         "staff_plural": "Teachers / Lecturers" if 'Lecturer' in (settings['staff_label'] or '') else "Employees",
         "help_enabled": True,
+        "parent_portal_enabled": parent_portal_enabled(),
+        "portal_qr_data_uri": portal_qr_data_uri(),
     }
 
 
@@ -1053,6 +1088,15 @@ def portal_student(student_id=None):
         return q("SELECT * FROM students WHERE id=? AND active=1", (student_id,), one=True)
     return q("SELECT * FROM students WHERE active=1 ORDER BY id LIMIT 1", one=True)
 
+
+def parent_portal_enabled() -> bool:
+    row = q("SELECT parent_portal_enabled FROM school_settings WHERE id=1", one=True)
+    if row is not None:
+        return bool(row["parent_portal_enabled"])
+    return school_settings()["institution_type"] in {"Primary School", "Secondary School", "Mixed Institution"}
+
+def teacher_or_admin() -> bool:
+    return bool(current_user() and current_user()["role"] in {"Teacher", "Admin"})
 
 def parent_children(user):
     """Return children the authenticated Parent may legitimately switch to."""
@@ -1266,6 +1310,9 @@ def index():
 def login():
     settings = school_settings()
     role = selected_role_from_request()
+    if role == "Parent" and not parent_portal_enabled():
+        flash("Parent / Guardian portal is disabled for this institution mode.", "warning")
+        return redirect(url_for("index"))
     if role and role != "Admin" and not auth_required():
         return enter_role_without_login(role)
     if request.method == "POST":
@@ -1673,6 +1720,7 @@ def student_dashboard():
 @login_required
 @role_required("Parent")
 def parent_dashboard():
+    if not parent_portal_enabled(): abort(404)
     children=parent_children(current_user())
     if not children: abort(404)
     requested=request.args.get("child_id", type=int)
@@ -2160,6 +2208,55 @@ def add_student():
     return redirect(request.referrer or url_for("dashboard"))
 
 
+@app.route("/students/<int:student_id>")
+@login_required
+def student_profile(student_id:int):
+    student=q("SELECT * FROM students WHERE id=?",(student_id,),one=True)
+    if not student: abort(404)
+    user=current_user(); role=user["role"]
+    if role in {"Student","Parent"} and not can_access_student(student_id): abort(403)
+    if role not in {"Admin","ICT","Teacher","Finance","Librarian","Student","Parent"}: abort(403)
+    guardians=q("""SELECT gu.id,gu.full_name,gu.username,gu.phone,gu.email,gl.relationship,gl.is_primary FROM guardian_links gl JOIN users gu ON gu.id=gl.guardian_user_id WHERE gl.student_id=? AND gl.active=1 ORDER BY gl.is_primary DESC,gu.full_name""",(student_id,))
+    payments=q("SELECT p.*,u.full_name AS recorder FROM payments p LEFT JOIN users u ON u.id=p.recorded_by WHERE p.student_id=? ORDER BY p.created_at DESC,p.id DESC",(student_id,))
+    records=q("SELECT r.*,u.full_name AS author,u.role AS author_role FROM student_records r JOIN users u ON u.id=r.author_user_id WHERE r.student_id=? AND (r.visible_to_parent=1 OR ? IN ('Admin','Teacher','ICT') OR r.author_user_id=?) ORDER BY r.created_at DESC,r.id DESC",(student_id,role,user["id"]))
+    results=q("SELECT * FROM exam_results WHERE student_id=? ORDER BY term DESC,subject",(student_id,))
+    awards=[r for r in records if r['category']=='Award']; discipline=[r for r in records if r['category']=='Indiscipline']
+    return render_template('student_profile.html',student=student,guardians=guardians,payments=payments,records=records,results=results,awards=awards,discipline=discipline,settings=school_settings(),actor_name=user['full_name'],role=role,can_edit=role in {'Admin','ICT'},can_write_record=role in {'Admin','Teacher'},parent_visible_count=sum(1 for r in records if r['visible_to_parent']))
+
+@app.route("/students/<int:student_id>/record", methods=["POST"])
+@login_required
+@role_required("Admin","Teacher")
+def add_student_record(student_id:int):
+    student=q("SELECT id,full_name FROM students WHERE id=?",(student_id,),one=True)
+    if not student: abort(404)
+    category=request.form.get('category','General').strip() or 'General'
+    title=request.form.get('title','').strip(); content=request.form.get('content','').strip()
+    if not title or not content:
+        flash('A record title and details are required.','danger'); return redirect(url_for('student_profile',student_id=student_id))
+    visible=1 if request.form.get('visible_to_parent')=='1' and current_user()['role'] in {'Admin','Teacher'} else 0
+    execute("INSERT INTO student_records(student_id,author_user_id,category,title,content,visible_to_parent) VALUES(?,?,?,?,?,?)",(student_id,current_user()['id'],category,title,content,visible))
+    audit(current_user()['id'],current_user()['full_name'],'Student Record',f"Added {category} record for {student['full_name']}; parent-visible={visible}.")
+    flash('Student record added.','success'); return redirect(url_for('student_profile',student_id=student_id))
+
+@app.route("/students/<int:student_id>/record/<int:record_id>/visibility", methods=["POST"])
+@login_required
+@role_required("Admin","Teacher")
+def toggle_student_record_visibility(student_id:int,record_id:int):
+    row=q("SELECT * FROM student_records WHERE id=? AND student_id=?",(record_id,student_id),one=True)
+    if not row: abort(404)
+    visible=1 if request.form.get('visible_to_parent')=='1' else 0
+    execute("UPDATE student_records SET visible_to_parent=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",(visible,record_id))
+    audit(current_user()['id'],current_user()['full_name'],'Student Record Visibility',f"Record #{record_id} visibility set to {visible}.")
+    flash('Parent visibility updated.','success'); return redirect(url_for('student_profile',student_id=student_id))
+
+@app.route("/students/search")
+@login_required
+@role_required("Admin","Teacher","ICT")
+def student_search():
+    term=request.args.get('q','').strip()
+    rows=q("SELECT id,full_name,admission_no,grade,payment_status,balance,active FROM students WHERE full_name LIKE ? OR admission_no LIKE ? ORDER BY full_name LIMIT 100",(f'%{term}%',f'%{term}%')) if term else q("SELECT id,full_name,admission_no,grade,payment_status,balance,active FROM students WHERE active=1 ORDER BY full_name LIMIT 100")
+    return render_template('student_search.html',rows=rows,term=term,settings=school_settings(),role=current_user()['role'],actor_name=current_user()['full_name'])
+
 @app.route("/students/<int:student_id>/update", methods=["POST"])
 @login_required
 @role_required("Admin", "ICT")
@@ -2341,6 +2438,21 @@ def finance_policy():
     except ValueError: limit=500
     execute("UPDATE school_settings SET result_download_balance_limit=? WHERE id=1",(limit,)); audit(current_user()['id'],current_user()['full_name'],'Finance Policy',f"Result download balance limit set to {limit:.2f}."); flash("Result download threshold updated.","success"); return redirect(url_for('finance_dashboard'))
 
+@app.route("/report-card/<int:student_id>/<int:batch_id>")
+@login_required
+def report_card(student_id:int,batch_id:int):
+    student=q("SELECT * FROM students WHERE id=?",(student_id,),one=True); batch=q("SELECT * FROM exam_batches WHERE id=?",(batch_id,),one=True)
+    if not student or not batch: abort(404)
+    role=current_user()['role']
+    if role in {'Student','Parent'} and not can_access_student(student_id): abort(403)
+    if role=='Parent' and not parent_portal_enabled(): abort(403)
+    limit=float(school_settings()['result_download_balance_limit'] or 0)
+    eligible=batch['finance_status']=='Approved' and float(student['balance'] or 0)<=limit
+    if role in {'Student','Parent'} and not eligible:
+        flash('This online report card is awaiting Finance clearance.','warning'); return redirect(request.referrer or url_for('dashboard'))
+    results=q("SELECT subject,term,mark,max_mark FROM exam_results WHERE student_id=? AND batch_id=? ORDER BY subject",(student_id,batch_id))
+    return render_template('report_card.html',student=student,batch=batch,results=results,eligible=eligible,settings=school_settings())
+
 @app.route("/results/<int:student_id>/<int:batch_id>/download")
 @login_required
 def download_result(student_id,batch_id):
@@ -2469,7 +2581,8 @@ def admin_institution_profile():
     academic_period_label=request.form.get("academic_period_label","Term").strip() or "Term"
     class_label=request.form.get("class_label","Class").strip() or "Class"
     department_label=request.form.get("department_label","Department").strip() or "Department"
-    execute("""UPDATE school_settings SET institution_type=?, learner_label=?, staff_label=?, academic_period_label=?, class_label=?, department_label=? WHERE id=1""",(institution_type,learner_label,staff_label,academic_period_label,class_label,department_label))
+    parent_enabled = 0 if institution_type in {"TVET", "College", "University"} else (1 if request.form.get('parent_portal_enabled') == '1' else 0)
+    execute("""UPDATE school_settings SET institution_type=?, learner_label=?, staff_label=?, academic_period_label=?, class_label=?, department_label=?, parent_portal_enabled=? WHERE id=1""",(institution_type,learner_label,staff_label,academic_period_label,class_label,department_label,parent_enabled))
     if institution_type in {"TVET","College","University"}:
         for name in DEFAULT_DEPARTMENTS:
             execute("INSERT OR IGNORE INTO departments(name,category) VALUES(?, 'Academic')",(name,))
@@ -2527,8 +2640,8 @@ def add_user():
     if role not in allowed or (actor["role"]=="ICT" and role in {"Admin","ICT"}):
         flash("This account type cannot be created by your role.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
-    if not full_name or not username or len(password)<8:
-        flash("Name, username, and a password of at least 8 characters are required.", "danger")
+    if not full_name or not username or len(password)<4:
+        flash("Name, username, and a password of at least 4 characters are required.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
     if role in {"Student","Parent"} and student_id:
         try: student_id=int(student_id)
@@ -2584,8 +2697,8 @@ def reset_user_password(user_id:int):
     user=q("SELECT * FROM users WHERE id=?",(user_id,),one=True)
     if not user or user["role"]==SYSTEM_ROLE: abort(404)
     password=request.form.get("password","")
-    if len(password)<8:
-        flash("Temporary password must be at least 8 characters.","danger")
+    if len(password)<4:
+        flash("Temporary password must be at least 4 characters.","danger")
         return redirect(url_for("admin_dashboard"))
     execute("UPDATE users SET password_hash=? WHERE id=?",(generate_password_hash(password),user_id))
     audit(actor["id"],actor["full_name"],"Password Reset",f"Administrator reset the password for {user['username']}.")

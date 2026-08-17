@@ -130,7 +130,7 @@
         <div class="muted topbar-clock" id="liveClock">Tuesday, Aug 4, 2026 • 11:30:58</div>
         <a class="btn btn-ghost mini" href="{{ url_for('logout') }}">Logout</a>
       </div>
-    <div class="quick-actions" style="margin:0 0 10px 0"><a class="btn btn-ghost mini" href="{{ '/users/' ~ current_user.id ~ '/qr' }}">Open portal QR</a><a class="btn btn-ghost mini" href="/system-help">System Help</a><a class="btn btn-primary mini" href="/ai-assistant">AI Assistant</a></div></header>
+    <div class="quick-actions" style="margin:0 0 10px 0"><a class="btn btn-ghost mini" href="/system-help">System Help</a><a class="btn btn-primary mini" href="/ai-assistant">AI Assistant</a></div></header>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -388,7 +388,7 @@
         <form class="stack-form two-col" method="post" action="{{ url_for('add_user') }}">
           <label><span>Full name</span><input name="full_name" required></label>
           <label><span>Username</span><input name="username" required autocomplete="off"></label>
-          <label><span>Temporary password</span><div class="password-wrap"><input id="adminCreatePassword" name="password" type="password" minlength="8" required autocomplete="new-password"><button class="password-toggle" type="button" data-password-target="adminCreatePassword">Show</button></div></label>
+          <label><span>Temporary password</span><div class="password-wrap"><input id="adminCreatePassword" name="password" type="password" minlength="4" required autocomplete="new-password"><button class="password-toggle" type="button" data-password-target="adminCreatePassword">Show</button></div></label>
           <label><span>Account type</span><select name="role" required>{% for role in all_roles %}{% if role!='System' %}<option value="{{ role }}">{{ role }}</option>{% endif %}{% endfor %}</select></label>
           <label><span>Position / title</span><input name="title" placeholder="HOD, Deputy, Dean, Registrar..."></label>
           <label><span>Department</span><select name="department"><option value="">Not assigned</option>{% for d in departments %}<option value="{{ d.name }}">{{ d.name }}</option>{% endfor %}</select></label>
@@ -435,7 +435,7 @@
         <label><span>Academic period label</span><input name="academic_period_label" value="{{ school_settings.academic_period_label }}" placeholder="Term / Semester"></label>
         <label><span>Class label</span><input name="class_label" value="{{ school_settings.class_label }}" placeholder="Class / Cohort"></label>
         <label><span>Department label</span><input name="department_label" value="{{ school_settings.department_label }}" placeholder="Department / School / Faculty"></label>
-        <div style="grid-column:1/-1" class="detail-card"><strong>College / TVET provisioning</strong><p class="muted">Choosing TVET, College, University or Mixed Institution automatically makes Communications and Computer Studies available as base departments.</p></div>
+        <label class="toggle-line"><input type="checkbox" name="parent_portal_enabled" value="1" {% if school_settings.parent_portal_enabled %}checked{% endif %}> Enable parent/guardian portal for this institution</label><div style="grid-column:1/-1" class="detail-card"><strong>College / TVET provisioning</strong><p class="muted">Choosing TVET, College, University or Mixed Institution automatically makes Communications and Computer Studies available as base departments.</p></div>
         <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save institution configuration</button></div>
       </form>
     </section>

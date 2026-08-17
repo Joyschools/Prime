@@ -113,7 +113,7 @@
         <div class="muted topbar-clock" id="liveClock">Tuesday, Aug 4, 2026 • 11:30:58</div>
         <a class="btn btn-ghost mini" href="{{ url_for('logout') }}">Logout</a>
       </div>
-    <div class="quick-actions" style="margin:0 0 10px 0"><a class="btn btn-ghost mini" href="{{ '/users/' ~ current_user.id ~ '/qr' }}">Open portal QR</a><a class="btn btn-ghost mini" href="/system-help">System Help</a><a class="btn btn-primary mini" href="/ai-assistant">AI Assistant</a></div></header>
+    <div class="quick-actions" style="margin:0 0 10px 0"><a class="btn btn-ghost mini" href="/system-help">System Help</a><a class="btn btn-primary mini" href="/ai-assistant">AI Assistant</a></div></header>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
