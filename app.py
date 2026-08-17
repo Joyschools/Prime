@@ -1360,7 +1360,10 @@ def login():
     if role == "Parent" and not parent_portal_enabled():
         flash("Parent / Guardian portal is disabled for this institution mode.", "warning")
         return redirect(url_for("index"))
-    if role and role != "Admin" and not auth_required():
+    # Keep the legacy single-account/passwordless portal shortcut on GET, but
+    # NEVER bypass an explicit credential POST. Accounts created by Admin/ICT
+    # must always be able to authenticate with their own username/password.
+    if request.method == "GET" and role and role != "Admin" and not auth_required():
         return enter_role_without_login(role)
     if request.method == "POST":
         username = request.form.get("username", "").strip()
