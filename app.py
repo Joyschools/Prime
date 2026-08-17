@@ -32,6 +32,7 @@ from flask import (
     url_for,
 )
 from werkzeug.security import check_password_hash, generate_password_hash
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -67,6 +68,8 @@ SYSTEM_ROLE = "System"
 INSTITUTION_TYPES = ("Primary School", "Secondary School", "TVET", "College", "University", "Mixed Institution")
 DEFAULT_DEPARTMENTS = ("Communications", "Computer Studies")
 _PORTAL_ROLE_COOKIE = "school_portal_role"
+_AUTH_COOKIE = "school_auth_token"
+_AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
 
 app = Flask(__name__, instance_path=str(INSTANCE_DIR), instance_relative_config=True)
 app.config.update(
@@ -883,6 +886,25 @@ def audit(actor_id: int | None, actor_name: str, action: str, details: str) -> N
 # -------------------------
 # Local role session helpers
 # -------------------------
+def _auth_serializer():
+    return URLSafeTimedSerializer(app.config["SECRET_KEY"], salt="school-auth-v3")
+
+
+def _auth_token_for(user_id: int) -> str:
+    return _auth_serializer().dumps({"uid": int(user_id)})
+
+
+def _user_from_auth_token(token: str):
+    try:
+        data = _auth_serializer().loads(token, max_age=_AUTH_COOKIE_MAX_AGE)
+        uid = int(data.get("uid", 0))
+    except (BadSignature, SignatureExpired, ValueError, TypeError, AttributeError):
+        return None
+    if not uid:
+        return None
+    return q("SELECT id, full_name, username, role, student_id, active FROM users WHERE id = ? AND active = 1 AND role != 'System'", (uid,), one=True)
+
+
 @app.before_request
 def load_current_user() -> None:
     g.user = None
@@ -891,6 +913,31 @@ def load_current_user() -> None:
         g.user = q("SELECT id, full_name, username, role, student_id, active FROM users WHERE id = ? AND active = 1 AND role != 'System'", (user_id,), one=True)
         if g.user:
             session.permanent = True
+            return
+    # Recover authentication if the Flask session cookie was lost/rejected.
+    token = request.cookies.get(_AUTH_COOKIE, "")
+    if token:
+        recovered = _user_from_auth_token(token)
+        if recovered:
+            g.user = recovered
+            session.permanent = True
+            session["user_id"] = recovered["id"]
+
+
+@app.after_request
+def persist_auth_cookie(response):
+    user = getattr(g, "user", None)
+    if user:
+        response.set_cookie(
+            _AUTH_COOKIE,
+            _auth_token_for(user["id"]),
+            max_age=_AUTH_COOKIE_MAX_AGE,
+            httponly=True,
+            secure=app.config.get("SESSION_COOKIE_SECURE", False),
+            samesite="Lax",
+            path="/",
+        )
+    return response
 
 
 def current_user():
@@ -1387,7 +1434,9 @@ def coming_soon(feature: str):
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("index"))
+    response = redirect(url_for("index"))
+    response.delete_cookie(_AUTH_COOKIE, path="/")
+    return response
 
 
 @app.route("/favicon.ico")
