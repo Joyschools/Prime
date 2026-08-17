@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/prime-upgrade.css') }}?v={{ upgrade_css_version }}"><style id="ui-primary-vars">:root{--ui-primary:{{ school_settings.primary_color if school_settings else ui_primary }};--ui-accent:{{ school_settings.accent_color if school_settings else ui_accent }};--brand-bg:{{ school_settings.background_color if school_settings else "#101318" }};--brand-panel:{{ school_settings.panel_color if school_settings else "#171b22" }};--heading-font:"{{ school_settings.heading_font if school_settings else ui_heading_font }}",Inter,sans-serif;--body-font:"{{ school_settings.body_font if school_settings else ui_body_font }}",Inter,sans-serif}</style></head>
 <body class="auth-body">
   <main class="auth-shell">
     <section class="auth-card glass">

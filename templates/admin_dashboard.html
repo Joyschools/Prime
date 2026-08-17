@@ -9,7 +9,7 @@
   <meta name="theme-color" content="{{ theme_color }}">
   <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/prime-upgrade.css') }}?v={{ upgrade_css_version }}"><style id="ui-primary-vars">:root{--ui-primary:{{ school_settings.primary_color if school_settings else ui_primary }};--ui-accent:{{ school_settings.accent_color if school_settings else ui_accent }};--brand-bg:{{ school_settings.background_color if school_settings else "#101318" }};--brand-panel:{{ school_settings.panel_color if school_settings else "#171b22" }};--heading-font:"{{ school_settings.heading_font if school_settings else ui_heading_font }}",Inter,sans-serif;--body-font:"{{ school_settings.body_font if school_settings else ui_body_font }}",Inter,sans-serif}</style></head>
 <body class="app-body admin-body">
   <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
   <div class="scroll-rail" id="scrollRail" aria-hidden="true"><div class="scroll-track"><div class="scroll-thumb" id="scrollThumb"></div></div></div>

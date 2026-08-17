@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/favicon.ico">
-<title>{{ portal_title }} | Login</title><link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}"><meta name="theme-color" content="{{ theme_color }}"><link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"></head>
+<title>{{ portal_title }} | Login</title><link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}"><meta name="theme-color" content="{{ theme_color }}"><link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='css/prime-upgrade.css') }}?v={{ upgrade_css_version }}"><style id="ui-primary-vars">:root{--ui-primary:{{ school_settings.primary_color if school_settings else ui_primary }};--ui-accent:{{ school_settings.accent_color if school_settings else ui_accent }};--brand-bg:{{ school_settings.background_color if school_settings else "#101318" }};--brand-panel:{{ school_settings.panel_color if school_settings else "#171b22" }};--heading-font:"{{ school_settings.heading_font if school_settings else ui_heading_font }}",Inter,sans-serif;--body-font:"{{ school_settings.body_font if school_settings else ui_body_font }}",Inter,sans-serif}</style></head>
 <body class="auth-body" style="--primary-blue: {{ school_settings.primary_color }};--deep-accent-blue:{{ school_settings.accent_color }};--bg:{{ school_settings.background_color }};--panel:{{ school_settings.panel_color }}">
 <main class="auth-shell landing-shell"><section class="auth-card glass portal-selector landing-card">
 <div class="landing-topbar">

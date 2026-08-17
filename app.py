@@ -108,6 +108,14 @@ session = flask_session
 def flash(message: str, category: str = "message") -> None:
     flask_flash(message, category)
 
+@app.context_processor
+def inject_upgrade_theme():
+    try:
+        st=school_settings()
+        return {"upgrade_css_version":"2.0","ui_heading_font":st["heading_font"],"ui_body_font":st["body_font"],"ui_primary":st["primary_color"],"ui_accent":st["accent_color"]}
+    except Exception:
+        return {"upgrade_css_version":"2.0","ui_heading_font":"Inter","ui_body_font":"Inter","ui_primary":"#10a37f","ui_accent":"#0e8a6d"}
+
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 DOC_DIR = UPLOAD_DIR / "documents"
@@ -382,6 +390,53 @@ def init_db() -> None:
                 FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE,
                 FOREIGN KEY(issued_by) REFERENCES users(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                user_id INTEGER PRIMARY KEY,
+                profile_path TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '',
+                department TEXT NOT NULL DEFAULT '', job_title TEXT NOT NULL DEFAULT '', bio TEXT NOT NULL DEFAULT '',
+                authority_level TEXT NOT NULL DEFAULT 'Standard', extra_permissions TEXT NOT NULL DEFAULT '[]',
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS departments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, code TEXT NOT NULL DEFAULT '', head_user_id INTEGER,
+                active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(head_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+            CREATE TABLE IF NOT EXISTS announcements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT NOT NULL, audience TEXT NOT NULL DEFAULT 'Everyone',
+                priority TEXT NOT NULL DEFAULT 'Normal', created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, active INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+            );
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, subject TEXT NOT NULL DEFAULT 'Conversation', conversation_type TEXT NOT NULL DEFAULT 'Direct',
+                created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+            );
+            CREATE TABLE IF NOT EXISTS conversation_members (
+                conversation_id INTEGER NOT NULL, user_id INTEGER NOT NULL, joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(conversation_id,user_id), FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL, sender_id INTEGER NOT NULL, body TEXT NOT NULL,
+                attachment_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, read_at TEXT,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE, FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'General',
+                action_url TEXT NOT NULL DEFAULT '', read_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS ai_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, prompt TEXT NOT NULL, response_excerpt TEXT NOT NULL DEFAULT '',
+                provider TEXT NOT NULL DEFAULT 'OpenAI-compatible', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+            CREATE TABLE IF NOT EXISTS resource_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, subject TEXT NOT NULL DEFAULT 'General', level TEXT NOT NULL DEFAULT 'All',
+                url TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_by INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+            );
             """
         )
 
@@ -454,6 +509,8 @@ def init_db() -> None:
             )
         else:
             conn.execute("UPDATE school_settings SET school_name = 'School Portal System' WHERE id = 1 AND TRIM(school_name) IN ('', 'School', 'Legacy Portal')")
+            conn.execute("INSERT OR IGNORE INTO departments(name, code) VALUES ('General Administration','ADMIN')")
+            conn.execute("INSERT OR IGNORE INTO user_profiles(user_id) SELECT id FROM users")
 
         # Extend the users role constraint to support the dedicated Librarian role.
         # Rebuild the user table and its direct FK dependants together. SQLite can
@@ -545,6 +602,18 @@ def init_db() -> None:
         ensure_column(conn, "users", "student_id INTEGER")
         ensure_column(conn, "users", "active INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "school_settings", "auth_initialized INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "school_settings", "institution_type TEXT NOT NULL DEFAULT 'School'")
+        ensure_column(conn, "school_settings", "learner_label TEXT NOT NULL DEFAULT 'Pupil'")
+        ensure_column(conn, "school_settings", "staff_label TEXT NOT NULL DEFAULT 'Teacher'")
+        ensure_column(conn, "school_settings", "class_label TEXT NOT NULL DEFAULT 'Class'")
+        ensure_column(conn, "school_settings", "academic_period_label TEXT NOT NULL DEFAULT 'Term'")
+        ensure_column(conn, "school_settings", "heading_font TEXT NOT NULL DEFAULT 'Inter'")
+        ensure_column(conn, "school_settings", "body_font TEXT NOT NULL DEFAULT 'Inter'")
+        ensure_column(conn, "school_settings", "topbar_enabled INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "school_settings", "ai_enabled INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "school_settings", "ai_provider_name TEXT NOT NULL DEFAULT 'OpenAI-compatible'")
+        ensure_column(conn, "school_settings", "ai_model TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "ai_api_url TEXT NOT NULL DEFAULT ''")
 
         # Convert legacy seeded accounts to an inert System account on this build.
         auth_row = conn.execute("SELECT auth_initialized FROM school_settings WHERE id=1").fetchone()
@@ -710,7 +779,11 @@ def load_current_user() -> None:
     g.user = None
     user_id = session.get("user_id")
     if user_id:
-        g.user = q("SELECT id, full_name, username, role, student_id, active FROM users WHERE id = ? AND active = 1 AND role != 'System'", (user_id,), one=True)
+        g.user = q("""SELECT u.id,u.full_name,u.username,u.role,u.student_id,u.active,
+                    COALESCE(p.profile_path,'') AS profile_path,COALESCE(p.department,'') AS department,
+                    COALESCE(p.job_title,'') AS job_title,COALESCE(p.authority_level,'Standard') AS authority_level
+                    FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
+                    WHERE u.id=? AND u.active=1 AND u.role!='System'""", (user_id,), one=True)
 
 
 def current_user():
@@ -1065,7 +1138,7 @@ def index():
     settings = school_settings()
     if current_user():
         user = current_user()
-        target = {"Admin":"admin_dashboard","ICT":"ict_dashboard","Finance":"finance_dashboard","Teacher":"teacher_dashboard","Student":"student_dashboard","Parent":"parent_dashboard","Librarian":"librarian_dashboard"}.get(user["role"], "login")
+        target = "upgrade_hub"
         return redirect(url_for(target))
     return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], setup_required=not auth_initialized())
 
@@ -1087,7 +1160,7 @@ def login():
         session.clear()
         session.permanent = True
         session["user_id"] = user["id"]
-        return redirect({"Admin":url_for("admin_dashboard"),"ICT":url_for("ict_dashboard"),"Finance":url_for("finance_dashboard"),"Teacher":url_for("teacher_dashboard"),"Student":url_for("student_dashboard"),"Parent":url_for("parent_dashboard"),"Librarian":url_for("librarian_dashboard")}[user["role"]])
+        return redirect(url_for("upgrade_hub"))
     return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, setup_required=not auth_initialized())
 
 
@@ -1099,7 +1172,7 @@ def register_admin():
     if request.method == "POST":
         full_name=request.form.get("full_name","").strip(); username=request.form.get("username","").strip(); password=request.form.get("password","")
         confirm=request.form.get("confirm_password","")
-        if not full_name or not username or len(password) < 4 or password != confirm:
+        if not full_name or not username or len(password) < 8 or password != confirm:
             flash("Enter a name, unique username, and matching password of at least 4 characters.", "danger")
             return render_template("register.html", school_settings=settings, portal_title=settings["school_name"])
         try:
@@ -1813,8 +1886,8 @@ def profile():
             flash("Full name is required.", "danger")
         else:
             if password:
-                if len(password) < 4:
-                    flash("Password must be at least 4 characters.", "danger")
+                if len(password) < 8:
+                    flash("Password must be at least 8 characters.", "danger")
                     return redirect(url_for("profile"))
                 execute("UPDATE users SET full_name = ?, password_hash = ? WHERE id = ?", (full_name, generate_password_hash(password), user["id"]))
             else:
@@ -2447,6 +2520,160 @@ def api_student(student_id: int):
     )
     return jsonify({"student": dict(student), "payments": [dict(p) for p in payments]})
 
+
+
+# -------------------------------------------------------------------
+# Prime institutional upgrade layer
+# -------------------------------------------------------------------
+PERMISSION_CATALOG=[
+    ("dashboard.view","View dashboards"),("people.view","View people"),("people.manage","Manage people"),
+    ("people.deactivate","Activate / deactivate accounts"),("academics.view","View academics"),("academics.manage","Manage academics"),
+    ("finance.view","View finance"),("finance.manage","Manage finance"),("reports.view","View reports"),
+    ("library.manage","Manage library"),("communications.send","Send communication"),("system.configure","Configure system"),
+    ("system.backup","Backup and restore"),("security.audit","View audit logs"),("ai.use","Use AI assistant")]
+ROLE_PERMISSIONS={
+ "Admin":{p for p,_ in PERMISSION_CATALOG},
+ "ICT":{"dashboard.view","people.view","people.manage","people.deactivate","academics.view","library.manage","communications.send","system.configure","security.audit","ai.use"},
+ "Finance":{"dashboard.view","people.view","finance.view","finance.manage","reports.view","communications.send"},
+ "Teacher":{"dashboard.view","people.view","academics.view","academics.manage","library.manage","communications.send","ai.use"},
+ "Librarian":{"dashboard.view","people.view","library.manage","communications.send","ai.use"},
+ "Student":{"dashboard.view","academics.view","library.manage","communications.send","ai.use"},
+ "Parent":{"dashboard.view","academics.view","communications.send"}}
+def has_permission(permission,user=None):
+    user=user or current_user()
+    if not user:return False
+    if user["role"]=="Admin":return True
+    base=ROLE_PERMISSIONS.get(user["role"],set())
+    row=q("SELECT extra_permissions FROM user_profiles WHERE user_id=?",(user["id"],),one=True)
+    try: extra=set(json.loads(row["extra_permissions"] or "[]")) if row else set()
+    except (TypeError,ValueError): extra=set()
+    return permission in base or permission in extra
+def permission_required(permission):
+    def deco(view):
+        @wraps(view)
+        def wrapper(*args,**kwargs):
+            if not has_permission(permission):abort(403)
+            return view(*args,**kwargs)
+        return wrapper
+    return deco
+def upgrade_people():
+    return q("""SELECT u.id,u.full_name,u.username,u.role,u.student_id,u.active,u.created_at,
+        COALESCE(p.profile_path,'') AS profile_path,COALESCE(p.department,'') AS department,
+        COALESCE(p.job_title,'') AS job_title,COALESCE(p.authority_level,'Standard') AS authority_level,
+        COALESCE(p.phone,'') AS phone,COALESCE(p.email,'') AS email,COALESCE(p.bio,'') AS bio
+        FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.role!='System' ORDER BY u.active DESC,u.full_name""")
+def upgrade_summary():
+    return {
+      "users":q("SELECT COUNT(*) c FROM users WHERE role!='System'",one=True)["c"],
+      "active_users":q("SELECT COUNT(*) c FROM users WHERE role!='System' AND active=1",one=True)["c"],
+      "staff":q("SELECT COUNT(*) c FROM users WHERE role IN ('Admin','ICT','Finance','Teacher','Librarian') AND active=1",one=True)["c"],
+      "students":q("SELECT COUNT(*) c FROM students WHERE active=1",one=True)["c"],
+      "balance":q("SELECT COALESCE(SUM(balance),0) v FROM students WHERE active=1",one=True)["v"],
+      "overdue":q("SELECT COUNT(*) c FROM library_loans WHERE status='Issued' AND due_date < date('now')",one=True)["c"],
+      "assignments":q("SELECT COUNT(*) c FROM assignments",one=True)["c"],
+      "unread":q("SELECT COUNT(*) c FROM notifications WHERE user_id=? AND read_at IS NULL",(current_user()["id"],),one=True)["c"]}
+@app.route('/upgrade-hub')
+@login_required
+def upgrade_hub():
+    user=current_user(); settings=school_settings(); summary=upgrade_summary()
+    people=upgrade_people() if has_permission('people.view') else [next((x for x in upgrade_people() if x['id']==user['id']),user)]
+    departments=q("SELECT d.*,u.full_name head_name FROM departments d LEFT JOIN users u ON u.id=d.head_user_id WHERE d.active=1 ORDER BY d.name")
+    announcements=q("SELECT a.*,u.full_name creator_name FROM announcements a LEFT JOIN users u ON u.id=a.created_by WHERE a.active=1 ORDER BY a.created_at DESC LIMIT 10")
+    resources=q("SELECT * FROM resource_links WHERE active=1 ORDER BY subject,title LIMIT 40")
+    library=q("SELECT * FROM library_items WHERE active=1 ORDER BY category,title LIMIT 12")
+    notifications=q("SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 10",(user['id'],))
+    chats=q("""SELECT c.id,c.subject,c.conversation_type,c.created_at,(SELECT MAX(x.created_at) FROM chat_messages x WHERE x.conversation_id=c.id) last_message,
+        (SELECT body FROM chat_messages x WHERE x.conversation_id=c.id ORDER BY x.created_at DESC LIMIT 1) preview
+        FROM conversations c JOIN conversation_members m ON m.conversation_id=c.id WHERE m.user_id=? ORDER BY COALESCE(last_message,c.created_at) DESC LIMIT 10""",(user['id'],))
+    role_label={'Admin':'Administrator','ICT':'ICT / Systems','Finance':'Finance','Teacher':'Teaching Staff','Student':settings['learner_label'],'Parent':'Parent / Guardian','Librarian':'Library'}.get(user['role'],user['role'])
+    return render_template('upgrade_hub.html',user=user,settings=settings,summary=summary,people=people,departments=departments,announcements=announcements,resources=resources,library=library,notifications=notifications,chats=chats,role_label=role_label,permission_catalog=PERMISSION_CATALOG,role_permissions=ROLE_PERMISSIONS.get(user['role'],set()),available_users=upgrade_people())
+@app.route('/profile/photo',methods=['POST'])
+@login_required
+def upload_profile_photo():
+    f=request.files.get('profile_photo')
+    if not f or not f.filename: flash('Choose a profile image first.','danger'); return redirect(url_for('upgrade_hub'))
+    ext=f.filename.rsplit('.',1)[-1].lower() if '.' in f.filename else ''
+    if ext not in {'png','jpg','jpeg','webp'}: flash('Profile photos must be PNG, JPG, JPEG or WEBP.','danger'); return redirect(url_for('upgrade_hub'))
+    dest=UPLOAD_DIR/'profiles'; dest.mkdir(exist_ok=True); name=f"profile-{current_user()['id']}-{uuid.uuid4().hex[:10]}.{ext}"; f.save(dest/name)
+    execute('INSERT OR IGNORE INTO user_profiles(user_id) VALUES(?)',(current_user()['id'],)); execute('UPDATE user_profiles SET profile_path=? WHERE user_id=?',('uploads/profiles/'+name,current_user()['id']))
+    audit(current_user()['id'],current_user()['full_name'],'Profile Photo Update','Profile photo changed.'); flash('Profile photo updated.','success'); return redirect(url_for('upgrade_hub')+'#profile')
+@app.route('/admin/people/<int:user_id>/toggle',methods=['POST'])
+@login_required
+@permission_required('people.deactivate')
+def toggle_person(user_id):
+    target=q("SELECT * FROM users WHERE id=? AND role!='System'",(user_id,),one=True)
+    if not target or target['id']==current_user()['id']: abort(404)
+    new_state=0 if target['active'] else 1; execute('UPDATE users SET active=? WHERE id=?',(new_state,user_id)); audit(current_user()['id'],current_user()['full_name'],'Account Status Change',f"{target['full_name']} {'activated' if new_state else 'deactivated'}.")
+    flash(f"{target['full_name']} is now {'active' if new_state else 'inactive'}.",'success'); return redirect(url_for('upgrade_hub')+'#people')
+@app.route('/admin/people/<int:user_id>/profile',methods=['POST'])
+@login_required
+@permission_required('people.manage')
+def update_person_profile(user_id):
+    target=q("SELECT id,full_name FROM users WHERE id=? AND role!='System'",(user_id,),one=True)
+    if not target: abort(404)
+    execute('INSERT OR IGNORE INTO user_profiles(user_id) VALUES(?)',(user_id,)); execute('UPDATE users SET full_name=? WHERE id=?',(request.form.get('full_name','').strip() or target['full_name'],user_id))
+    execute('UPDATE user_profiles SET department=?,job_title=?,phone=?,email=?,bio=?,authority_level=? WHERE user_id=?',(request.form.get('department','').strip(),request.form.get('job_title','').strip(),request.form.get('phone','').strip(),request.form.get('email','').strip(),request.form.get('bio','').strip(),request.form.get('authority_level','Standard').strip(),user_id))
+    flash('People profile updated.','success'); return redirect(url_for('upgrade_hub')+'#people')
+@app.route('/admin/authority/<int:user_id>',methods=['POST'])
+@login_required
+@role_required('Admin')
+def update_authority(user_id):
+    perms=[p for p,_ in PERMISSION_CATALOG if request.form.get('perm_'+p.replace('.','_'))]; execute('INSERT OR IGNORE INTO user_profiles(user_id) VALUES(?)',(user_id,)); execute('UPDATE user_profiles SET extra_permissions=?,authority_level=? WHERE user_id=?',(json.dumps(perms),request.form.get('authority_level','Standard'),user_id))
+    audit(current_user()['id'],current_user()['full_name'],'Authority Update',f"Updated authority for user {user_id}: {', '.join(perms) or 'none'}"); flash('Authority profile saved.','success'); return redirect(url_for('upgrade_hub')+'#authority')
+@app.route('/announcements/create',methods=['POST'])
+@login_required
+@permission_required('communications.send')
+def create_announcement():
+    title=request.form.get('title','').strip(); body=request.form.get('body','').strip(); audience=request.form.get('audience','Everyone').strip()
+    if not title or not body: flash('Announcement title and message are required.','danger'); return redirect(url_for('upgrade_hub')+'#communication')
+    execute('INSERT INTO announcements(title,body,audience,priority,created_by) VALUES(?,?,?,?,?)',(title,body,audience,request.form.get('priority','Normal'),current_user()['id']))
+    sql='SELECT id FROM users WHERE active=1 AND role!=\'System\'' + (' AND role=?' if audience not in {'Everyone','All'} else '')
+    rows=q(sql,(audience,) if audience not in {'Everyone','All'} else ())
+    for r in rows: execute('INSERT INTO notifications(user_id,title,body,kind,action_url) VALUES(?,?,?,?,?)',(r['id'],title,body,'Announcement',url_for('upgrade_hub')+'#communication'))
+    flash('Announcement published.','success'); return redirect(url_for('upgrade_hub')+'#communication')
+@app.route('/chat/start',methods=['POST'])
+@login_required
+@permission_required('communications.send')
+def start_chat():
+    rid=request.form.get('recipient_id',type=int); body=request.form.get('body','').strip(); subject=request.form.get('subject','').strip() or 'Direct conversation'
+    target=q("SELECT id FROM users WHERE id=? AND active=1 AND role!='System'",(rid,),one=True)
+    if not target or not body or target['id']==current_user()['id']: flash('Choose another active member and enter a message.','danger'); return redirect(url_for('upgrade_hub')+'#communication')
+    execute('INSERT INTO conversations(subject,conversation_type,created_by) VALUES(?,?,?)',(subject,'Direct',current_user()['id'])); cid=q('SELECT last_insert_rowid() id',one=True)['id']
+    execute('INSERT INTO conversation_members(conversation_id,user_id) VALUES(?,?),(?,?)',(cid,current_user()['id'],cid,rid)); execute('INSERT INTO chat_messages(conversation_id,sender_id,body) VALUES(?,?,?)',(cid,current_user()['id'],body))
+    execute('INSERT INTO notifications(user_id,title,body,kind,action_url) VALUES(?,?,?,?,?)',(rid,f"Message from {current_user()['full_name']}",body[:180],'Message',url_for('upgrade_hub')+'#communication')); flash('Message sent.','success'); return redirect(url_for('upgrade_hub')+'#communication')
+@app.route('/notifications/read',methods=['POST'])
+@login_required
+def read_notifications():
+    execute('UPDATE notifications SET read_at=CURRENT_TIMESTAMP WHERE user_id=? AND read_at IS NULL',(current_user()['id'],)); return redirect(url_for('upgrade_hub')+'#communication')
+@app.route('/resources/add',methods=['POST'])
+@login_required
+@permission_required('library.manage')
+def add_resource_link():
+    title=request.form.get('title','').strip(); url=request.form.get('url','').strip()
+    if not title or not url: flash('Resource title and URL are required.','danger'); return redirect(url_for('upgrade_hub')+'#library-ai')
+    if urllib.parse.urlparse(url).scheme not in {'http','https'}: flash('Resource URL must use HTTP or HTTPS.','danger'); return redirect(url_for('upgrade_hub')+'#library-ai')
+    execute('INSERT INTO resource_links(title,subject,level,url,description,created_by) VALUES(?,?,?,?,?,?)',(title,request.form.get('subject','General'),request.form.get('level','All'),url,request.form.get('description','').strip(),current_user()['id'])); flash('Study resource added.','success'); return redirect(url_for('upgrade_hub')+'#library-ai')
+@app.route('/ai/ask',methods=['POST'])
+@login_required
+@permission_required('ai.use')
+def ai_ask():
+    settings=school_settings(); prompt=request.form.get('prompt','').strip()
+    if not prompt:return jsonify({'error':'Prompt is required.'}),400
+    api_url=(os.environ.get('AI_API_URL') or settings['ai_api_url'] or '').strip(); key=os.environ.get('AI_API_KEY','').strip(); model=(os.environ.get('AI_MODEL') or settings['ai_model'] or '').strip()
+    if not api_url or not key or not model:return jsonify({'ok':False,'configured':False,'message':'AI is not configured yet. Connect an OpenAI-compatible provider with AI_API_URL, AI_API_KEY and AI_MODEL.'})
+    payload=json.dumps({'model':model,'messages':[{'role':'system','content':f"You are the learning assistant for {settings['school_name']}. Be accurate, educational and transparent about uncertainty."},{'role':'user','content':prompt}],'temperature':0.2}).encode()
+    req=urllib.request.Request(api_url,data=payload,headers={'Content-Type':'application/json','Authorization':'Bearer '+key},method='POST')
+    try:
+        with urllib.request.urlopen(req,timeout=20) as resp:data=json.loads(resp.read().decode('utf-8'))
+        answer=((data.get('choices') or [{}])[0].get('message') or {}).get('content') or data.get('output') or 'No response returned.'
+    except Exception as exc:return jsonify({'ok':False,'configured':True,'error':f'AI provider request failed: {exc}'}),502
+    execute('INSERT INTO ai_usage(user_id,prompt,response_excerpt,provider) VALUES(?,?,?,?)',(current_user()['id'],prompt,answer[:500],settings['ai_provider_name'])); return jsonify({'ok':True,'answer':answer,'model':model})
+@app.route('/system/configure',methods=['POST'])
+@login_required
+@permission_required('system.configure')
+def system_configure_upgrade():
+    vals=(request.form.get('institution_type','School').strip() or 'School',request.form.get('learner_label','Pupil').strip() or 'Pupil',request.form.get('staff_label','Teacher').strip() or 'Teacher',request.form.get('class_label','Class').strip() or 'Class',request.form.get('academic_period_label','Term').strip() or 'Term',request.form.get('heading_font','Inter').strip() or 'Inter',request.form.get('body_font','Inter').strip() or 'Inter',1 if request.form.get('ai_enabled') else 0,request.form.get('ai_provider_name','OpenAI-compatible').strip() or 'OpenAI-compatible',request.form.get('ai_model','').strip(),request.form.get('ai_api_url','').strip())
+    execute('UPDATE school_settings SET institution_type=?,learner_label=?,staff_label=?,class_label=?,academic_period_label=?,heading_font=?,body_font=?,ai_enabled=?,ai_provider_name=?,ai_model=?,ai_api_url=? WHERE id=1',vals); audit(current_user()['id'],current_user()['full_name'],'Institution Configuration','Updated institution mode, terminology, fonts and AI settings.'); flash('Institution configuration updated across the portal.','success'); return redirect(url_for('upgrade_hub')+'#authority')
 
 @app.errorhandler(403)
 def forbidden(_):
