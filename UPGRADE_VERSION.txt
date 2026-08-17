@@ -1,2 +1,2 @@
-Prime Institutional Upgrade
-Version: 2026.08.17-01
+Prime Institutional Upgrade v2
+2026-08-17

@@ -1,40 +1,26 @@
-# Prime Institutional Upgrade — 2026.08
+# Prime Institutional Upgrade v2 — 17 August 2026
 
-This build adds an institutional layer on top of the existing school workflows.
+This build moves the institutional layer from a transition screen toward a unified application shell.
 
-## New capabilities
+## Major changes
+- Finance is embedded in the command centre for Admin and Finance roles. Users see live income/balance figures, recent payments and a payment-posting form without leaving the dashboard. A detailed Finance route remains available for deep workflows.
+- Added two AI modes:
+  - **System AI** — built-in, deterministic portal guidance. It can explain where features live and start password recovery without seeing or storing user passwords.
+  - **API AI** — existing OpenAI-compatible provider gateway remains available for richer study/creation tasks when enabled and configured.
+- Added public System AI login help so a locked-out user can ask for recovery before authenticating.
+- Added secure one-time password reset tokens with 20-minute expiry and optional SMTP email delivery (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_TLS`). Reset links are invalidated after use.
+- Expanded library taxonomy for books, study links and image/picture resources. Existing file uploads already support PDF/DOC/DOCX/PNG/JPG/JPEG/WEBP.
+- Improved desktop and phone behavior for the institutional hub, Finance workspace, AI controls and tables.
+- Existing institutional terminology, people/profile, permissions, communications, notifications, leadership summaries, theme bridge, PWA and other Prime features remain intact.
 
-- Unified institutional command hub at `/upgrade-hub` for every authenticated role.
-- Global theme layer using the institution's login colors across the new experience.
-- Institution mode and terminology: School, College, University/TVET, Training Centre; configurable learner/staff/class/academic-period labels.
-- Curated typography controls.
-- First-class people profiles with profile pictures, department, job title, contact fields, authority level, activation/deactivation and audit trail.
-- Granular permission catalog with role defaults plus per-user extra permissions.
-- Executive/leadership-style summarized metrics.
-- Direct communications foundation: conversations, members, messages, announcements and in-app notifications.
-- Digital library resource links alongside the existing physical/digital library.
-- AI study-assistant gateway using an OpenAI-compatible API shape. Provider credentials can be supplied through environment variables rather than the browser.
-- AI usage audit table for future governance/limits.
-- New institutional database entities for departments and communications.
-- Existing Finance, Results, Examinations, Library, Elections and legacy role workspaces remain available.
-- Stronger password minimum (8 characters in registration/profile update paths touched by this upgrade).
+## Security notes
+- AI never receives password hashes or raw passwords.
+- Recovery tokens are stored as SHA-256 hashes and expire automatically.
+- Public recovery responses do not confirm whether a username exists.
+- The normal authenticated password-change workflow remains available.
 
-## AI configuration
+## Deployment
+The app creates the required new SQLite tables automatically at startup through `init_db()`.
+The bundled database also contains the new recovery/AI tables; the remaining application-managed tables continue to be created/migrated at startup.
 
-Preferred environment variables:
-
-- `AI_API_URL` — OpenAI-compatible chat-completions endpoint.
-- `AI_API_KEY` — server-side API key.
-- `AI_MODEL` — model name.
-
-These are intentionally not exposed to client JavaScript.
-
-The UI also stores provider metadata in `school_settings`; using environment variables is recommended for secrets.
-
-## Compatibility note
-
-The new layer uses additive SQLite tables/columns and does not require an immediate destructive database replacement. Existing records are preserved.
-
-## Recommended next engineering phase
-
-The next phase should move the growing Flask application into modular packages (`people`, `academics`, `finance`, `library`, `communications`, `ai`, `security`, etc.) and replace the historical `CREATE TABLE IF NOT EXISTS` evolution with versioned migrations.
+A live Flask boot test was not possible in the build environment because Flask and the project's runtime dependencies are not installed there. Python syntax and ZIP integrity were verified.

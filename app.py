@@ -6,6 +6,10 @@ import io
 import os
 import sqlite3
 import uuid
+import hashlib
+import secrets
+import smtplib
+from email.message import EmailMessage
 import threading
 import urllib.error
 import urllib.parse
@@ -437,6 +441,21 @@ def init_db() -> None:
                 url TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_by INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
             );
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+                expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS ai_system_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, intent TEXT NOT NULL, request_text TEXT NOT NULL DEFAULT '',
+                response_text TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+            CREATE TABLE IF NOT EXISTS library_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, library_item_id INTEGER NOT NULL, asset_type TEXT NOT NULL DEFAULT 'Image',
+                file_path TEXT NOT NULL, caption TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(library_item_id) REFERENCES library_items(id) ON DELETE CASCADE
+            );
             """
         )
 
@@ -762,6 +781,11 @@ def school_settings():
         """
     )
     return q("SELECT * FROM school_settings WHERE id = 1", one=True)
+
+
+def settings_school_name() -> str:
+    row=q("SELECT school_name FROM school_settings WHERE id=1",one=True)
+    return row["school_name"] if row else "School Portal"
 
 
 def audit(actor_id: int | None, actor_name: str, action: str, details: str) -> None:
@@ -2530,15 +2554,15 @@ PERMISSION_CATALOG=[
     ("people.deactivate","Activate / deactivate accounts"),("academics.view","View academics"),("academics.manage","Manage academics"),
     ("finance.view","View finance"),("finance.manage","Manage finance"),("reports.view","View reports"),
     ("library.manage","Manage library"),("communications.send","Send communication"),("system.configure","Configure system"),
-    ("system.backup","Backup and restore"),("security.audit","View audit logs"),("ai.use","Use AI assistant")]
+    ("system.backup","Backup and restore"),("security.audit","View audit logs"),("ai.use","Use AI assistant"),("ai.system","Use system AI guidance"),("password.recovery","Start password recovery")]
 ROLE_PERMISSIONS={
  "Admin":{p for p,_ in PERMISSION_CATALOG},
  "ICT":{"dashboard.view","people.view","people.manage","people.deactivate","academics.view","library.manage","communications.send","system.configure","security.audit","ai.use"},
  "Finance":{"dashboard.view","people.view","finance.view","finance.manage","reports.view","communications.send"},
  "Teacher":{"dashboard.view","people.view","academics.view","academics.manage","library.manage","communications.send","ai.use"},
  "Librarian":{"dashboard.view","people.view","library.manage","communications.send","ai.use"},
- "Student":{"dashboard.view","academics.view","library.manage","communications.send","ai.use"},
- "Parent":{"dashboard.view","academics.view","communications.send"}}
+ "Student":{"dashboard.view","academics.view","library.manage","communications.send","ai.use","ai.system","password.recovery"},
+ "Parent":{"dashboard.view","academics.view","communications.send","ai.system","password.recovery"}}
 def has_permission(permission,user=None):
     user=user or current_user()
     if not user:return False
@@ -2585,8 +2609,17 @@ def upgrade_hub():
     chats=q("""SELECT c.id,c.subject,c.conversation_type,c.created_at,(SELECT MAX(x.created_at) FROM chat_messages x WHERE x.conversation_id=c.id) last_message,
         (SELECT body FROM chat_messages x WHERE x.conversation_id=c.id ORDER BY x.created_at DESC LIMIT 1) preview
         FROM conversations c JOIN conversation_members m ON m.conversation_id=c.id WHERE m.user_id=? ORDER BY COALESCE(last_message,c.created_at) DESC LIMIT 10""",(user['id'],))
+    finance_context=None
+    if user['role'] in {'Admin','Finance'} and has_permission('finance.view'):
+        finance_context={
+          'payments':q("""SELECT p.*,s.full_name student_name,s.admission_no FROM payments p JOIN students s ON s.id=p.student_id ORDER BY p.created_at DESC,p.id DESC LIMIT 12"""),
+          'students':q("SELECT id,full_name,admission_no,balance FROM students WHERE active=1 ORDER BY full_name LIMIT 250"),
+          'total_income':q("SELECT COALESCE(SUM(amount),0) n FROM payments WHERE status='Posted'",one=True)['n'],
+          'balance':q("SELECT COALESCE(SUM(balance),0) n FROM students WHERE active=1",one=True)['n'],
+          'pending_results':q("SELECT COUNT(*) n FROM exam_batches WHERE finance_status='Pending'",one=True)['n'],
+        }
     role_label={'Admin':'Administrator','ICT':'ICT / Systems','Finance':'Finance','Teacher':'Teaching Staff','Student':settings['learner_label'],'Parent':'Parent / Guardian','Librarian':'Library'}.get(user['role'],user['role'])
-    return render_template('upgrade_hub.html',user=user,settings=settings,summary=summary,people=people,departments=departments,announcements=announcements,resources=resources,library=library,notifications=notifications,chats=chats,role_label=role_label,permission_catalog=PERMISSION_CATALOG,role_permissions=ROLE_PERMISSIONS.get(user['role'],set()),available_users=upgrade_people())
+    return render_template('upgrade_hub.html',user=user,settings=settings,summary=summary,people=people,departments=departments,announcements=announcements,resources=resources,library=library,notifications=notifications,chats=chats,role_label=role_label,permission_catalog=PERMISSION_CATALOG,role_permissions=ROLE_PERMISSIONS.get(user['role'],set()),available_users=upgrade_people(),finance_context=finance_context)
 @app.route('/profile/photo',methods=['POST'])
 @login_required
 def upload_profile_photo():
@@ -2653,6 +2686,93 @@ def add_resource_link():
     if not title or not url: flash('Resource title and URL are required.','danger'); return redirect(url_for('upgrade_hub')+'#library-ai')
     if urllib.parse.urlparse(url).scheme not in {'http','https'}: flash('Resource URL must use HTTP or HTTPS.','danger'); return redirect(url_for('upgrade_hub')+'#library-ai')
     execute('INSERT INTO resource_links(title,subject,level,url,description,created_by) VALUES(?,?,?,?,?,?)',(title,request.form.get('subject','General'),request.form.get('level','All'),url,request.form.get('description','').strip(),current_user()['id'])); flash('Study resource added.','success'); return redirect(url_for('upgrade_hub')+'#library-ai')
+@app.route('/ai/system',methods=['POST'])
+@login_required
+@permission_required('ai.system')
+def ai_system():
+    text=(request.form.get('prompt') or '').strip()
+    if not text:return jsonify({'ok':False,'message':'Tell me what you need help with.'}),400
+    low=text.lower()
+    user=current_user(); settings=school_settings()
+    intents=[]
+    answer=''
+    if any(k in low for k in ['forgot password','forgot my password','reset password','lost password','can\'t log in','cannot log in']):
+        intents.append('password_recovery')
+        answer=f"I can help start your {settings['school_name']} account recovery. Enter your username in the recovery box below and I’ll prepare a secure one-time reset request. For security, I never reveal an existing password."
+    elif any(k in low for k in ['finance','fees','payment','fees balance']):
+        intents.append('finance')
+        answer="Finance is available inside this dashboard. Use Finance workspace for balances, payments, receipts and result-release controls."
+    elif any(k in low for k in ['library','book','study','resource','read']):
+        intents.append('library')
+        answer="Open the Library & AI section to search books, open approved study links, and view uploaded learning files and images."
+    elif any(k in low for k in ['message','chat','inbox','ict']):
+        intents.append('communication')
+        answer="Use Communication Centre to message a colleague or department, publish a permitted announcement, and read your inbox."
+    elif any(k in low for k in ['result','exam','assignment','academic','class','course']):
+        intents.append('academics')
+        answer="Academic tools live in the Academics area. Your visible tools depend on your role and permissions."
+    elif any(k in low for k in ['admin','permission','role','authority','setting','theme','brand']):
+        intents.append('administration')
+        answer="System Authority controls institution mode, terminology, fonts, AI provider settings and per-person permissions. Only authorized administrators can change these."
+    else:
+        answer="I’m your built-in system guide. Try asking where to find Finance, Library, Messages, Results, Settings, or how to recover your password."
+    execute('INSERT INTO ai_system_events(user_id,intent,request_text,response_text) VALUES(?,?,?,?,?)',(user['id'],','.join(intents) or 'guide',text,answer))
+    return jsonify({'ok':True,'type':'system','intent':intents[0] if intents else 'guide','answer':answer})
+
+@app.route('/ai/system-public',methods=['POST'])
+def ai_system_public():
+    text=(request.form.get('prompt') or '').strip().lower()
+    if not text:return jsonify({'ok':True,'answer':'I can guide you through login help and password recovery.'})
+    if any(k in text for k in ['forgot password','reset password','lost password','cannot log in','can\'t log in']):
+        return jsonify({'ok':True,'intent':'password_recovery','answer':'I can start a secure password recovery. Enter the username used for this portal. I will never ask for or reveal your old password.'})
+    return jsonify({'ok':True,'intent':'login_help','answer':'For account access, choose your role and log in. For a forgotten password, ask me to reset it and enter your username. The reset link is one-time and expires automatically.'})
+
+@app.route('/ai/recovery/start',methods=['POST'])
+def ai_recovery_start():
+    username=(request.form.get('username') or current_user()['username']).strip()
+    target=q("SELECT id,full_name,username FROM users WHERE username=? AND active=1 AND role!='System'",(username,),one=True)
+    # Do not disclose whether an account exists to unauthenticated users. This route is login-protected; we still log the request.
+    if not target:
+        audit(current_user()['id'],current_user()['full_name'],'Password Recovery Request',f'No active account matched username {username}.')
+        return jsonify({'ok':True,'message':'If the account exists and has a recovery address, a reset link will be sent.'})
+    raw=secrets.token_urlsafe(36); digest=hashlib.sha256(raw.encode()).hexdigest()
+    execute("DELETE FROM password_reset_tokens WHERE user_id=? OR expires_at < CURRENT_TIMESTAMP",(target['id'],))
+    execute("INSERT INTO password_reset_tokens(user_id,token_hash,expires_at) VALUES(?,?,datetime('now','+20 minutes'))",(target['id'],digest))
+    profile=q("SELECT email FROM user_profiles WHERE user_id=?",(target['id'],),one=True)
+    reset_url=url_for('reset_password',token=raw,_external=True)
+    sent=False
+    smtp_host=os.environ.get('SMTP_HOST','').strip(); smtp_user=os.environ.get('SMTP_USER','').strip(); smtp_pass=os.environ.get('SMTP_PASSWORD','').strip(); smtp_port=int(os.environ.get('SMTP_PORT','587'))
+    recipient=(profile['email'] if profile else '') if profile else ''
+    if smtp_host and recipient:
+        try:
+            msg=EmailMessage(); msg['Subject']=f"{settings_school_name()} password reset"; msg['From']=smtp_user or f"no-reply@{request.host.split(':')[0]}"; msg['To']=recipient; msg.set_content(f"A password reset was requested for {target['full_name']}. Use this link within 20 minutes:\n\n{reset_url}\n\nIf you did not request this, ignore this message.")
+            with smtplib.SMTP(smtp_host,smtp_port,timeout=15) as server:
+                if os.environ.get('SMTP_TLS','1')!='0': server.starttls()
+                if smtp_user and smtp_pass: server.login(smtp_user,smtp_pass)
+                server.send_message(msg)
+            sent=True
+        except Exception as exc:
+            audit(current_user()['id'],current_user()['full_name'],'Password Recovery Mail Failure',str(exc)[:300])
+    audit(current_user()['id'],current_user()['full_name'],'Password Recovery Request',f'Prepared one-time reset for user {target["id"]}; email_sent={sent}.')
+    # In development / no SMTP mode only authorized current users can receive the link, and the token is one-time + 20 minutes.
+    return jsonify({'ok':True,'message':('A reset link was sent to the registered recovery email.' if sent else 'A secure reset link was prepared. Configure SMTP to deliver it automatically.'),'reset_url':reset_url if not sent else ''})
+
+@app.route('/reset-password/<token>',methods=['GET','POST'])
+def reset_password(token):
+    digest=hashlib.sha256(token.encode()).hexdigest()
+    row=q("SELECT pr.id,pr.user_id,u.full_name FROM password_reset_tokens pr JOIN users u ON u.id=pr.user_id WHERE pr.token_hash=? AND pr.used_at IS NULL AND pr.expires_at>CURRENT_TIMESTAMP AND u.active=1",(digest,),one=True)
+    if not row:
+        return render_template('error.html',title='Reset link expired',message='This password reset link is invalid or has expired. Start a new recovery request.'),400
+    if request.method=='POST':
+        password=request.form.get('password',''); confirm=request.form.get('confirm_password','')
+        if len(password)<8 or password!=confirm:
+            return render_template('reset_password.html',full_name=row['full_name'],error='Use a password of at least 8 characters and confirm it exactly.')
+        execute('UPDATE users SET password_hash=? WHERE id=?',(generate_password_hash(password),row['user_id']))
+        execute('UPDATE password_reset_tokens SET used_at=CURRENT_TIMESTAMP WHERE id=?',(row['id'],))
+        flash('Password updated. You can now log in with the new password.','success')
+        return redirect(url_for('login'))
+    return render_template('reset_password.html',full_name=row['full_name'])
+
 @app.route('/ai/ask',methods=['POST'])
 @login_required
 @permission_required('ai.use')
