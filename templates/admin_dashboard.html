@@ -9,7 +9,7 @@
   <meta name="theme-color" content="{{ theme_color }}">
   <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/prime-upgrade.css') }}?v={{ upgrade_css_version }}"><style id="ui-primary-vars">:root{--ui-primary:{{ school_settings.primary_color if school_settings else ui_primary }};--ui-accent:{{ school_settings.accent_color if school_settings else ui_accent }};--brand-bg:{{ school_settings.background_color if school_settings else "#101318" }};--brand-panel:{{ school_settings.panel_color if school_settings else "#171b22" }};--heading-font:"{{ school_settings.heading_font if school_settings else ui_heading_font }}",Inter,sans-serif;--body-font:"{{ school_settings.body_font if school_settings else ui_body_font }}",Inter,sans-serif}</style></head>
 <body class="app-body admin-body">
   <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
   <div class="scroll-rail" id="scrollRail" aria-hidden="true"><div class="scroll-track"><div class="scroll-thumb" id="scrollThumb"></div></div></div>
@@ -84,7 +84,7 @@
       <section class="nav-group">
         <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="users-panel"><span>Users</span><span class="nav-caret">▾</span></button>
         <div class="nav-group-links">
-          <button class="nav-link nav-action" type="button" data-target="users-panel">Employees</button>
+          <a class="nav-link" href="{{ url_for('user_management') }}">User Management</a><button class="nav-link nav-action" type="button" data-target="users-panel">Quick roster</button>
           <button class="nav-link nav-action" type="button" data-target="public-info-panel">Public page & access</button>
         </div>
       </section>
@@ -109,7 +109,7 @@
         <div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="library-admin-panel">Library control</button></div>
       </section>
       <section class="nav-group"><a class="nav-link" href="/institution">Institution profile</a></section>
-    </nav>
+    <a class="nav-link" href="{{ url_for('upgrade_hub') }}">← Command centre</a></nav>
 
     <div class="sidebar-foot">
       <a class="btn btn-ghost btn-block" href="{{ url_for('logout') }}">Logout</a>
@@ -355,7 +355,7 @@
     </section>
 
     <section id="users-panel" class="panel glass workspace-panel hidden">
-      <div class="panel-head"><div><div class="eyebrow">Employees</div><h3>User roster and roles</h3></div></div>
+      <div class="panel-head"><div><div class="eyebrow">People & accounts</div><h3>User roster and roles</h3></div><a class="btn btn-primary mini" href="{{ url_for('user_management') }}">Open User Management</a></div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Created</th><th>Action</th></tr></thead>
@@ -407,7 +407,7 @@
       </div>
 
       <div class="detail-card" style="margin-top:16px">
-        <h4>Create user / staff account</h4>
+        <h4>Create user / staff account</h4><p class="muted">For the complete workflow — departments, titles, parent links, learner accountability details, editing and account recovery — use <a href="{{ url_for('user_management') }}">User Management</a>.</p>
         <form class="stack-form two-col" method="post" action="{{ url_for('add_user') }}">
           <label><span>Full name</span><input name="full_name" required></label>
           <label><span>Username</span><input name="username" required></label>
