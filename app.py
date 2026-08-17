@@ -70,6 +70,8 @@ DEFAULT_DEPARTMENTS = ("Communications", "Computer Studies")
 _PORTAL_ROLE_COOKIE = "school_portal_role"
 _AUTH_COOKIE = "school_auth_token"
 _AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
+_PORTAL_CONTEXT_MAX_AGE = 60 * 60 * 12
+_PORTAL_CONTEXT_SALT = "school-portal-context-v1"
 
 app = Flask(__name__, instance_path=str(INSTANCE_DIR), instance_relative_config=True)
 app.config.update(
@@ -607,6 +609,7 @@ def init_db() -> None:
         ensure_column(conn, "users", "accountability_notes TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "profile_photo TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "archived_at TEXT")
+        conn.execute("CREATE TABLE IF NOT EXISTS portal_contexts (token_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, revoked INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)")
         ensure_column(conn, "school_settings", "auth_initialized INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "school_settings", "institution_type TEXT NOT NULL DEFAULT 'Secondary School'")
         ensure_column(conn, "school_settings", "learner_label TEXT NOT NULL DEFAULT 'Student'")
@@ -889,10 +892,8 @@ def audit(actor_id: int | None, actor_name: str, action: str, details: str) -> N
 def _auth_serializer():
     return URLSafeTimedSerializer(app.config["SECRET_KEY"], salt="school-auth-v3")
 
-
 def _auth_token_for(user_id: int) -> str:
     return _auth_serializer().dumps({"uid": int(user_id)})
-
 
 def _user_from_auth_token(token: str):
     try:
@@ -904,17 +905,59 @@ def _user_from_auth_token(token: str):
         return None
     return q("SELECT id, full_name, username, role, student_id, active FROM users WHERE id = ? AND active = 1 AND role != 'System'", (uid,), one=True)
 
+def _portal_context_serializer():
+    return URLSafeTimedSerializer(app.config["SECRET_KEY"], salt=_PORTAL_CONTEXT_SALT)
+
+def _ensure_portal_context_table():
+    execute("CREATE TABLE IF NOT EXISTS portal_contexts (token_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, revoked INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)")
+
+def _portal_context_for(user_id: int) -> str:
+    _ensure_portal_context_table()
+    token_id = uuid.uuid4().hex
+    execute("INSERT INTO portal_contexts(token_id,user_id) VALUES(?,?)", (token_id, int(user_id)))
+    return _portal_context_serializer().dumps({"uid": int(user_id), "tid": token_id})
+
+def _user_from_portal_context(token: str):
+    try:
+        data = _portal_context_serializer().loads(token, max_age=_PORTAL_CONTEXT_MAX_AGE)
+        uid = int(data.get("uid", 0)); tid = str(data.get("tid", ""))
+    except (BadSignature, SignatureExpired, ValueError, TypeError, AttributeError):
+        return None
+    if not uid or not tid:
+        return None
+    _ensure_portal_context_table()
+    valid = q("SELECT token_id FROM portal_contexts WHERE token_id=? AND user_id=? AND revoked=0", (tid, uid), one=True)
+    if not valid:
+        return None
+    return q("SELECT id, full_name, username, role, student_id, active FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
+
+def _portal_context_id(token: str):
+    try:
+        data = _portal_context_serializer().loads(token, max_age=_PORTAL_CONTEXT_MAX_AGE)
+        return str(data.get("tid", "")) or None
+    except Exception:
+        return None
 
 @app.before_request
 def load_current_user() -> None:
     g.user = None
+    context_token = request.args.get("portal_context") or request.form.get("portal_context")
+    if context_token:
+        contextual = _user_from_portal_context(context_token)
+        if contextual:
+            g.user = contextual
+            g.portal_context = context_token
+            session.permanent = True
+            session["user_id"] = contextual["id"]
+            session["active_portal_role"] = contextual["role"]
+            return
     user_id = session.get("user_id")
     if user_id:
         g.user = q("SELECT id, full_name, username, role, student_id, active FROM users WHERE id = ? AND active = 1 AND role != 'System'", (user_id,), one=True)
         if g.user:
             session.permanent = True
+            g.portal_context = None
             return
-    # Recover authentication if the Flask session cookie was lost/rejected.
     token = request.cookies.get(_AUTH_COOKIE, "")
     if token:
         recovered = _user_from_auth_token(token)
@@ -922,21 +965,37 @@ def load_current_user() -> None:
             g.user = recovered
             session.permanent = True
             session["user_id"] = recovered["id"]
-
+            g.portal_context = None
 
 @app.after_request
 def persist_auth_cookie(response):
     user = getattr(g, "user", None)
-    if user:
-        response.set_cookie(
-            _AUTH_COOKIE,
-            _auth_token_for(user["id"]),
-            max_age=_AUTH_COOKIE_MAX_AGE,
-            httponly=True,
-            secure=app.config.get("SESSION_COOKIE_SECURE", False),
-            samesite="Lax",
-            path="/",
-        )
+    if user and not getattr(g, "logging_out", False):
+        response.set_cookie(_AUTH_COOKIE, _auth_token_for(user["id"]), max_age=_AUTH_COOKIE_MAX_AGE, httponly=True, secure=app.config.get("SESSION_COOKIE_SECURE", False), samesite="Lax", path="/")
+        if request.method == "GET" and response.content_type and response.content_type.startswith("text/html"):
+            token = getattr(g, "portal_context", None)
+            if token:
+                try:
+                    body = response.get_data(as_text=True)
+                    marker = "</body>"
+                    script = """<script>(function(){const t=%r;try{sessionStorage.setItem('prime_portal_context',t)}catch(e){};function apply(){document.querySelectorAll('a[href]').forEach(function(a){try{const u=new URL(a.href,location.href);if(u.origin===location.origin&&!u.searchParams.has('portal_context')&&!u.pathname.startsWith('/static/')){u.searchParams.set('portal_context',t);a.href=u.toString()}}catch(e){}});document.querySelectorAll('form[action]').forEach(function(f){if(!f.querySelector('input[name="portal_context"]')){const i=document.createElement('input');i.type='hidden';i.name='portal_context';i.value=t;f.appendChild(i)}})}apply();new MutationObserver(apply).observe(document.documentElement,{subtree:true,childList:true});})();</script>""" % token
+                    if marker in body:
+                        response.set_data(body.replace(marker, script+marker, 1))
+                except Exception:
+                    pass
+    token = getattr(g, "portal_context", None)
+    if token and not getattr(g, "logging_out", False) and response.status_code in {301,302,303,307,308}:
+        location = response.headers.get("Location", "")
+        if location:
+            try:
+                parsed = urllib.parse.urlsplit(location)
+                if not parsed.netloc or parsed.netloc == request.host:
+                    params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+                    params.setdefault("portal_context", [token])
+                    query = urllib.parse.urlencode(params, doseq=True)
+                    response.headers["Location"] = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
+            except Exception:
+                pass
     return response
 
 
@@ -1346,10 +1405,6 @@ def health():
 @app.route("/")
 def index():
     settings = school_settings()
-    if current_user():
-        user = current_user()
-        target = {"Admin":"admin_dashboard","ICT":"ict_dashboard","Finance":"finance_dashboard","Teacher":"teacher_dashboard","Student":"student_dashboard","Parent":"parent_dashboard","Librarian":"librarian_dashboard"}.get(user["role"], "login")
-        return redirect(url_for(target))
     return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], setup_required=not auth_initialized())
 
 
@@ -1363,8 +1418,10 @@ def login():
     # Keep the legacy single-account/passwordless portal shortcut on GET, but
     # NEVER bypass an explicit credential POST. Accounts created by Admin/ICT
     # must always be able to authenticate with their own username/password.
-    if request.method == "GET" and role and role != "Admin" and not auth_required():
-        return enter_role_without_login(role)
+    if request.method == "GET" and role and role in ALL_PORTAL_ROLES:
+        # All portal roles use explicit credentials. This prevents one logged-in role
+        # from silently taking over another role workspace in the same browser.
+        pass
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
@@ -1376,7 +1433,10 @@ def login():
         session.clear()
         session.permanent = True
         session["user_id"] = user["id"]
-        return redirect({"Admin":url_for("admin_dashboard"),"ICT":url_for("ict_dashboard"),"Finance":url_for("finance_dashboard"),"Teacher":url_for("teacher_dashboard"),"Student":url_for("student_dashboard"),"Parent":url_for("parent_dashboard"),"Librarian":url_for("librarian_dashboard")}[user["role"]])
+        session["active_portal_role"] = user["role"]
+        context = _portal_context_for(user["id"])
+        target = {"Admin":url_for("admin_dashboard"),"ICT":url_for("ict_dashboard"),"Finance":url_for("finance_dashboard"),"Teacher":url_for("teacher_dashboard"),"Student":url_for("student_dashboard"),"Parent":url_for("parent_dashboard"),"Librarian":url_for("librarian_dashboard")}[user["role"]]
+        return redirect(target + "?" + urllib.parse.urlencode({"portal_context": context}))
     return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, setup_required=not auth_initialized())
 
 
@@ -1436,9 +1496,16 @@ def coming_soon(feature: str):
 
 @app.route("/logout")
 def logout():
+    g.logging_out = True
+    context_token=request.args.get("portal_context")
+    tid=_portal_context_id(context_token) if context_token else None
+    if tid:
+        _ensure_portal_context_table()
+        execute("UPDATE portal_contexts SET revoked=1 WHERE token_id=?", (tid,))
     session.clear()
-    response = redirect(url_for("index"))
+    response=redirect(url_for("index"))
     response.delete_cookie(_AUTH_COOKIE, path="/")
+    response.headers["Cache-Control"]="no-store"
     return response
 
 
@@ -1754,6 +1821,10 @@ def teacher_dashboard():
 @role_required("Student")
 def student_dashboard():
     student=portal_student(request.args.get("student_id", type=int))
+    if not student and current_user()["student_id"]:
+        student=q("SELECT * FROM students WHERE id=? AND active=1", (current_user()["student_id"],), one=True)
+    if not student:
+        student=q("SELECT * FROM students WHERE lower(full_name)=lower(?) AND active=1 ORDER BY id DESC LIMIT 1", (current_user()["full_name"],), one=True)
     if not student: abort(404)
     assignments=assignment_rows(student["grade"])
     submissions=q("SELECT * FROM submissions WHERE student_id=? ORDER BY submitted_at DESC", (student["id"],))
@@ -1765,7 +1836,7 @@ def student_dashboard():
     voted_positions={(r["election_id"], r["position"]) for r in q("SELECT election_id, position FROM election_votes WHERE voter_user_id=?",(current_user()["id"],))}
     library_items=q("SELECT * FROM library_items WHERE active=1 ORDER BY category,title LIMIT 80") if school_settings()["library_enabled"] else []
     settings=school_settings(); nav_items=navigation_items("Student", settings)
-    return render_template("role_dashboard.html", role="Student", workspace=workspace_for("Student"), student=student, assignments=assignments, submissions=submissions, results=results, result_releases=result_releases, messages=messages, elections=elections, election_candidates=election_candidates, voted_positions=voted_positions, library_items=library_items, actor_name=student["full_name"], nav_items=nav_items)
+    return render_template("student_dashboard.html", role="Student", workspace=workspace_for("Student"), student=student, assignments=assignments, submissions=submissions, results=results, result_releases=result_releases, messages=messages, elections=elections, election_candidates=election_candidates, voted_positions=voted_positions, library_items=library_items, actor_name=student["full_name"], nav_items=nav_items)
 
 
 @app.route("/parent-dashboard")
@@ -2704,6 +2775,11 @@ def add_user():
         flash("Username already exists. Choose a different username.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
     try:
+        if role == "Student" and not student_id:
+            grade = request.form.get("grade", "").strip() or "Unassigned"
+            admission_no = request.form.get("admission_no", "").strip() or next_admission_no()
+            fee = float(school_settings()["school_fee"] or 0)
+            student_id = execute("INSERT INTO students(admission_no,full_name,grade,student_phone,student_email,medical_condition,notes,payment_status,balance,active) VALUES(?,?,?,?,?,?,?,'Pending',?,1)", (admission_no, full_name, grade, request.form.get("phone", "").strip(), request.form.get("email", "").strip(), request.form.get("medical_notes", "").strip(), request.form.get("accountability_notes", "").strip(), fee))
         uid=execute("""INSERT INTO users(full_name, username, password_hash, role, student_id, active, title, department, phone, email, date_of_birth, gender, id_reference, address, emergency_contact, blood_group, medical_notes, accountability_notes)
                       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                    (full_name,username,generate_password_hash(password),role,student_id,title,department,request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip()))

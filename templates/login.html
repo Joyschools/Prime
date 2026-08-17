@@ -32,12 +32,12 @@
   </div>
 </section>
 <div class="portal-section-title"><div><div class="eyebrow">Choose your role</div><h2>Continue to your workspace</h2></div><span class="section-note">Select the area that matches you.</span></div>
-<div class="role-grid">
+<div class="role-grid"><a class="role-card" href="/login?role=Finance"><span class="role-kicker">Operations</span><strong>Finance</strong><span>Fees, transactions and accounts</span><b class="role-arrow">→</b></a><a class="role-card" href="/login?role=ICT"><span class="role-kicker">Technology</span><strong>ICT</strong><span>Systems, users and digital services</span><b class="role-arrow">→</b></a><a class="role-card" href="/login?role=Librarian"><span class="role-kicker">Learning resources</span><strong>Librarian</strong><span>Library catalogue and circulation</span><b class="role-arrow">→</b></a>
   <a class="role-card role-teacher-card" href="/teacher"><span class="role-kicker">Teaching workspace</span><strong>Teacher</strong><span>Assignments, marks, classes & communication</span><b class="role-arrow">→</b></a>
   <a class="role-card role-student-card" href="/student"><span class="role-kicker">Learning workspace</span><strong>Student</strong><span>Learning, assignments, results & classes</span><b class="role-arrow">→</b></a>
   {% if parent_portal_enabled %}<a class="role-card role-parent-card" href="/parent"><span class="role-kicker">Family workspace</span><strong>Parent</strong><span>Your child’s fees, results & communication</span><b class="role-arrow">→</b></a>{% endif %}
 </div>
-{% if setup_required %}<div class="setup-link"><a class="btn btn-ghost btn-block" href="/register">First-time Administrator setup</a></div>{% endif %}
+<div class="mini-card" style="margin-top:14px"><strong>Multiple workspaces</strong><span class="muted">Different role logins can remain open in separate browser tabs.</span></div>{% if setup_required %}<div class="setup-link"><a class="btn btn-ghost btn-block" href="/register">First-time Administrator setup</a></div>{% endif %}
 {% else %}
 <div class="eyebrow">{{ login_role }} access</div><h1>Log in</h1>{% if error %}<div class="flash danger">{{ error }}</div>{% endif %}<form method="post" action="/login?role={{ login_role }}" class="stack-form"><input type="hidden" name="role" value="{{ login_role }}"><label><span>Username</span><input name="username" autocomplete="username" required></label><label><span>Password</span><div class="password-wrap"><input id="loginPassword" type="password" name="password" autocomplete="current-password" required><button class="password-toggle" type="button" data-password-target="loginPassword" aria-label="Show password">Show</button></div></label><button class="btn btn-primary" type="submit">Log in as {{ login_role }}</button></form><p class="muted" style="margin-top:14px"><a href="/">Choose another role</a></p>
 {% endif %}
