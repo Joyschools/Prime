@@ -1,26 +1,30 @@
-# Prime Institutional Upgrade v2 — 17 August 2026
+# Institution OS Upgrade — 17 August 2026
 
-This build moves the institutional layer from a transition screen toward a unified application shell.
+This build upgrades the existing school portal toward a unified institutional platform.
 
-## Major changes
-- Finance is embedded in the command centre for Admin and Finance roles. Users see live income/balance figures, recent payments and a payment-posting form without leaving the dashboard. A detailed Finance route remains available for deep workflows.
-- Added two AI modes:
-  - **System AI** — built-in, deterministic portal guidance. It can explain where features live and start password recovery without seeing or storing user passwords.
-  - **API AI** — existing OpenAI-compatible provider gateway remains available for richer study/creation tasks when enabled and configured.
-- Added public System AI login help so a locked-out user can ask for recovery before authenticating.
-- Added secure one-time password reset tokens with 20-minute expiry and optional SMTP email delivery (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_TLS`). Reset links are invalidated after use.
-- Expanded library taxonomy for books, study links and image/picture resources. Existing file uploads already support PDF/DOC/DOCX/PNG/JPG/JPEG/WEBP.
-- Improved desktop and phone behavior for the institutional hub, Finance workspace, AI controls and tables.
-- Existing institutional terminology, people/profile, permissions, communications, notifications, leadership summaries, theme bridge, PWA and other Prime features remain intact.
+## Included in this upgrade
 
-## Security notes
-- AI never receives password hashes or raw passwords.
-- Recovery tokens are stored as SHA-256 hashes and expire automatically.
-- Public recovery responses do not confirm whether a username exists.
-- The normal authenticated password-change workflow remains available.
+- **People & Access** replaces the shallow Employees view with an institutional directory.
+- Admin can create Administrator, ICT, Finance, Teacher/Lecturer, Student/Pupil, Parent/Guardian and Librarian accounts.
+- **Role vs position**: account role controls the office; title and department describe the organizational position.
+- **Department layer** with automatic baseline provisioning of Communications and Computer Studies for TVET/College/University/Mixed institution modes.
+- **Institution configuration** for institution type and terminology such as Student/Pupil/Learner, Teacher/Lecturer, Term/Semester, Class/Cohort and Department/School/Faculty.
+- Expanded person profile fields, including optional DOB, gender, reference ID, address, emergency contact, blood group, medical notes and accountability notes.
+- **Guardian relationship layer** allowing Parent/Guardian accounts to be linked to learners without relying on a single name/phone field.
+- Existing accounts can be opened and edited.
+- **Archive/restore** preserves historical records instead of deleting account history.
+- **Administrator password reset** with 8-character minimum temporary-password enforcement and hashed storage.
+- ICT can manage ordinary institutional accounts but cannot create or modify Administrator/ICT accounts.
+- Professionalized Admin first-look dashboard and People & Access presentation.
+- Search/filtering across the people directory.
 
-## Deployment
-The app creates the required new SQLite tables automatically at startup through `init_db()`.
-The bundled database also contains the new recovery/AI tables; the remaining application-managed tables continue to be created/migrated at startup.
+## Integrity checks performed
 
-A live Flask boot test was not possible in the build environment because Flask and the project's runtime dependencies are not installed there. Python syntax and ZIP integrity were verified.
+- Python syntax compilation passed for `app.py` and `wsgi.py`.
+- Static assertions confirmed the new routes, permission boundaries, migration fields and institutional configuration features are present.
+- A copy of the shipped SQLite database was migrated with the new schema subset; original users/students remained intact and `PRAGMA foreign_key_check` reported no violations.
+- Final ZIP integrity test passed.
+
+## Runtime note
+
+The available execution environment for this packaging pass does not have Flask and the application's runtime dependencies installed, so a live Flask server boot was not performed here.

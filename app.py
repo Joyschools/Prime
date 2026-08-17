@@ -62,6 +62,8 @@ ADMIN_LOGIN_PATH = "/xtspolsjhulupjoppsup-lmkzcodup"
 ADMIN_ROLES = {"Admin"}
 ALL_ROLES = ALL_PORTAL_ROLES
 SYSTEM_ROLE = "System"
+INSTITUTION_TYPES = ("Primary School", "Secondary School", "TVET", "College", "University", "Mixed Institution")
+DEFAULT_DEPARTMENTS = ("Communications", "Computer Studies")
 _PORTAL_ROLE_COOKIE = "school_portal_role"
 
 app = Flask(__name__, instance_path=str(INSTANCE_DIR), instance_relative_config=True)
@@ -382,6 +384,28 @@ def init_db() -> None:
                 FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE,
                 FOREIGN KEY(issued_by) REFERENCES users(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS departments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                category TEXT NOT NULL DEFAULT 'Academic',
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS guardian_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guardian_user_id INTEGER NOT NULL,
+                student_id INTEGER NOT NULL,
+                relationship TEXT NOT NULL DEFAULT 'Guardian',
+                is_primary INTEGER NOT NULL DEFAULT 0,
+                notes TEXT NOT NULL DEFAULT '',
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(guardian_user_id, student_id),
+                FOREIGN KEY(guardian_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
+            );
             """
         )
 
@@ -440,6 +464,14 @@ def init_db() -> None:
         ensure_column(conn, "students", "special_info TEXT")
         ensure_column(conn, "payments", "receipt_path TEXT")
         ensure_column(conn, "students", "notes TEXT")
+        ensure_column(conn, "students", "date_of_birth TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "students", "gender TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "students", "id_reference TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "students", "address TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "students", "emergency_contact TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "students", "blood_group TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "students", "medical_notes TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "students", "accountability_notes TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "exam_batches", "finance_status TEXT NOT NULL DEFAULT 'Pending'")
         ensure_column(conn, "exam_batches", "finance_note TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "exam_batches", "approved_by INTEGER")
@@ -454,6 +486,10 @@ def init_db() -> None:
             )
         else:
             conn.execute("UPDATE school_settings SET school_name = 'School Portal System' WHERE id = 1 AND TRIM(school_name) IN ('', 'School', 'Legacy Portal')")
+
+        # Keep the two baseline college/TVET departments available immediately.
+        for dept_name in DEFAULT_DEPARTMENTS:
+            conn.execute("INSERT OR IGNORE INTO departments(name, category) VALUES(?, 'Academic')", (dept_name,))
 
         # Extend the users role constraint to support the dedicated Librarian role.
         # Rebuild the user table and its direct FK dependants together. SQLite can
@@ -544,7 +580,27 @@ def init_db() -> None:
             conn.execute("DROP TABLE users_legacy")
         ensure_column(conn, "users", "student_id INTEGER")
         ensure_column(conn, "users", "active INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "users", "title TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "department TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "phone TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "email TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "date_of_birth TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "gender TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "id_reference TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "address TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "emergency_contact TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "blood_group TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "medical_notes TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "accountability_notes TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "profile_photo TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "archived_at TEXT")
         ensure_column(conn, "school_settings", "auth_initialized INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "school_settings", "institution_type TEXT NOT NULL DEFAULT 'Secondary School'")
+        ensure_column(conn, "school_settings", "learner_label TEXT NOT NULL DEFAULT 'Student'")
+        ensure_column(conn, "school_settings", "staff_label TEXT NOT NULL DEFAULT 'Teacher'")
+        ensure_column(conn, "school_settings", "academic_period_label TEXT NOT NULL DEFAULT 'Term'")
+        ensure_column(conn, "school_settings", "class_label TEXT NOT NULL DEFAULT 'Class'")
+        ensure_column(conn, "school_settings", "department_label TEXT NOT NULL DEFAULT 'Department'")
 
         # Convert legacy seeded accounts to an inert System account on this build.
         auth_row = conn.execute("SELECT auth_initialized FROM school_settings WHERE id=1").fetchone()
@@ -983,6 +1039,7 @@ def inject_globals():
         "theme_accent": settings["primary_color"],
         "elections_enabled": bool(settings["elections_enabled"]),
         "library_enabled": bool(settings["library_enabled"]),
+        "institution_types": INSTITUTION_TYPES,
     }
 
 
@@ -1327,7 +1384,9 @@ def admin_dashboard():
         LIMIT 20
         """
     )
-    users = q("SELECT id, full_name, username, role, created_at FROM users ORDER BY created_at DESC")
+    users = q("""SELECT u.*, COALESCE(u.title, '') AS title, COALESCE(u.department, '') AS department,
+                      CASE WHEN u.active=1 THEN 'Active' ELSE 'Archived' END AS access_state
+               FROM users u ORDER BY u.active DESC, u.created_at DESC""")
     audits = q("SELECT * FROM audit_log ORDER BY created_at DESC, id DESC LIMIT 20")
     total_students = q("SELECT COUNT(*) AS c FROM students", one=True)["c"]
     active_students = q("SELECT COUNT(*) AS c FROM students WHERE active = 1", one=True)["c"]
@@ -1430,6 +1489,11 @@ def admin_dashboard():
         elections=elections,
         election_candidates=election_candidates,
         library_items=library_items,
+        departments=q("SELECT id, name, category, active FROM departments WHERE active=1 ORDER BY name"),
+        guardian_links=q("""SELECT gl.*, gu.full_name AS guardian_name, gu.username AS guardian_username, st.full_name AS student_name, st.admission_no
+                            FROM guardian_links gl JOIN users gu ON gu.id=gl.guardian_user_id
+                            JOIN students st ON st.id=gl.student_id ORDER BY gl.created_at DESC"""),
+        archived_users=q("SELECT id, full_name, username, role, title, department, archived_at FROM users WHERE active=0 AND role!='System' ORDER BY archived_at DESC, full_name"),
     )
 
 
@@ -2221,6 +2285,25 @@ def submit_exams():
     return redirect(url_for("dashboard", exam_grade=grade, exam_term=term))
 
 
+@app.route("/admin/institution-profile", methods=["POST"])
+@login_required
+@role_required("Admin")
+def admin_institution_profile():
+    institution_type=request.form.get("institution_type","Secondary School")
+    if institution_type not in INSTITUTION_TYPES: institution_type="Secondary School"
+    learner_label=request.form.get("learner_label","Student").strip() or "Student"
+    staff_label=request.form.get("staff_label","Teacher").strip() or "Teacher"
+    academic_period_label=request.form.get("academic_period_label","Term").strip() or "Term"
+    class_label=request.form.get("class_label","Class").strip() or "Class"
+    department_label=request.form.get("department_label","Department").strip() or "Department"
+    execute("""UPDATE school_settings SET institution_type=?, learner_label=?, staff_label=?, academic_period_label=?, class_label=?, department_label=? WHERE id=1""",(institution_type,learner_label,staff_label,academic_period_label,class_label,department_label))
+    if institution_type in {"TVET","College","University"}:
+        for name in DEFAULT_DEPARTMENTS:
+            execute("INSERT OR IGNORE INTO departments(name,category) VALUES(?, 'Academic')",(name,))
+    audit(current_user()["id"],current_user()["full_name"],"Institution Profile","Updated institution type and terminology.")
+    flash("Institution profile and terminology saved.","success")
+    return redirect(url_for("admin_dashboard"))
+
 @app.route("/admin/public-settings", methods=["POST"])
 @login_required
 @role_required("Admin")
@@ -2259,17 +2342,20 @@ def admin_login_access():
 def add_user():
     actor=current_user()
     if actor["role"] not in {"Admin","ICT"}: abort(403)
-    full_name = request.form.get("full_name", "").strip()
-    username = request.form.get("username", "").strip()
-    password = request.form.get("password", "")
-    role = request.form.get("role", "Teacher")
-    student_id = request.form.get("student_id") or None
-    allowed = set(ALL_PORTAL_ROLES) - {SYSTEM_ROLE}
-    if role not in allowed or (actor["role"] == "ICT" and role == "Admin"):
+    full_name=request.form.get("full_name", "").strip()
+    username=request.form.get("username", "").strip().lower()
+    password=request.form.get("password", "")
+    role=request.form.get("role", "Teacher")
+    title=request.form.get("title", "").strip()
+    department=request.form.get("department", "").strip()
+    student_id=request.form.get("student_id") or None
+    allowed=set(ALL_PORTAL_ROLES) - {SYSTEM_ROLE}
+    # ICT is a technical operator, not a privilege escalator.
+    if role not in allowed or (actor["role"]=="ICT" and role in {"Admin","ICT"}):
         flash("This account type cannot be created by your role.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
-    if not full_name or not username or len(password) < 4:
-        flash("Name, username, and a password of at least 4 characters is required.", "danger")
+    if not full_name or not username or len(password)<8:
+        flash("Name, username, and a password of at least 8 characters are required.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
     if role in {"Student","Parent"} and student_id:
         try: student_id=int(student_id)
@@ -2277,34 +2363,113 @@ def add_user():
     else:
         student_id=None
     try:
-        execute("INSERT INTO users(full_name, username, password_hash, role, student_id, active) VALUES (?, ?, ?, ?, ?, 1)", (full_name, username, generate_password_hash(password), role, student_id))
-        audit(actor["id"], actor["full_name"], "Add User", f"{full_name} ({username}) added as {role}.")
+        uid=execute("""INSERT INTO users(full_name, username, password_hash, role, student_id, active, title, department, phone, email, date_of_birth, gender, id_reference, address, emergency_contact, blood_group, medical_notes, accountability_notes)
+                      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (full_name,username,generate_password_hash(password),role,student_id,title,department,request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip()))
+        if role=="Parent" and student_id:
+            execute("INSERT OR IGNORE INTO guardian_links(guardian_user_id, student_id, relationship, is_primary) VALUES(?,?,?,?)", (uid,student_id,request.form.get("relationship","Guardian").strip() or "Guardian",1))
+        audit(actor["id"],actor["full_name"],"Add User",f"{full_name} ({username}) added as {role}; title={title or '—'}; department={department or '—'}.")
     except sqlite3.IntegrityError:
-        flash("Username already exists or student link is invalid.", "danger")
+        flash("Username already exists or the supplied learner link is invalid.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
-    flash("User created.", "success")
+    flash("Account created successfully.", "success")
     return redirect(request.referrer or url_for("admin_dashboard"))
 
+@app.route("/users/<int:user_id>/edit", methods=["GET","POST"])
+@login_required
+def edit_user(user_id:int):
+    actor=current_user()
+    if actor["role"] not in {"Admin","ICT"}: abort(403)
+    user=q("SELECT * FROM users WHERE id=?",(user_id,),one=True)
+    if not user or user["role"]==SYSTEM_ROLE: abort(404)
+    if actor["role"]=="ICT" and user["role"] in {"Admin","ICT"}: abort(403)
+    if request.method=="POST":
+        role=request.form.get("role",user["role"])
+        if actor["role"]=="ICT" and role in {"Admin","ICT"}: abort(403)
+        if role not in set(ALL_PORTAL_ROLES)-{SYSTEM_ROLE}: abort(400)
+        student_id=request.form.get("student_id") or None
+        if student_id:
+            try: student_id=int(student_id)
+            except ValueError: student_id=None
+        else: student_id=None
+        execute("""UPDATE users SET full_name=?, username=?, role=?, student_id=?, title=?, department=?, phone=?, email=?, date_of_birth=?, gender=?, id_reference=?, address=?, emergency_contact=?, blood_group=?, medical_notes=?, accountability_notes=? WHERE id=?""",
+               (request.form.get("full_name","").strip(),request.form.get("username","").strip().lower(),role,student_id,request.form.get("title","").strip(),request.form.get("department","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),user_id))
+        if role=="Parent" and student_id:
+            execute("INSERT OR IGNORE INTO guardian_links(guardian_user_id,student_id,relationship,is_primary) VALUES(?,?,?,?)",(user_id,student_id,request.form.get("relationship","Guardian").strip() or "Guardian",1))
+        audit(actor["id"],actor["full_name"],"Edit User",f"Updated {user['username']} ({user['role']}) -> {request.form.get('username','').strip()} ({role}).")
+        flash("Person profile updated.","success")
+        return redirect(url_for("admin_dashboard"))
+    students=q("SELECT id, full_name, admission_no FROM students WHERE active=1 ORDER BY full_name")
+    depts=q("SELECT name FROM departments WHERE active=1 ORDER BY name")
+    return render_template("user_edit.html", user=user, students=students, departments=depts, role_options=ALL_PORTAL_ROLES, guardian_links=q("SELECT * FROM guardian_links WHERE guardian_user_id=? AND active=1",(user_id,)))
 
+@app.route("/users/<int:user_id>/reset-password", methods=["POST"])
+@login_required
+def reset_user_password(user_id:int):
+    actor=current_user()
+    if actor["role"]!="Admin": abort(403)
+    user=q("SELECT * FROM users WHERE id=?",(user_id,),one=True)
+    if not user or user["role"]==SYSTEM_ROLE: abort(404)
+    password=request.form.get("password","")
+    if len(password)<8:
+        flash("Temporary password must be at least 8 characters.","danger")
+        return redirect(url_for("admin_dashboard"))
+    execute("UPDATE users SET password_hash=? WHERE id=?",(generate_password_hash(password),user_id))
+    audit(actor["id"],actor["full_name"],"Password Reset",f"Administrator reset the password for {user['username']}.")
+    flash("Password reset successfully. Give the temporary password directly to the account holder.","success")
+    return redirect(url_for("admin_dashboard"))
+
+@app.route("/users/<int:user_id>/archive", methods=["POST"])
+@login_required
+def archive_user(user_id:int):
+    actor=current_user()
+    if actor["role"]!="Admin": abort(403)
+    user=q("SELECT * FROM users WHERE id=?",(user_id,),one=True)
+    if not user or user["role"]==SYSTEM_ROLE: abort(404)
+    if user["id"]==actor["id"]:
+        flash("You cannot archive your own Administrator account.","warning")
+        return redirect(url_for("admin_dashboard"))
+    if user["role"]=="Admin" and q("SELECT COUNT(*) AS c FROM users WHERE role='Admin' AND active=1",one=True)["c"]<=1:
+        flash("The last active Administrator cannot be archived.","warning")
+        return redirect(url_for("admin_dashboard"))
+    execute("UPDATE users SET active=0, archived_at=CURRENT_TIMESTAMP WHERE id=?",(user_id,))
+    audit(actor["id"],actor["full_name"],"Archive User",f"{user['username']} ({user['role']}) archived; historical records retained.")
+    flash("Account archived. Historical records remain intact.","success")
+    return redirect(url_for("admin_dashboard"))
+
+@app.route("/users/<int:user_id>/restore", methods=["POST"])
+@login_required
+def restore_user(user_id:int):
+    actor=current_user()
+    if actor["role"]!="Admin": abort(403)
+    user=q("SELECT * FROM users WHERE id=?",(user_id,),one=True)
+    if not user or user["role"]==SYSTEM_ROLE: abort(404)
+    execute("UPDATE users SET active=1, archived_at=NULL WHERE id=?",(user_id,))
+    audit(actor["id"],actor["full_name"],"Restore User",f"{user['username']} ({user['role']}) restored.")
+    flash("Account restored.","success")
+    return redirect(url_for("admin_dashboard"))
+
+@app.route("/users/<int:user_id>/guardian-link", methods=["POST"])
+@login_required
+def guardian_link(user_id:int):
+    actor=current_user()
+    if actor["role"] not in {"Admin","ICT"}: abort(403)
+    user=q("SELECT * FROM users WHERE id=?",(user_id,),one=True)
+    if not user or user["role"]!="Parent": abort(404)
+    student_id=request.form.get("student_id")
+    try: student_id=int(student_id)
+    except (TypeError,ValueError): abort(400)
+    execute("INSERT OR REPLACE INTO guardian_links(guardian_user_id,student_id,relationship,is_primary,notes,active) VALUES(?,?,?,?,?,1)",(user_id,student_id,request.form.get("relationship","Guardian").strip() or "Guardian",1,request.form.get("notes","").strip()))
+    execute("UPDATE users SET student_id=? WHERE id=? AND student_id IS NULL",(student_id,user_id))
+    audit(actor["id"],actor["full_name"],"Guardian Link",f"Linked {user['username']} to student {student_id}.")
+    flash("Guardian link saved.","success")
+    return redirect(url_for("admin_dashboard"))
+
+# Backward-compatible endpoint: disable/archiving instead of destructive deletion.
 @app.route("/users/<int:user_id>/delete", methods=["POST"])
 @login_required
 def delete_user(user_id: int):
-    actor=current_user()
-    if actor["role"] != "Admin": abort(403)
-    user = q("SELECT * FROM users WHERE id = ?", (user_id,), one=True)
-    if not user or user["role"] == "System": abort(404)
-    if user["id"] == actor["id"]:
-        flash("You cannot delete your own account.", "warning")
-        return redirect(request.referrer or url_for("admin_dashboard"))
-    if user["role"] == "Admin" and q("SELECT COUNT(*) AS c FROM users WHERE role='Admin' AND active=1", one=True)["c"] <= 1:
-        flash("The last active Administrator cannot be disabled.", "warning")
-        return redirect(request.referrer or url_for("admin_dashboard"))
-    # Keep existing audit/payment records intact; deactivate the account instead of hard deleting it.
-    execute("UPDATE users SET active=0 WHERE id=?", (user_id,))
-    audit(actor["id"], actor["full_name"], "Disable User", f"{user['username']} ({user['role']}) disabled.")
-    flash("User disabled.", "success")
-    return redirect(request.referrer or url_for("admin_dashboard"))
-
+    return archive_user(user_id)
 
 @app.route("/export/<kind>")
 @login_required

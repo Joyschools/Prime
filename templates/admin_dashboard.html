@@ -27,7 +27,7 @@
     </div>
 
     <div class="sidebar-title">
-      <div class="eyebrow">Admin tools</div>
+      <div class="eyebrow">Institution OS</div>
       <h2>Control centre</h2>
     </div>
 
@@ -82,10 +82,11 @@
         </div>
       </section>
       <section class="nav-group">
-        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="users-panel"><span>Users</span><span class="nav-caret">▾</span></button>
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="users-panel"><span>People & Access</span><span class="nav-caret">▾</span></button>
         <div class="nav-group-links">
-          <button class="nav-link nav-action" type="button" data-target="users-panel">Employees</button>
+          <button class="nav-link nav-action" type="button" data-target="users-panel">Manage users</button>
           <button class="nav-link nav-action" type="button" data-target="public-info-panel">Public page & access</button>
+          <button class="nav-link nav-action" type="button" data-target="institution-profile-panel">Institution configuration</button>
         </div>
       </section>
       <section class="nav-group">
@@ -142,21 +143,26 @@
     {% endwith %}
 
     <section id="admin-overview-panel" class="panel glass workspace-panel landing-panel">
-      <div class="eyebrow">Administrator dashboard</div>
-      <h1 class="hero-title">Real admin job and authority</h1>
-      <p class="hero-copy">Finance, accountability, exports, backups, analytics, and role control live here. Staff never see this workspace.</p>
-      <div class="quick-actions">
-        <a class="btn btn-primary" href="{{ url_for('backup_download') }}">Download backup</a>
-        <a class="btn btn-ghost" href="{{ url_for('export_data', kind='students') }}">Export students CSV</a>
-        <a class="btn btn-ghost" href="#settings-panel">Update settings</a>
+      <div class="people-hero">
+        <div class="hero-card">
+          <div class="eyebrow">{{ school_settings.institution_type }} · Executive command centre</div>
+          <h2>{{ school_settings.school_name }}</h2>
+          <p class="hero-copy">One controlled environment for people, academics, finance, communication, records and institutional accountability.</p>
+          <div class="quick-actions">
+            <button class="btn btn-primary nav-action" type="button" data-target="users-panel">Open People & Access</button>
+            <a class="btn btn-ghost" href="{{ url_for('backup_download') }}">Protect with backup</a>
+            <a class="btn btn-ghost" href="{{ url_for('institution') }}">View institution profile</a>
+          </div>
+        </div>
+        <div class="hero-stat"><span class="eyebrow">People under management</span><strong>{{ users|length }}</strong><span class="muted">{{ school_settings.learner_label }}s, staff, guardians and administrators</span></div>
       </div>
-      <div class="stats-grid" id="admin-metrics">
-        <div class="mini-card"><span>Students</span><strong>{{ summary.total_students }}</strong></div>
-        <div class="mini-card"><span>Active</span><strong>{{ summary.active_students }}</strong></div>
-        <div class="mini-card"><span>Paid</span><strong>{{ summary.paid_students }}</strong></div>
-        <div class="mini-card"><span>Pending</span><strong>{{ summary.pending_students }}</strong></div>
-        <div class="mini-card"><span>Total income</span><strong>KES {{ "{:,.0f}".format(summary.total_income or 0) }}</strong></div>
-        <div class="mini-card"><span>Total balance</span><strong>KES {{ "{:,.0f}".format(summary.total_balance or 0) }}</strong></div>
+      <div class="stats-grid" id="admin-metrics" style="margin-top:16px">
+        <div class="mini-card"><span>{{ school_settings.learner_label }}s</span><strong>{{ summary.total_students }}</strong></div>
+        <div class="mini-card"><span>Active learners</span><strong>{{ summary.active_students }}</strong></div>
+        <div class="mini-card"><span>Paid accounts</span><strong>{{ summary.paid_students }}</strong></div>
+        <div class="mini-card"><span>Fee follow-up</span><strong>{{ summary.pending_students }}</strong></div>
+        <div class="mini-card"><span>Collections</span><strong>KES {{ "{:,.0f}".format(summary.total_income or 0) }}</strong></div>
+        <div class="mini-card"><span>Outstanding</span><strong>KES {{ "{:,.0f}".format(summary.total_balance or 0) }}</strong></div>
       </div>
     </section>
 
@@ -355,74 +361,86 @@
     </section>
 
     <section id="users-panel" class="panel glass workspace-panel hidden">
-      <div class="panel-head"><div><div class="eyebrow">Employees</div><h3>User roster and roles</h3></div></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Created</th><th>Action</th></tr></thead>
-          <tbody>
-            {% for u in users %}
-            <tr>
-              <td>{{ u.full_name }}</td>
-              <td>{{ u.username }}</td>
-              <td>{{ u.role }}{% if not u.active %} <span class="muted">(disabled)</span>{% endif %}</td>
-              <td>{{ u.created_at[:16] }}</td>
-              <td>
-                {% if u.role != 'System' and u.id != current_user.id and u.active %}
-                <form method="post" action="{{ url_for('delete_user', user_id=u.id) }}" onsubmit="return confirm('Delete this staff member?');">
-                  <button class="btn btn-ghost mini" type="submit">Delete</button>
-                </form>
-                {% else %}
-                <span class="muted">Protected</span>
-                {% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      <div class="panel-head"><div><div class="eyebrow">People & Access</div><h3>Institutional directory and account control</h3><p class="muted">Roles control the office. Titles and departments describe the organisational position. Archive accounts without destroying institutional history.</p></div><span class="pill-role">{{ users|length }} accounts</span></div>
+      <div class="people-filters">
+        <input id="peopleSearch" type="search" placeholder="Search name, username, title or department..." aria-label="Search people">
+        <select id="peopleRoleFilter"><option value="">All account types</option>{% for role in all_roles %}{% if role!='System' %}<option value="{{ role }}">{{ role }}</option>{% endif %}{% endfor %}</select>
+        <select id="peopleStateFilter"><option value="">All access states</option><option value="Active">Active</option><option value="Archived">Archived</option></select>
+        <button class="btn btn-primary" type="button" id="scrollCreateUser">+ Add person</button>
       </div>
-      <div class="detail-card" style="margin-top:16px; border-left:4px solid #0e8a6d">
+      <div class="table-wrap" style="margin-top:16px">
+        <table class="people-table" id="peopleTable"><thead><tr><th>Person</th><th>Role</th><th>Department</th><th>Access</th><th>Account</th><th>Action</th></tr></thead><tbody>
+        {% for u in users %}
+          {% if u.role!='System' %}<tr data-person="{{ (u.full_name ~ ' ' ~ u.username ~ ' ' ~ u.title ~ ' ' ~ u.department)|lower }}" data-role="{{ u.role }}" data-state="{{ u.access_state }}">
+            <td><div class="person-cell"><div class="avatar-sm">{{ u.full_name[:1]|upper }}</div><div><strong>{{ u.full_name }}</strong><div class="pill-title">{{ u.username }}</div></div></div></td>
+            <td><span class="pill-role">{{ u.role }}</span>{% if u.title %}<span class="pill-title">{{ u.title }}</span>{% endif %}</td>
+            <td>{{ u.department or 'Not assigned' }}</td>
+            <td><span class="account-state {{ 'active' if u.active else 'archived' }}">{{ u.access_state }}</span></td>
+            <td>{{ u.created_at[:16] }}</td>
+            <td><div class="quick-actions"><a class="btn btn-ghost mini" href="{{ url_for('edit_user', user_id=u.id) }}">Open / edit</a>{% if u.active and u.id!=current_user.id %}<form method="post" action="{{ url_for('archive_user', user_id=u.id) }}" onsubmit="return confirm('Archive this account? Historical records will remain.');"><button class="btn btn-ghost mini" type="submit">Archive</button></form>{% elif not u.active %}<form method="post" action="{{ url_for('restore_user', user_id=u.id) }}"><button class="btn btn-primary mini" type="submit">Restore</button></form>{% endif %}</div></td>
+          </tr>{% endif %}
+        {% endfor %}
+        </tbody></table>
+      </div>
+
+      <div class="detail-card" style="margin-top:18px" id="create-user-card">
+        <div class="panel-head"><div><div class="eyebrow">Create account</div><h4>New institutional person</h4></div><span class="muted">Administrator controls the full directory; ICT cannot create or modify Admin/ICT accounts.</span></div>
+        <form class="stack-form two-col" method="post" action="{{ url_for('add_user') }}">
+          <label><span>Full name</span><input name="full_name" required></label>
+          <label><span>Username</span><input name="username" required autocomplete="off"></label>
+          <label><span>Temporary password</span><div class="password-wrap"><input id="adminCreatePassword" name="password" type="password" minlength="8" required autocomplete="new-password"><button class="password-toggle" type="button" data-password-target="adminCreatePassword">Show</button></div></label>
+          <label><span>Account type</span><select name="role" required>{% for role in all_roles %}{% if role!='System' %}<option value="{{ role }}">{{ role }}</option>{% endif %}{% endfor %}</select></label>
+          <label><span>Position / title</span><input name="title" placeholder="HOD, Deputy, Dean, Registrar..."></label>
+          <label><span>Department</span><select name="department"><option value="">Not assigned</option>{% for d in departments %}<option value="{{ d.name }}">{{ d.name }}</option>{% endfor %}</select></label>
+          <label><span>Phone</span><input name="phone"></label><label><span>Email</span><input type="email" name="email"></label>
+          <label><span>Date of birth</span><input type="date" name="date_of_birth"></label><label><span>Gender</span><input name="gender"></label>
+          <label><span>ID / reference</span><input name="id_reference"></label><label><span>Blood group</span><input name="blood_group"></label>
+          <label><span>Link learner / guardian</span><select name="student_id"><option value="">Not linked</option>{% for st in user_students %}<option value="{{ st.id }}">{{ st.full_name }} — {{ st.admission_no }}</option>{% endfor %}</select></label>
+          <label><span>Relationship</span><input name="relationship" value="Guardian"></label>
+          <label style="grid-column:1/-1"><span>Address</span><input name="address"></label>
+          <label style="grid-column:1/-1"><span>Emergency contact</span><input name="emergency_contact"></label>
+          <label style="grid-column:1/-1"><span>Medical / health notes <span class="muted">(optional)</span></span><textarea name="medical_notes" rows="2"></textarea></label>
+          <label style="grid-column:1/-1"><span>Additional accountability notes</span><textarea name="accountability_notes" rows="2"></textarea></label>
+          <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Create institutional account</button></div>
+        </form>
+      </div>
+
+      <div class="detail-card" style="margin-top:18px">
+        <div class="panel-head"><div><div class="eyebrow">Guardian relationship layer</div><h4>Linked learners</h4></div><span class="muted">{{ guardian_links|length }} active links</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Guardian</th><th>Learner</th><th>Admission</th><th>Relationship</th></tr></thead><tbody>{% for link in guardian_links %}<tr><td>{{ link.guardian_name }}<div class="pill-title">{{ link.guardian_username }}</div></td><td>{{ link.student_name }}</td><td>{{ link.admission_no }}</td><td>{{ link.relationship }}</td></tr>{% else %}<tr><td colspan="4" class="muted">No guardian relationships recorded yet.</td></tr>{% endfor %}</tbody></table></div>
+      </div>
+
+      <div class="detail-card" style="margin-top:18px">
+        <div class="panel-head"><div><div class="eyebrow">Archived records</div><h4>Former / inactive accounts</h4></div><span class="muted">Historical records stay intact</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>Department</th><th>Archived</th><th></th></tr></thead><tbody>{% for u in archived_users %}<tr><td>{{ u.full_name }}</td><td>{{ u.role }}</td><td>{{ u.department or '—' }}</td><td>{{ (u.archived_at or '')[:16] }}</td><td><form method="post" action="{{ url_for('restore_user', user_id=u.id) }}"><button class="btn btn-primary mini" type="submit">Restore</button></form></td></tr>{% else %}<tr><td colspan="5" class="muted">No archived accounts.</td></tr>{% endfor %}</tbody></table></div>
+      </div>
+
+      <div class="detail-card" style="margin-top:18px; border-left:4px solid #0e8a6d">
         <div class="panel-head" style="margin-bottom:8px"><div><div class="eyebrow">Security control</div><h4 style="margin:0">Login Page Access</h4></div><span class="muted">Current: {% if settings.auth_required %}ENABLED{% else %}DISABLED{% endif %}</span></div>
-        <p class="muted">When disabled, every non-Administrator role goes directly to its relevant dashboard. When enabled, Teacher, Student, Parent, ICT, Finance and Librarian accounts must authenticate first. Administrator always requires authentication.</p>
+        <p class="muted">Administrator login is always protected. When enabled, institutional accounts authenticate before entering their workspaces.</p>
         <button class="btn {% if settings.auth_required %}btn-ghost{% else %}btn-primary{% endif %}" type="button" id="openLoginAccess">{% if settings.auth_required %}Disable login page{% else %}Enable login page{% endif %}</button>
       </div>
 
       <div id="loginAccessModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="loginAccessTitle">
-        <div class="modal-card">
-          <div class="panel-head"><div><div class="eyebrow">Administrator verification</div><h3 id="loginAccessTitle">Change login page access</h3></div><button type="button" class="password-toggle" id="closeLoginAccess">Close</button></div>
-          <div id="loginAccessStepConfirm">
-            <p>{% if settings.auth_required %}Are you sure you want to disable the login page for non-Administrator users?{% else %}Are you sure you want to enable the login page so non-Administrator users must authenticate before entering their dashboards?{% endif %}</p>
-            <p class="muted">Administrator login is never bypassed.</p>
-            <div class="quick-actions"><button class="btn btn-primary" type="button" id="continueLoginAccess">Yes, continue</button><button class="btn btn-ghost" type="button" id="cancelLoginAccess">No, cancel</button></div>
-          </div>
-          <div id="loginAccessStepPassword" class="hidden">
-            <p>Enter the current Administrator password to confirm this change.</p>
-            <form method="post" action="{{ url_for('admin_login_access') }}" class="stack-form">
-              <input type="hidden" name="confirm_login_access" value="yes">
-              <input type="hidden" name="desired_state" value="{% if settings.auth_required %}0{% else %}1{% endif %}">
-              <label><span>Administrator password</span><div class="password-wrap"><input id="loginAccessPassword" name="admin_password" type="password" minlength="4" required autocomplete="current-password"><button class="password-toggle" type="button" data-password-target="loginAccessPassword">Show</button></div></label>
-              <div class="quick-actions"><button class="btn btn-primary" type="submit">Confirm change</button><button class="btn btn-ghost" type="button" id="backLoginAccess">Back</button></div>
-            </form>
-          </div>
-        </div>
-      </div>
-
-      <div class="detail-card" style="margin-top:16px">
-        <h4>Create user / staff account</h4>
-        <form class="stack-form two-col" method="post" action="{{ url_for('add_user') }}">
-          <label><span>Full name</span><input name="full_name" required></label>
-          <label><span>Username</span><input name="username" required></label>
-          <label><span>Password (minimum 4 characters)</span><div class="password-wrap"><input id="adminCreatePassword" name="password" type="password" minlength="4" required><button class="password-toggle" type="button" data-password-target="adminCreatePassword">Show</button></div></label>
-          <label><span>Role</span>
-            <select name="role" required>{% for role in all_roles %}{% if role != 'System' %}<option value="{{ role }}">{{ role }}</option>{% endif %}{% endfor %}</select>
-          </label>
-          <label><span>Link Student/Parent account to pupil</span><select name="student_id"><option value="">Not linked</option>{% for st in user_students %}<option value="{{ st.id }}">{{ st.full_name }} — {{ st.admission_no }}</option>{% endfor %}</select></label>
-          <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Create account</button></div>
-        </form>
+        <div class="modal-card"><div class="panel-head"><div><div class="eyebrow">Administrator verification</div><h3 id="loginAccessTitle">Change login page access</h3></div><button type="button" class="password-toggle" id="closeLoginAccess">Close</button></div><div id="loginAccessStepConfirm"><p>{% if settings.auth_required %}Are you sure you want to disable the login page for non-Administrator users?{% else %}Enable the login page for institutional accounts?{% endif %}</p><div class="quick-actions"><button class="btn btn-primary" type="button" id="continueLoginAccess">Yes, continue</button><button class="btn btn-ghost" type="button" id="cancelLoginAccess">No, cancel</button></div></div><div id="loginAccessStepPassword" class="hidden"><p>Enter the current Administrator password to confirm this change.</p><form method="post" action="{{ url_for('admin_login_access') }}" class="stack-form"><input type="hidden" name="confirm_login_access" value="yes"><input type="hidden" name="desired_state" value="{% if settings.auth_required %}0{% else %}1{% endif %}"><label><span>Administrator password</span><div class="password-wrap"><input id="loginAccessPassword" name="admin_password" type="password" minlength="8" required autocomplete="current-password"><button class="password-toggle" type="button" data-password-target="loginAccessPassword">Show</button></div></label><div class="quick-actions"><button class="btn btn-primary" type="submit">Confirm change</button><button class="btn btn-ghost" type="button" id="backLoginAccess">Back</button></div></form></div></div>
       </div>
     </section>
 
+<section id="institution-profile-panel" class="panel glass workspace-panel hidden">
+      <div class="panel-head"><div><div class="eyebrow">Institution configuration</div><h3>Configure the platform around the institution</h3><p class="muted">Terminology is configurable; the underlying security model stays consistent.</p></div></div>
+      <form method="post" action="{{ url_for('admin_institution_profile') }}" class="stack-form two-col">
+        <label><span>Institution type</span><select name="institution_type">{% for value in institution_types %}<option value="{{ value }}" {% if value==school_settings.institution_type %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+        <label><span>Learner label</span><input name="learner_label" value="{{ school_settings.learner_label }}" placeholder="Student / Pupil / Learner"></label>
+        <label><span>Staff label</span><input name="staff_label" value="{{ school_settings.staff_label }}" placeholder="Teacher / Lecturer / Staff"></label>
+        <label><span>Academic period label</span><input name="academic_period_label" value="{{ school_settings.academic_period_label }}" placeholder="Term / Semester"></label>
+        <label><span>Class label</span><input name="class_label" value="{{ school_settings.class_label }}" placeholder="Class / Cohort"></label>
+        <label><span>Department label</span><input name="department_label" value="{{ school_settings.department_label }}" placeholder="Department / School / Faculty"></label>
+        <div style="grid-column:1/-1" class="detail-card"><strong>College / TVET provisioning</strong><p class="muted">Choosing TVET, College, University or Mixed Institution automatically makes Communications and Computer Studies available as base departments.</p></div>
+        <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save institution configuration</button></div>
+      </form>
+    </section>
 
-    <section id="public-info-panel" class="panel glass workspace-panel hidden">
+<section id="public-info-panel" class="panel glass workspace-panel hidden">
       <div class="panel-head"><div><div class="eyebrow">Before-login experience</div><h3>Public information & access</h3></div></div>
       <p class="muted">Choose what visitors can see before logging in, and choose whether school users must authenticate.</p>
       <form method="post" action="{{ url_for('admin_public_settings') }}" class="stack-form">
@@ -530,6 +548,14 @@
   continueBtn?.addEventListener('click',()=>{confirmStep?.classList.add('hidden');passwordStep?.classList.remove('hidden');setTimeout(()=>document.getElementById('loginAccessPassword')?.focus(),50);});
   backBtn?.addEventListener('click',()=>{passwordStep?.classList.add('hidden');confirmStep?.classList.remove('hidden');});
   modal.addEventListener('click',e=>{if(e.target===modal) hide();});
+})();
+</script>
+<script>
+(function(){
+  const search=document.getElementById('peopleSearch'), role=document.getElementById('peopleRoleFilter'), state=document.getElementById('peopleStateFilter'), table=document.getElementById('peopleTable');
+  function filterPeople(){ if(!table)return; const q=(search?.value||'').toLowerCase(), r=role?.value||'', st=state?.value||''; table.querySelectorAll('tbody tr').forEach(tr=>{const okq=!q||(tr.dataset.person||'').includes(q), okr=!r||tr.dataset.role===r, oks=!st||tr.dataset.state===st; tr.style.display=(okq&&okr&&oks)?'':'none';}); }
+  [search,role,state].forEach(x=>x&&x.addEventListener('input',filterPeople));
+  document.getElementById('scrollCreateUser')?.addEventListener('click',()=>document.getElementById('create-user-card')?.scrollIntoView({behavior:'smooth',block:'start'}));
 })();
 </script>
 </body>

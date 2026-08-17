@@ -280,3 +280,17 @@ tbody tr:hover{background:rgba(255,255,255,.03)}
   .auth-body .portal-selector > .stack-form,.auth-body .portal-selector > .flash,.auth-body .portal-selector > p{margin-left:18px;margin-right:18px}
   .auth-body .portal-watermark{width:min(100% - 20px,1240px)}
 }
+
+
+/* Institution OS / People & Access upgrade */
+.people-hero{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(260px,.65fr);gap:18px;align-items:stretch}
+.people-hero .hero-card{padding:24px;border:1px solid var(--border);border-radius:18px;background:linear-gradient(135deg,rgba(16,42,67,.24),rgba(16,163,127,.08))}
+.people-hero .hero-card h2{margin:.3rem 0 .5rem;font-size:clamp(24px,4vw,42px);letter-spacing:-.04em}
+.people-hero .hero-stat{display:grid;gap:6px;padding:18px;border:1px solid var(--border);border-radius:18px;background:var(--panel-3)}
+.people-hero .hero-stat strong{font-size:32px}
+.people-filters{display:grid;grid-template-columns:minmax(200px,1fr) 180px 180px auto;gap:10px;align-items:end}
+.people-table td:first-child{font-weight:800}.people-table .person-cell{display:flex;align-items:center;gap:10px}.avatar-sm{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,var(--primary-blue),var(--accent));color:#fff;font-weight:900;border:1px solid rgba(255,255,255,.14)}
+.pill-role{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;background:rgba(255,255,255,.07);border:1px solid var(--border);font-size:11px;font-weight:800}.pill-title{display:block;color:var(--muted-text);font-size:11px;margin-top:3px}
+.account-state{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.account-state.active{color:#68d391}.account-state.archived{color:#fbbf24}
+@media(max-width:900px){.people-hero{grid-template-columns:1fr}.people-filters{grid-template-columns:1fr 1fr}.people-filters .btn{width:100%}}
+@media(max-width:600px){.people-filters{grid-template-columns:1fr}}
