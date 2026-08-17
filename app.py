@@ -2362,11 +2362,11 @@ def add_user():
     role = request.form.get("role", "Teacher")
     student_id = request.form.get("student_id") or None
     allowed = set(ALL_PORTAL_ROLES) - {SYSTEM_ROLE}
-    if role not in allowed or (actor["role"] == "ICT" and role == "Admin"):
+    if role not in allowed or (actor["role"] == "ICT" and role in {"Admin","ICT"}):
         flash("This account type cannot be created by your role.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
-    if not full_name or not username or len(password) < 4:
-        flash("Name, username, and a password of at least 4 characters is required.", "danger")
+    if not full_name or not username or len(password) < 8:
+        flash("Name, username, and a password of at least 8 characters is required.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
     if role in {"Student","Parent"} and student_id:
         try: student_id=int(student_id)
@@ -2375,7 +2375,14 @@ def add_user():
         student_id=None
     try:
         execute("INSERT INTO users(full_name, username, password_hash, role, student_id, active) VALUES (?, ?, ?, ?, ?, 1)", (full_name, username, generate_password_hash(password), role, student_id))
-        audit(actor["id"], actor["full_name"], "Add User", f"{full_name} ({username}) added as {role}.")
+        created = q("SELECT id FROM users WHERE username=?", (username,), one=True)
+        position = request.form.get("position", "").strip()
+        department = request.form.get("department", "").strip()
+        email = request.form.get("email", "").strip()
+        if created:
+            execute("INSERT OR IGNORE INTO user_profiles(user_id) VALUES(?)", (created["id"],))
+            execute("UPDATE user_profiles SET department=?, job_title=?, email=? WHERE user_id=?", (department, position, email, created["id"]))
+        audit(actor["id"], actor["full_name"], "Add User", f"{full_name} ({username}) added as {role}; position={position or 'Standard'}; department={department or 'Unassigned'}.")
     except sqlite3.IntegrityError:
         flash("Username already exists or student link is invalid.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
@@ -2553,16 +2560,16 @@ PERMISSION_CATALOG=[
     ("dashboard.view","View dashboards"),("people.view","View people"),("people.manage","Manage people"),
     ("people.deactivate","Activate / deactivate accounts"),("academics.view","View academics"),("academics.manage","Manage academics"),
     ("finance.view","View finance"),("finance.manage","Manage finance"),("reports.view","View reports"),
-    ("library.manage","Manage library"),("communications.send","Send communication"),("system.configure","Configure system"),
+    ("library.view","View library"),("library.manage","Manage library"),("communications.send","Send communication"),("system.configure","Configure system"),
     ("system.backup","Backup and restore"),("security.audit","View audit logs"),("ai.use","Use AI assistant"),("ai.system","Use system AI guidance"),("password.recovery","Start password recovery")]
 ROLE_PERMISSIONS={
  "Admin":{p for p,_ in PERMISSION_CATALOG},
- "ICT":{"dashboard.view","people.view","people.manage","people.deactivate","academics.view","library.manage","communications.send","system.configure","security.audit","ai.use"},
- "Finance":{"dashboard.view","people.view","finance.view","finance.manage","reports.view","communications.send"},
- "Teacher":{"dashboard.view","people.view","academics.view","academics.manage","library.manage","communications.send","ai.use"},
- "Librarian":{"dashboard.view","people.view","library.manage","communications.send","ai.use"},
- "Student":{"dashboard.view","academics.view","library.manage","communications.send","ai.use","ai.system","password.recovery"},
- "Parent":{"dashboard.view","academics.view","communications.send","ai.system","password.recovery"}}
+ "ICT":{"dashboard.view","people.view","people.manage","people.deactivate","academics.view","library.view","library.manage","communications.send","system.configure","security.audit","ai.use","ai.system","password.recovery"},
+ "Finance":{"dashboard.view","people.view","finance.view","finance.manage","reports.view","communications.send","library.view","ai.system","password.recovery"},
+ "Teacher":{"dashboard.view","people.view","academics.view","academics.manage","library.view","communications.send","ai.use","ai.system","password.recovery"},
+ "Librarian":{"dashboard.view","people.view","library.view","library.manage","communications.send","ai.use","ai.system","password.recovery"},
+ "Student":{"dashboard.view","academics.view","library.view","communications.send","ai.use","ai.system","password.recovery"},
+ "Parent":{"dashboard.view","academics.view","library.view","communications.send","ai.system","password.recovery"}}
 def has_permission(permission,user=None):
     user=user or current_user()
     if not user:return False
@@ -2636,14 +2643,16 @@ def upload_profile_photo():
 def toggle_person(user_id):
     target=q("SELECT * FROM users WHERE id=? AND role!='System'",(user_id,),one=True)
     if not target or target['id']==current_user()['id']: abort(404)
+    if current_user()['role']=='ICT' and target['role'] in {'Admin','ICT'}: abort(403)
     new_state=0 if target['active'] else 1; execute('UPDATE users SET active=? WHERE id=?',(new_state,user_id)); audit(current_user()['id'],current_user()['full_name'],'Account Status Change',f"{target['full_name']} {'activated' if new_state else 'deactivated'}.")
     flash(f"{target['full_name']} is now {'active' if new_state else 'inactive'}.",'success'); return redirect(url_for('upgrade_hub')+'#people')
 @app.route('/admin/people/<int:user_id>/profile',methods=['POST'])
 @login_required
 @permission_required('people.manage')
 def update_person_profile(user_id):
-    target=q("SELECT id,full_name FROM users WHERE id=? AND role!='System'",(user_id,),one=True)
+    target=q("SELECT id,full_name,role FROM users WHERE id=? AND role!='System'",(user_id,),one=True)
     if not target: abort(404)
+    if current_user()['role']=='ICT' and target['role'] in {'Admin','ICT'}: abort(403)
     execute('INSERT OR IGNORE INTO user_profiles(user_id) VALUES(?)',(user_id,)); execute('UPDATE users SET full_name=? WHERE id=?',(request.form.get('full_name','').strip() or target['full_name'],user_id))
     execute('UPDATE user_profiles SET department=?,job_title=?,phone=?,email=?,bio=?,authority_level=? WHERE user_id=?',(request.form.get('department','').strip(),request.form.get('job_title','').strip(),request.form.get('phone','').strip(),request.form.get('email','').strip(),request.form.get('bio','').strip(),request.form.get('authority_level','Standard').strip(),user_id))
     flash('People profile updated.','success'); return redirect(url_for('upgrade_hub')+'#people')
@@ -2693,29 +2702,54 @@ def ai_system():
     text=(request.form.get('prompt') or '').strip()
     if not text:return jsonify({'ok':False,'message':'Tell me what you need help with.'}),400
     low=text.lower()
-    user=current_user(); settings=school_settings()
+    user=current_user(); settings=school_settings(); role=user['role']
     intents=[]
     answer=''
-    if any(k in low for k in ['forgot password','forgot my password','reset password','lost password','can\'t log in','cannot log in']):
+    greetings={'hi','hello','hey','good morning','good afternoon','good evening','hiya','greetings','how are you'}
+    normalized=' '.join(low.split()).strip('!?.,')
+    office_names={'Admin':'Administrator office','ICT':'ICT office','Finance':'Finance office','Teacher':'Teaching office','Student':f"{settings['learner_label']} portal",'Parent':'Parent / Guardian portal','Librarian':'Library office'}
+    if normalized in greetings or any(low.startswith(g+' ') for g in greetings):
+        intents.append('greeting')
+        answer=f"Hello, {user['full_name'].split()[0]}! 👋 You are signed in to the {office_names.get(role, 'institution portal')}. I can guide you around this system, explain features, help you find pages you are allowed to use, and start secure password recovery. What would you like to do?"
+    elif any(k in low for k in ['forgot password','forgot my password','reset password','lost password','can\'t log in','cannot log in','password']) and any(k in low for k in ['forgot','reset','lost','login','log in']):
         intents.append('password_recovery')
-        answer=f"I can help start your {settings['school_name']} account recovery. Enter your username in the recovery box below and I’ll prepare a secure one-time reset request. For security, I never reveal an existing password."
-    elif any(k in low for k in ['finance','fees','payment','fees balance']):
+        answer=f"I can help you start your {settings['school_name']} account recovery. Enter your username in the recovery box below and I’ll prepare a secure one-time reset request. I never see, store, or reveal your old password."
+    elif any(k in low for k in ['finance','fees','payment','fees balance','receipt']):
         intents.append('finance')
-        answer="Finance is available inside this dashboard. Use Finance workspace for balances, payments, receipts and result-release controls."
-    elif any(k in low for k in ['library','book','study','resource','read']):
+        if has_permission('finance.view', user):
+            answer="Finance is inside your current command centre for this account, so you do not have to leave your dashboard. You can view balances, payments, receipts and permitted finance controls from the Finance workspace."
+        else:
+            answer="Finance is a restricted office. Your account does not have finance access. I can guide you through the parts of the portal that are available to your role."
+    elif any(k in low for k in ['library','book','study','resource','read','picture','image']):
         intents.append('library')
-        answer="Open the Library & AI section to search books, open approved study links, and view uploaded learning files and images."
-    elif any(k in low for k in ['message','chat','inbox','ict']):
+        if has_permission('library.view', user):
+            answer="The Library is available to registered users. You can browse books, approved study links, uploaded documents and learning pictures. Administrative cataloguing and lending controls only appear to authorized library staff."
+        else:
+            answer="The Library is available only to registered portal users. Please sign in with an authorized account to access it."
+    elif any(k in low for k in ['message','chat','inbox','ict','department','announcement']):
         intents.append('communication')
-        answer="Use Communication Centre to message a colleague or department, publish a permitted announcement, and read your inbox."
-    elif any(k in low for k in ['result','exam','assignment','academic','class','course']):
+        if has_permission('communications.send', user):
+            answer="Communication Centre lets you use the communication tools available to your office, including direct conversations, department communication and permitted announcements."
+        else:
+            answer="Your communication tools are limited to the conversations and notices available to your account."
+    elif any(k in low for k in ['result','exam','assignment','academic','class','course','timetable','attendance']):
         intents.append('academics')
-        answer="Academic tools live in the Academics area. Your visible tools depend on your role and permissions."
-    elif any(k in low for k in ['admin','permission','role','authority','setting','theme','brand']):
+        answer="Academic tools are separated by office and permission. I can guide you to assignments, results, exams, courses, timetable and attendance without exposing another office’s controls."
+    elif any(k in low for k in ['admin','permission','role','authority','setting','theme','brand','user','staff','employee']):
         intents.append('administration')
-        answer="System Authority controls institution mode, terminology, fonts, AI provider settings and per-person permissions. Only authorized administrators can change these."
+        if role=='Admin':
+            answer="As Administrator, you can open User Management to create and manage institutional accounts, including ICT, Finance, Teachers, HODs, Deputies, Deans, Librarians, Students and Parents. Authority can be assigned per person. Sensitive administrator-only control links and security endpoints are intentionally not exposed by System AI."
+        elif role=='ICT':
+            answer="Your ICT office can manage permitted institutional accounts and system configuration, but Administrator authority is reserved for Administrators."
+        else:
+            answer="Administrative controls are restricted to authorized offices. I can explain features you are permitted to use, but I will not disclose restricted authority links or security endpoints."
+    elif any(k in low for k in ['where am i','my office','my dashboard','current page']):
+        intents.append('office')
+        answer=f"You are signed in as {user['full_name']} in the {office_names.get(role, 'institution portal')}. The system keeps your account within its permitted office and will block direct access to another office's protected dashboard."
     else:
-        answer="I’m your built-in system guide. Try asking where to find Finance, Library, Messages, Results, Settings, or how to recover your password."
+        intents.append('guide')
+        answer=(f"I’m your System AI for {settings['school_name']}. I know the portal's available modules, role boundaries and common workflows. "
+                "You can ask me things like: 'Where is Finance?', 'How do I add a staff member?', 'How do I find a book?', 'How do I send a message?', 'What can my office do?', or 'I forgot my password'.")
     execute('INSERT INTO ai_system_events(user_id,intent,request_text,response_text) VALUES(?,?,?,?,?)',(user['id'],','.join(intents) or 'guide',text,answer))
     return jsonify({'ok':True,'type':'system','intent':intents[0] if intents else 'guide','answer':answer})
 
@@ -2729,11 +2763,13 @@ def ai_system_public():
 
 @app.route('/ai/recovery/start',methods=['POST'])
 def ai_recovery_start():
-    username=(request.form.get('username') or current_user()['username']).strip()
+    actor=current_user()
+    username=(request.form.get('username') or (actor['username'] if actor else '')).strip()
     target=q("SELECT id,full_name,username FROM users WHERE username=? AND active=1 AND role!='System'",(username,),one=True)
     # Do not disclose whether an account exists to unauthenticated users. This route is login-protected; we still log the request.
     if not target:
-        audit(current_user()['id'],current_user()['full_name'],'Password Recovery Request',f'No active account matched username {username}.')
+        if actor:
+            audit(actor['id'],actor['full_name'],'Password Recovery Request',f'No active account matched username {username}.')
         return jsonify({'ok':True,'message':'If the account exists and has a recovery address, a reset link will be sent.'})
     raw=secrets.token_urlsafe(36); digest=hashlib.sha256(raw.encode()).hexdigest()
     execute("DELETE FROM password_reset_tokens WHERE user_id=? OR expires_at < CURRENT_TIMESTAMP",(target['id'],))
@@ -2752,10 +2788,12 @@ def ai_recovery_start():
                 server.send_message(msg)
             sent=True
         except Exception as exc:
-            audit(current_user()['id'],current_user()['full_name'],'Password Recovery Mail Failure',str(exc)[:300])
-    audit(current_user()['id'],current_user()['full_name'],'Password Recovery Request',f'Prepared one-time reset for user {target["id"]}; email_sent={sent}.')
+            audit(actor['id'] if actor else None, actor['full_name'] if actor else 'Unauthenticated','Password Recovery Mail Failure',str(exc)[:300])
+    audit(actor['id'] if actor else None, actor['full_name'] if actor else 'Unauthenticated','Password Recovery Request',f'Prepared one-time reset for user {target["id"]}; email_sent={sent}.')
     # In development / no SMTP mode only authorized current users can receive the link, and the token is one-time + 20 minutes.
-    return jsonify({'ok':True,'message':('A reset link was sent to the registered recovery email.' if sent else 'A secure reset link was prepared. Configure SMTP to deliver it automatically.'),'reset_url':reset_url if not sent else ''})
+    same_user = bool(actor and actor['id']==target['id'])
+    safe_url = reset_url if (not sent and same_user) else ''
+    return jsonify({'ok':True,'message':('A reset link was sent to the registered recovery email.' if sent else ('A secure reset link was prepared for your own account. Configure SMTP for email delivery.' if same_user else 'If the account exists and has a recovery address, a reset link will be sent.')),'reset_url':safe_url})
 
 @app.route('/reset-password/<token>',methods=['GET','POST'])
 def reset_password(token):
