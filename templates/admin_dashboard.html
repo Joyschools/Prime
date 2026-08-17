@@ -84,7 +84,7 @@
       <section class="nav-group">
         <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="users-panel"><span>Users</span><span class="nav-caret">▾</span></button>
         <div class="nav-group-links">
-          <a class="nav-link" href="{{ url_for('user_management') }}">User Management</a><button class="nav-link nav-action" type="button" data-target="users-panel">Quick roster</button>
+          <button class="nav-link nav-action" type="button" data-target="users-panel" data-scroll="create-user-card">User Management</button>
           <button class="nav-link nav-action" type="button" data-target="public-info-panel">Public page & access</button>
         </div>
       </section>
@@ -109,7 +109,7 @@
         <div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="library-admin-panel">Library control</button></div>
       </section>
       <section class="nav-group"><a class="nav-link" href="/institution">Institution profile</a></section>
-    <a class="nav-link" href="{{ url_for('upgrade_hub') }}">← Command centre</a></nav>
+    </nav>
 
     <div class="sidebar-foot">
       <a class="btn btn-ghost btn-block" href="{{ url_for('logout') }}">Logout</a>
@@ -355,34 +355,54 @@
     </section>
 
     <section id="users-panel" class="panel glass workspace-panel hidden">
-      <div class="panel-head"><div><div class="eyebrow">People & accounts</div><h3>User roster and roles</h3></div><a class="btn btn-primary mini" href="{{ url_for('user_management') }}">Open User Management</a></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Created</th><th>Action</th></tr></thead>
-          <tbody>
-            {% for u in users %}
-            <tr>
-              <td>{{ u.full_name }}</td>
-              <td>{{ u.username }}</td>
-              <td>{{ u.role }}{% if not u.active %} <span class="muted">(disabled)</span>{% endif %}</td>
-              <td>{{ u.created_at[:16] }}</td>
-              <td>
-                {% if u.role != 'System' and u.id != current_user.id and u.active %}
-                <form method="post" action="{{ url_for('delete_user', user_id=u.id) }}" onsubmit="return confirm('Delete this staff member?');">
-                  <button class="btn btn-ghost mini" type="submit">Delete</button>
-                </form>
-                {% else %}
-                <span class="muted">Protected</span>
-                {% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      <div class="panel-head"><div><div class="eyebrow">User Management</div><h3>Create and manage portal accounts</h3><p class="muted" style="margin:6px 0 0">Administrator creates the account once. The person then uses the username and password below to sign in to their selected office.</p></div></div>
+
+      <div id="create-user-card" class="detail-card" style="margin-bottom:16px; border-left:4px solid #0e8a6d">
+        <div class="panel-head" style="margin-bottom:10px"><div><div class="eyebrow">Administrator only</div><h4 style="margin:0">Create a new user</h4></div><span class="muted">Name → username → password → account type</span></div>
+        <form class="stack-form two-col" method="post" action="{{ url_for('add_user') }}" autocomplete="off">
+          <label><span>Full name</span><input name="full_name" required autocomplete="name" placeholder="e.g. Mary Wanjiku"></label>
+          <label><span>Username</span><input name="username" required autocomplete="username" placeholder="e.g. mary.wanjiku"></label>
+          <label><span>Temporary password</span><div class="password-wrap"><input id="adminCreatePassword" name="password" type="password" minlength="4" required autocomplete="new-password" placeholder="Enter the password they will use"><button class="password-toggle" type="button" data-password-target="adminCreatePassword">Show</button></div></label>
+          <label><span>Account type / office</span>
+            <select name="role" required>
+              {% for role in all_roles %}{% if role != 'System' %}<option value="{{ role }}">{{ role }}</option>{% endif %}{% endfor %}
+            </select>
+          </label>
+          <label><span>Link to learner (optional for Student/Parent)</span><select name="student_id"><option value="">Not linked</option>{% for st in user_students %}<option value="{{ st.id }}">{{ st.full_name }} — {{ st.admission_no }}</option>{% endfor %}</select></label>
+          <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Create user account</button></div>
+        </form>
+        <p class="muted tiny" style="margin-top:10px">The password is stored securely as a hash. Admin can create the account and the user can later change their password through the normal account/security flow.</p>
       </div>
+
+      <div class="detail-card">
+        <div class="panel-head"><div><div class="eyebrow">Existing accounts</div><h4 style="margin:0">User roster</h4></div><span class="muted">{{ users|length }} account(s)</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Username</th><th>Role / office</th><th>Created</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody>
+              {% for u in users %}
+              <tr>
+                <td>{{ u.full_name }}</td>
+                <td><strong>{{ u.username }}</strong></td>
+                <td>{{ u.role }}</td>
+                <td>{{ u.created_at[:16] }}</td>
+                <td>{% if u.active %}<span class="pill paid">Active</span>{% else %}<span class="pill pending">Disabled</span>{% endif %}</td>
+                <td>
+                  {% if u.role != 'System' and u.id != current_user.id and u.active %}
+                  <form method="post" action="{{ url_for('delete_user', user_id=u.id) }}" onsubmit="return confirm('Disable this account? Its records will be retained.');"><button class="btn btn-ghost mini" type="submit">Disable</button></form>
+                  {% elif u.id == current_user.id %}<span class="muted">Current Admin</span>
+                  {% else %}<span class="muted">Protected</span>{% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="detail-card" style="margin-top:16px; border-left:4px solid #0e8a6d">
         <div class="panel-head" style="margin-bottom:8px"><div><div class="eyebrow">Security control</div><h4 style="margin:0">Login Page Access</h4></div><span class="muted">Current: {% if settings.auth_required %}ENABLED{% else %}DISABLED{% endif %}</span></div>
-        <p class="muted">When disabled, every non-Administrator role goes directly to its relevant dashboard. When enabled, Teacher, Student, Parent, ICT, Finance and Librarian accounts must authenticate first. Administrator always requires authentication.</p>
+        <p class="muted">When disabled, non-Administrator roles can use the configured passwordless/demo behavior. When enabled, users must authenticate before entering their dashboards. Administrator always requires authentication.</p>
         <button class="btn {% if settings.auth_required %}btn-ghost{% else %}btn-primary{% endif %}" type="button" id="openLoginAccess">{% if settings.auth_required %}Disable login page{% else %}Enable login page{% endif %}</button>
       </div>
 
@@ -405,22 +425,7 @@
           </div>
         </div>
       </div>
-
-      <div class="detail-card" style="margin-top:16px">
-        <h4>Create user / staff account</h4><p class="muted">For the complete workflow — departments, titles, parent links, learner accountability details, editing and account recovery — use <a href="{{ url_for('user_management') }}">User Management</a>.</p>
-        <form class="stack-form two-col" method="post" action="{{ url_for('add_user') }}">
-          <label><span>Full name</span><input name="full_name" required></label>
-          <label><span>Username</span><input name="username" required></label>
-          <label><span>Password (minimum 4 characters)</span><div class="password-wrap"><input id="adminCreatePassword" name="password" type="password" minlength="4" required><button class="password-toggle" type="button" data-password-target="adminCreatePassword">Show</button></div></label>
-          <label><span>Role</span>
-            <select name="role" required>{% for role in all_roles %}{% if role != 'System' %}<option value="{{ role }}">{{ role }}</option>{% endif %}{% endfor %}</select>
-          </label>
-          <label><span>Link Student/Parent account to pupil</span><select name="student_id"><option value="">Not linked</option>{% for st in user_students %}<option value="{{ st.id }}">{{ st.full_name }} — {{ st.admission_no }}</option>{% endfor %}</select></label>
-          <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Create account</button></div>
-        </form>
-      </div>
     </section>
-
 
     <section id="public-info-panel" class="panel glass workspace-panel hidden">
       <div class="panel-head"><div><div class="eyebrow">Before-login experience</div><h3>Public information & access</h3></div></div>
