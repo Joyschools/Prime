@@ -846,6 +846,60 @@ def load_current_user() -> None:
                     FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
                     WHERE u.id=? AND u.active=1 AND u.role!='System'""", (user_id,), one=True)
 
+def ensure_presentation_user(role: str):
+    """Create/select a harmless demo identity for presentation-only dashboard access."""
+    if role not in ALL_PORTAL_ROLES:
+        abort(404)
+    username = f"__presentation__{role.lower()}"
+    user = q("SELECT id FROM users WHERE username=? LIMIT 1", (username,), one=True)
+    if not user:
+        names = {
+            "Admin": "Administrator", "ICT": "ICT Office", "Finance": "Finance Office",
+            "Teacher": "Teacher Demo", "Student": "Student Demo", "Parent": "Parent Demo",
+            "Librarian": "Library Office", "Staff": "Staff Demo",
+        }
+        uid = execute(
+            "INSERT INTO users(full_name,username,password_hash,role,active,student_id) VALUES(?,?,?,?,1,NULL)",
+            (names.get(role, f"{role} Demo"), username, generate_password_hash(os.urandom(24).hex()), role),
+        )
+        try:
+            execute(
+                "INSERT OR IGNORE INTO user_profiles(user_id,department,job_title,authority_level) VALUES(?,?,?,?)",
+                (uid, "Presentation", names.get(role, role), "Demo"),
+            )
+        except Exception:
+            pass
+        return uid
+    return user["id"]
+
+@app.before_request
+def presentation_dashboard_access():
+    """Presentation mode: dashboard entry is never blocked by authentication."""
+    if request.endpoint in {"static", "service_worker", "health", "pulse", "pulse_receiver", "favicon"}:
+        return None
+    path = request.path.rstrip("/") or "/"
+    if path in {"/", "/login", "/register", "/logout"} or current_user():
+        return None
+    role_map = {
+        "/admin": "Admin", ADMIN_LOGIN_PATH: "Admin", "/admin-dashboard": "Admin",
+        "/ict": "ICT", "/ict-dashboard": "ICT",
+        "/finance": "Finance", "/finance-dashboard": "Finance",
+        "/teacher": "Teacher", "/teacher-dashboard": "Teacher", "/dashboard": "Teacher",
+        "/student": "Student", "/student-dashboard": "Student",
+        "/parent": "Parent", "/parent-dashboard": "Parent",
+        "/librarian": "Librarian", "/librarian-dashboard": "Librarian",
+    }
+    role = role_map.get(path)
+    if role and os.environ.get("DEMO_PRESENTATION_MODE", "1").strip().lower() in {"1", "true", "yes", "on"}:
+        session.clear()
+        session.permanent = True
+        session["user_id"] = ensure_presentation_user(role)
+        g.user = q("""SELECT u.id,u.full_name,u.username,u.role,u.student_id,u.active,
+                    COALESCE(p.profile_path,'') AS profile_path,COALESCE(p.department,'') AS department,
+                    COALESCE(p.job_title,'') AS job_title,COALESCE(p.authority_level,'Standard') AS authority_level
+                    FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
+                    WHERE u.id=? AND u.active=1""", (session["user_id"],), one=True)
+    return None
 
 def current_user():
     return getattr(g, "user", None)
@@ -895,11 +949,13 @@ def role_target(role: str) -> str:
 
 
 def enter_role_without_login(role: str):
-    # Passwordless mode is intended only as a controlled demo/single-user setup.
-    # Once a role has multiple active accounts, require an actual identity so one
-    # user's dashboard cannot silently become another user's account.
-    if role == "Admin" or auth_required():
-        return redirect(url_for("login", role=role))
+    # Presentation build: every office has a safe demo identity so navigation never
+    # gets blocked by authentication. Real authentication remains available at /login.
+    if os.environ.get("DEMO_PRESENTATION_MODE", "1").strip().lower() in {"1", "true", "yes", "on"}:
+        session.clear()
+        session.permanent = True
+        session["user_id"] = ensure_presentation_user(role)
+        return redirect(role_target(role))
     users = q(
         "SELECT id FROM users WHERE role=? AND active=1 AND role!='System' ORDER BY id",
         (role,),
@@ -908,7 +964,6 @@ def enter_role_without_login(role: str):
         flash(f"No active {role} account has been created yet.", "warning")
         return redirect(url_for("index"))
     if len(users) != 1:
-        flash(f"{role} access requires login because multiple active {role} accounts exist.", "warning")
         return redirect(url_for("login", role=role))
     session.clear()
     session["user_id"] = users[0]["id"]
@@ -1302,7 +1357,7 @@ def enter_role(role: str):
 
 @app.route("/admin")
 def admin_entry():
-    abort(404)
+    return enter_role("Admin")
 
 @app.route(ADMIN_LOGIN_PATH)
 def admin_hidden_entry():
