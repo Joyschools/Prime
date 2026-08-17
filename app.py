@@ -117,9 +117,9 @@ def flash(message: str, category: str = "message") -> None:
 def inject_upgrade_theme():
     try:
         st=school_settings()
-        return {"upgrade_css_version":"2.0","ui_heading_font":st["heading_font"],"ui_body_font":st["body_font"],"ui_primary":st["primary_color"],"ui_accent":st["accent_color"]}
+        return {"upgrade_css_version":"5.1","ui_heading_font":st["heading_font"],"ui_body_font":st["body_font"],"ui_primary":st["primary_color"],"ui_accent":st["accent_color"]}
     except Exception:
-        return {"upgrade_css_version":"2.0","ui_heading_font":"Inter","ui_body_font":"Inter","ui_primary":"#10a37f","ui_accent":"#0e8a6d"}
+        return {"upgrade_css_version":"5.1","ui_heading_font":"Inter","ui_body_font":"Inter","ui_primary":"#10a37f","ui_accent":"#0e8a6d"}
 
 
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -1215,14 +1215,30 @@ def login():
         password = request.form.get("password", "")
         role = selected_role_from_request()
 
-        # Render Admin credentials are authoritative.  Keep this compatibility
-        # path at login time as well as in init_db(): a stale SQLite database,
-        # interrupted migration, or old seeded Admin record must never lock the
-        # production administrator out when ADMIN_USERNAME/ADMIN_PASSWORD are set.
+        # Render Admin credentials are authoritative. Treat an omitted/corrupted
+        # role value as Admin when the submitted username matches the configured
+        # Render administrator. This protects against stale cached login pages
+        # whose hidden role field was blank.
         env_admin_username = os.environ.get("ADMIN_USERNAME", "").strip()
         env_admin_password = os.environ.get("ADMIN_PASSWORD", "")
-        if role == "Admin" and env_admin_username and env_admin_password:
-            if username == env_admin_username and hmac.compare_digest(password, env_admin_password):
+        env_admin_configured = bool(env_admin_username and env_admin_password)
+        if env_admin_configured:
+            username_candidates = {env_admin_username, env_admin_username.strip()}
+            # Common accidental quoting when a secret was copied into Render.
+            if len(env_admin_username) >= 2 and env_admin_username[0] == env_admin_username[-1] and env_admin_username[0] in {chr(34), chr(39)}:
+                username_candidates.add(env_admin_username[1:-1])
+            password_candidates = [env_admin_password]
+            stripped_password = env_admin_password.strip()
+            if stripped_password != env_admin_password:
+                password_candidates.append(stripped_password)
+            if len(env_admin_password) >= 2 and env_admin_password[0] == env_admin_password[-1] and env_admin_password[0] in {chr(34), chr(39)}:
+                password_candidates.append(env_admin_password[1:-1])
+            username_matches = username in username_candidates
+            password_matches = any(hmac.compare_digest(password, candidate) for candidate in password_candidates)
+            admin_role_attempt = role in {"", "Admin"} or username_matches
+            if admin_role_attempt and username and not (username_matches and password_matches):
+                print(f"[AUTH] Render Admin login check: configured=True username_match={username_matches} password_match={password_matches} role={role or '<blank>'}", flush=True)
+            if username_matches and password_matches:
                 admin = q("SELECT id FROM users WHERE username=? LIMIT 1", (env_admin_username,), one=True)
                 if not admin:
                     admin_name = os.environ.get("ADMIN_NAME", "").strip() or env_admin_username or "Administrator"
@@ -1242,7 +1258,10 @@ def login():
                 session["user_id"] = admin_id
                 return redirect(url_for("upgrade_hub"))
 
-        user = q("SELECT * FROM users WHERE username=? AND active=1 AND role=?", (username, role), one=True)
+        # If a Render-admin credential was supplied, never let a malformed role
+        # selection turn it into an ordinary-user lookup.
+        lookup_role = "Admin" if role == "" and username and env_admin_configured and username == env_admin_username else role
+        user = q("SELECT * FROM users WHERE username=? AND active=1 AND role=?", (username, lookup_role), one=True)
         if not user or not check_password_hash(user["password_hash"], password):
             flash("Invalid username, password, or role.", "danger")
             return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username, password, or role.", setup_required=not auth_initialized())

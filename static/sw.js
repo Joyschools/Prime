@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "school-system";
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v5";
 const CACHE_NAME = `${CACHE_PREFIX}-${CACHE_VERSION}`;
 const OFFLINE_URL = "/offline";
 const SHELL = ["/","/login","/static/css/style.css","/static/js/app.js","/static/manifest.json","/static/icons/icon-192.png","/static/icons/icon-512.png","/favicon.ico",OFFLINE_URL];
@@ -11,7 +11,12 @@ self.addEventListener("fetch", event => {
   if(request.method !== "GET") return;
   const url = new URL(request.url);
   if(url.origin !== self.location.origin) return;
-  if(url.pathname === "/logout") {
+  if(url.pathname === "/login" || url.pathname === "/register" || url.pathname === "/logout") {
+    // Authentication pages must never be served from an old cached shell.
+    if(url.pathname === "/login" || url.pathname === "/register") {
+      event.respondWith(fetch(request, {cache: "no-store"}));
+      return;
+    }
     event.respondWith((async()=>{
       await caches.delete(CACHE_NAME);
       return networkFirst(request);

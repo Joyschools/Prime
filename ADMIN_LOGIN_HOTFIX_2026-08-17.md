@@ -26,3 +26,10 @@ Keep the existing Render variables. Do not hard-code them into the project:
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
 - optional `ADMIN_NAME`
+
+
+## v5.1 login regression hardening
+- Admin authentication accepts the configured Render credentials even if the cached login page submits a blank role.
+- The service worker no longer serves cached `/login` or `/register` pages. Cache version was bumped to v5.
+- Safe server logs report only whether the Render Admin username/password matched; the secret itself is never logged.
+- Admin login now uses the generated `/login?role=Admin` action instead of a hard-coded action string.
