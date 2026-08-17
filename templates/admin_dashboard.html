@@ -84,7 +84,7 @@
       <section class="nav-group">
         <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="users-panel"><span>Users</span><span class="nav-caret">▾</span></button>
         <div class="nav-group-links">
-          <button class="nav-link nav-action" type="button" data-target="users-panel">Employees</button>
+          <a class="nav-link" href="{{ url_for('user_management') }}">User Management</a><button class="nav-link nav-action" type="button" data-target="users-panel">Quick roster</button>
           <button class="nav-link nav-action" type="button" data-target="public-info-panel">Public page & access</button>
         </div>
       </section>
@@ -355,7 +355,7 @@
     </section>
 
     <section id="users-panel" class="panel glass workspace-panel hidden">
-      <div class="panel-head"><div><div class="eyebrow">Employees</div><h3>User roster and roles</h3></div></div>
+      <div class="panel-head"><div><div class="eyebrow">People & accounts</div><h3>User roster and roles</h3></div><a class="btn btn-primary mini" href="{{ url_for('user_management') }}">Open User Management</a></div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Created</th><th>Action</th></tr></thead>
@@ -407,7 +407,7 @@
       </div>
 
       <div class="detail-card" style="margin-top:16px">
-        <h4>Create user / staff account</h4>
+        <h4>Create user / staff account</h4><p class="muted">For the complete workflow — departments, titles, parent links, learner accountability details, editing and account recovery — use <a href="{{ url_for('user_management') }}">User Management</a>.</p>
         <form class="stack-form two-col" method="post" action="{{ url_for('add_user') }}">
           <label><span>Full name</span><input name="full_name" required></label>
           <label><span>Username</span><input name="username" required></label>

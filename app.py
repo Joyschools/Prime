@@ -221,6 +221,15 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS student_guardians (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, student_id INTEGER NOT NULL, guardian_user_id INTEGER,
+                guardian_name TEXT NOT NULL DEFAULT '', relationship TEXT NOT NULL DEFAULT 'Parent / Guardian',
+                phone TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', primary_guardian INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE,
+                FOREIGN KEY(guardian_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
             CREATE TABLE IF NOT EXISTS payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 student_id INTEGER NOT NULL,
@@ -633,6 +642,31 @@ def init_db() -> None:
         ensure_column(conn, "school_settings", "ai_provider_name TEXT NOT NULL DEFAULT 'OpenAI-compatible'")
         ensure_column(conn, "school_settings", "ai_model TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "ai_api_url TEXT NOT NULL DEFAULT ''")
+
+        # Extended institutional identity / accountability fields.
+        for col in [
+            "date_of_birth TEXT NOT NULL DEFAULT ''", "gender TEXT NOT NULL DEFAULT ''", "national_id TEXT NOT NULL DEFAULT ''",
+            "address TEXT NOT NULL DEFAULT ''", "emergency_contact_name TEXT NOT NULL DEFAULT ''",
+            "emergency_contact_phone TEXT NOT NULL DEFAULT ''", "health_notes TEXT NOT NULL DEFAULT ''",
+            "blood_group TEXT NOT NULL DEFAULT ''", "allergies TEXT NOT NULL DEFAULT ''",
+            "access_notes TEXT NOT NULL DEFAULT ''", "temporary_password INTEGER NOT NULL DEFAULT 1"
+        ]:
+            ensure_column(conn, "user_profiles", col)
+        for col in [
+            "date_of_birth TEXT", "gender TEXT", "national_id TEXT", "address TEXT",
+            "emergency_contact_name TEXT", "emergency_contact_phone TEXT", "blood_group TEXT",
+            "emergency_notes TEXT", "parent_relationship TEXT", "department_id INTEGER"
+        ]:
+            ensure_column(conn, "students", col)
+        # Account table keeps a stable role but supports arbitrary institutional positions.
+        for col in ["position_title TEXT NOT NULL DEFAULT ''", "department_id INTEGER"]:
+            ensure_column(conn, "users", col)
+        # College defaults: create useful departments automatically without disturbing custom departments.
+        settings_now = conn.execute("SELECT institution_type FROM school_settings WHERE id=1").fetchone()
+        if settings_now and str(settings_now[0]).lower() in {"college", "university / tvet", "university", "training centre"}:
+            for name, code in [("Communications", "COMM"), ("Computer Studies", "COMP")]:
+                conn.execute("INSERT OR IGNORE INTO departments(name,code) VALUES(?,?)", (name, code))
+        conn.commit()
 
         # Convert legacy seeded accounts to an inert System account on this build.
         auth_row = conn.execute("SELECT auth_initialized FROM school_settings WHERE id=1").fetchone()
@@ -2589,10 +2623,16 @@ def permission_required(permission):
     return deco
 def upgrade_people():
     return q("""SELECT u.id,u.full_name,u.username,u.role,u.student_id,u.active,u.created_at,
-        COALESCE(p.profile_path,'') AS profile_path,COALESCE(p.department,'') AS department,
+        COALESCE(u.position_title,'') AS position_title,COALESCE(u.department_id,0) AS department_id,
+        COALESCE(d.name,'') AS department,COALESCE(p.profile_path,'') AS profile_path,
         COALESCE(p.job_title,'') AS job_title,COALESCE(p.authority_level,'Standard') AS authority_level,
-        COALESCE(p.phone,'') AS phone,COALESCE(p.email,'') AS email,COALESCE(p.bio,'') AS bio
-        FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.role!='System' ORDER BY u.active DESC,u.full_name""")
+        COALESCE(p.phone,'') AS phone,COALESCE(p.email,'') AS email,COALESCE(p.bio,'') AS bio,
+        COALESCE(p.date_of_birth,'') AS date_of_birth,COALESCE(p.gender,'') AS gender,
+        COALESCE(p.national_id,'') AS national_id,COALESCE(p.address,'') AS address,
+        COALESCE(p.emergency_contact_name,'') AS emergency_contact_name,COALESCE(p.emergency_contact_phone,'') AS emergency_contact_phone,
+        COALESCE(p.health_notes,'') AS health_notes,COALESCE(p.blood_group,'') AS blood_group,COALESCE(p.allergies,'') AS allergies
+        FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id LEFT JOIN departments d ON d.id=u.department_id
+        WHERE u.role!='System' ORDER BY u.active DESC,u.full_name""")
 def upgrade_summary():
     return {
       "users":q("SELECT COUNT(*) c FROM users WHERE role!='System'",one=True)["c"],
@@ -2637,6 +2677,102 @@ def upload_profile_photo():
     dest=UPLOAD_DIR/'profiles'; dest.mkdir(exist_ok=True); name=f"profile-{current_user()['id']}-{uuid.uuid4().hex[:10]}.{ext}"; f.save(dest/name)
     execute('INSERT OR IGNORE INTO user_profiles(user_id) VALUES(?)',(current_user()['id'],)); execute('UPDATE user_profiles SET profile_path=? WHERE user_id=?',('uploads/profiles/'+name,current_user()['id']))
     audit(current_user()['id'],current_user()['full_name'],'Profile Photo Update','Profile photo changed.'); flash('Profile photo updated.','success'); return redirect(url_for('upgrade_hub')+'#profile')
+def ensure_institution_departments():
+    st=school_settings()
+    it=(st['institution_type'] or 'School').lower()
+    if 'college' in it or 'university' in it or 'tvet' in it:
+        for name,code in [('Communications','COMM'),('Computer Studies','COMP')]:
+            execute('INSERT OR IGNORE INTO departments(name,code) VALUES(?,?)',(name,code))
+    return q("SELECT id,name,code FROM departments WHERE active=1 ORDER BY name")
+
+def _role_title_defaults(role):
+    return {
+        'Admin':'Administrator','ICT':'ICT','Finance':'Finance Officer','Teacher':'Teacher / Lecturer',
+        'Librarian':'Librarian','Student':school_settings()['learner_label'],'Parent':'Parent / Guardian'
+    }.get(role,role)
+
+def _can_manage_target(actor,target):
+    if not target or target['role']=='System' or target['id']==actor['id']: return False
+    if actor['role']=='Admin': return True
+    if actor['role']=='ICT': return target['role'] not in {'Admin','ICT'}
+    return False
+
+@app.route('/admin/user-management')
+@login_required
+@permission_required('people.manage')
+def user_management():
+    actor=current_user(); departments=ensure_institution_departments(); people=upgrade_people()
+    students=q('SELECT * FROM students WHERE active=1 ORDER BY full_name')
+    guardians=q("SELECT id,full_name,username FROM users WHERE role='Parent' AND active=1 ORDER BY full_name")
+    return render_template('user_management.html', actor=actor, settings=school_settings(), people=people, departments=departments, students=students, guardians=guardians, roles=[r for r in ALL_PORTAL_ROLES if r!='System'], position_defaults=['HOD','Deputy','Dean','Head / Executive','ICT','Teacher / Lecturer','Finance Officer','Librarian','Parent / Guardian','Student / Learner','Administrative Staff','Support Staff'])
+
+@app.route('/admin/user-management/create',methods=['POST'])
+@login_required
+@permission_required('people.manage')
+def user_management_create():
+    actor=current_user(); role=request.form.get('role','Teacher').strip(); full_name=request.form.get('full_name','').strip(); username=request.form.get('username','').strip(); password=request.form.get('password','')
+    if role not in ALL_PORTAL_ROLES or role=='System': abort(400)
+    if actor['role']=='ICT' and role in {'Admin','ICT'}: abort(403)
+    if not full_name or not username or len(password)<8: flash('Full name, username and a temporary password of at least 8 characters are required.','danger'); return redirect(url_for('user_management'))
+    try:
+        department_id=request.form.get('department_id') or None
+        if department_id: department_id=int(department_id)
+        department_row=q('SELECT name FROM departments WHERE id=?',(department_id,),one=True) if department_id else None
+        department_name=department_row['name'] if department_row else ''
+        student_id=request.form.get('student_id') or None
+        if student_id: student_id=int(student_id)
+        # Parent linking is handled after account creation.
+        cur=execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active,position_title,department_id) VALUES(?,?,?,?,?,?,?,?)",(full_name,username,generate_password_hash(password),role,student_id,1,request.form.get('position_title','').strip() or _role_title_defaults(role),department_id))
+        uid=cur; execute('INSERT OR IGNORE INTO user_profiles(user_id) VALUES(?)',(uid,))
+        execute('UPDATE user_profiles SET department=?,job_title=?,phone=?,email=?,bio=?,date_of_birth=?,gender=?,national_id=?,address=?,emergency_contact_name=?,emergency_contact_phone=?,health_notes=?,blood_group=?,allergies=?,temporary_password=1 WHERE user_id=?',
+            (department_name,request.form.get('position_title','').strip() or _role_title_defaults(role),request.form.get('phone','').strip(),request.form.get('email','').strip(),request.form.get('bio','').strip(),request.form.get('date_of_birth','').strip(),request.form.get('gender','').strip(),request.form.get('national_id','').strip(),request.form.get('address','').strip(),request.form.get('emergency_contact_name','').strip(),request.form.get('emergency_contact_phone','').strip(),request.form.get('health_notes','').strip(),request.form.get('blood_group','').strip(),request.form.get('allergies','').strip(),uid))
+        if role in {'Parent','Guardian'} and student_id:
+            execute("INSERT INTO student_guardians(student_id,guardian_user_id,guardian_name,relationship,phone,email,primary_guardian) VALUES(?,?,?,?,?,?,1)",(student_id,uid,full_name,request.form.get('relationship','Parent / Guardian').strip(),request.form.get('phone','').strip(),request.form.get('email','').strip()))
+        elif student_id and role=='Student':
+            execute('UPDATE students SET full_name=?,student_phone=?,student_email=?,date_of_birth=?,gender=?,national_id=?,address=?,emergency_contact_name=?,emergency_contact_phone=?,blood_group=?,emergency_notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(full_name,request.form.get('phone','').strip(),request.form.get('email','').strip(),request.form.get('date_of_birth','').strip(),request.form.get('gender','').strip(),request.form.get('national_id','').strip(),request.form.get('address','').strip(),request.form.get('emergency_contact_name','').strip(),request.form.get('emergency_contact_phone','').strip(),request.form.get('blood_group','').strip(),request.form.get('health_notes','').strip(),student_id))
+        audit(actor['id'],actor['full_name'],'Create Account',f'{full_name} ({username}) created as {role}; department={request.form.get("department","") or "Unassigned"}.')
+        flash(f'{full_name} was added successfully. The temporary password can be changed by the user, while authorized administrators can still reset the account.','success')
+    except (sqlite3.IntegrityError,ValueError):
+        flash('Could not create the account. Check that the username is unique and the selected links are valid.','danger')
+    return redirect(url_for('user_management'))
+
+@app.route('/admin/user-management/<int:user_id>/edit',methods=['POST'])
+@login_required
+@permission_required('people.manage')
+def user_management_edit(user_id):
+    actor=current_user(); target=q('SELECT * FROM users WHERE id=?',(user_id,),one=True)
+    if not _can_manage_target(actor,target): abort(403)
+    role=request.form.get('role',target['role']).strip()
+    if role not in ALL_PORTAL_ROLES or (actor['role']=='ICT' and role in {'Admin','ICT'}): abort(403)
+    dept=request.form.get('department_id') or None; student_id=request.form.get('student_id') or None
+    try: dept=int(dept) if dept else None; student_id=int(student_id) if student_id else None
+    except ValueError: abort(400)
+    dept_row=q('SELECT name FROM departments WHERE id=?',(dept,),one=True) if dept else None
+    dept_name=dept_row['name'] if dept_row else ''
+    new_password=request.form.get('new_password','')
+    execute('UPDATE users SET full_name=?,role=?,student_id=?,position_title=?,department_id=? WHERE id=?',(request.form.get('full_name','').strip() or target['full_name'],role,student_id,request.form.get('position_title','').strip(),dept,user_id))
+    if actor['role']=='Admin' and new_password:
+        if len(new_password)<8: flash('New password must be at least 8 characters.','danger'); return redirect(url_for('user_management'))
+        execute('UPDATE users SET password_hash=? WHERE id=?',(generate_password_hash(new_password),user_id))
+        execute('UPDATE user_profiles SET temporary_password=1 WHERE user_id=?',(user_id,))
+    
+    execute('INSERT OR IGNORE INTO user_profiles(user_id) VALUES(?)',(user_id,))
+    execute('UPDATE user_profiles SET department=?,job_title=?,phone=?,email=?,bio=?,date_of_birth=?,gender=?,national_id=?,address=?,emergency_contact_name=?,emergency_contact_phone=?,health_notes=?,blood_group=?,allergies=? WHERE user_id=?',(dept_name,request.form.get('position_title','').strip(),request.form.get('phone','').strip(),request.form.get('email','').strip(),request.form.get('bio','').strip(),request.form.get('date_of_birth','').strip(),request.form.get('gender','').strip(),request.form.get('national_id','').strip(),request.form.get('address','').strip(),request.form.get('emergency_contact_name','').strip(),request.form.get('emergency_contact_phone','').strip(),request.form.get('health_notes','').strip(),request.form.get('blood_group','').strip(),request.form.get('allergies','').strip(),user_id))
+    if role=='Parent' and student_id:
+        execute("INSERT OR REPLACE INTO student_guardians(student_id,guardian_user_id,guardian_name,relationship,phone,email,primary_guardian) VALUES(?,?,?,?,?,?,1)",(student_id,user_id,request.form.get('full_name','').strip() or target['full_name'],request.form.get('relationship','Parent / Guardian').strip(),request.form.get('phone','').strip(),request.form.get('email','').strip()))
+    audit(actor['id'],actor['full_name'],'Edit Account',f'{target["username"]} profile updated; role={role}.')
+    flash('Account details updated.','success'); return redirect(url_for('user_management'))
+
+@app.route('/admin/user-management/<int:user_id>/delete',methods=['POST'])
+@login_required
+@permission_required('people.deactivate')
+def user_management_delete(user_id):
+    actor=current_user(); target=q('SELECT * FROM users WHERE id=?',(user_id,),one=True)
+    if not _can_manage_target(actor,target): abort(403)
+    if target['role']=='Admin' and q("SELECT COUNT(*) c FROM users WHERE role='Admin' AND active=1",one=True)['c']<=1: flash('The last active Administrator cannot be deleted.','warning'); return redirect(url_for('user_management'))
+    execute('UPDATE users SET active=0 WHERE id=?',(user_id,)); audit(actor['id'],actor['full_name'],'Delete/Archive Account',f'{target["full_name"]} ({target["role"]}) archived.')
+    flash('Account archived. Historical records remain intact.','success'); return redirect(url_for('user_management'))
+
 @app.route('/admin/people/<int:user_id>/toggle',methods=['POST'])
 @login_required
 @permission_required('people.deactivate')
