@@ -1366,10 +1366,10 @@ def login():
     if request.method == "GET" and role and role != "Admin" and not auth_required():
         return enter_role_without_login(role)
     if request.method == "POST":
-        username = request.form.get("username", "").strip()
+        username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
-        role = selected_role_from_request()
-        user = q("SELECT * FROM users WHERE username=? AND active=1 AND role=?", (username, role), one=True)
+        role = selected_role_from_request().strip()
+        user = q("SELECT * FROM users WHERE lower(username)=? AND active=1 AND role=?", (username, role), one=True)
         if not user or not check_password_hash(user["password_hash"], password):
             flash("Invalid username, password, or role.", "danger")
             return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username, password, or role.", setup_required=not auth_initialized())
@@ -2700,6 +2700,9 @@ def add_user():
         except ValueError: student_id=None
     else:
         student_id=None
+    if q("SELECT id FROM users WHERE lower(username)=? LIMIT 1", (username,), one=True):
+        flash("Username already exists. Choose a different username.", "danger")
+        return redirect(request.referrer or url_for("admin_dashboard"))
     try:
         uid=execute("""INSERT INTO users(full_name, username, password_hash, role, student_id, active, title, department, phone, email, date_of_birth, gender, id_reference, address, emergency_contact, blood_group, medical_notes, accountability_notes)
                       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -2730,8 +2733,13 @@ def edit_user(user_id:int):
             try: student_id=int(student_id)
             except ValueError: student_id=None
         else: student_id=None
+        new_username = request.form.get("username","").strip().lower()
+        conflict = q("SELECT id FROM users WHERE lower(username)=? AND id!=? LIMIT 1", (new_username, user_id), one=True)
+        if conflict:
+            flash("Username already exists. Choose a different username.", "danger")
+            return redirect(url_for("edit_user", user_id=user_id))
         execute("""UPDATE users SET full_name=?, username=?, role=?, student_id=?, title=?, department=?, phone=?, email=?, date_of_birth=?, gender=?, id_reference=?, address=?, emergency_contact=?, blood_group=?, medical_notes=?, accountability_notes=? WHERE id=?""",
-               (request.form.get("full_name","").strip(),request.form.get("username","").strip().lower(),role,student_id,request.form.get("title","").strip(),request.form.get("department","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),user_id))
+               (request.form.get("full_name","").strip(),new_username,role,student_id,request.form.get("title","").strip(),request.form.get("department","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),user_id))
         if role=="Parent" and student_id:
             execute("INSERT OR IGNORE INTO guardian_links(guardian_user_id,student_id,relationship,is_primary) VALUES(?,?,?,?)",(user_id,student_id,request.form.get("relationship","Guardian").strip() or "Guardian",1))
         audit(actor["id"],actor["full_name"],"Edit User",f"Updated {user['username']} ({user['role']}) -> {request.form.get('username','').strip()} ({role}).")
