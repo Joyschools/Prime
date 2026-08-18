@@ -12,6 +12,7 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+import mimetypes
 from collections.abc import MutableMapping
 from datetime import datetime
 from functools import wraps
@@ -65,7 +66,7 @@ ADMIN_LOGIN_PATH = "/xtspolsjhulupjoppsup-lmkzcodup"
 ADMIN_ROLES = {"Admin"}
 ALL_ROLES = ALL_PORTAL_ROLES
 SYSTEM_ROLE = "System"
-INSTITUTION_TYPES = ("Primary School", "Secondary School", "TVET", "College", "University", "Mixed Institution")
+INSTITUTION_TYPES = ("Kindergarten", "Primary School", "High School", "Secondary School", "TVET", "College", "University", "Mixed Institution")
 DEFAULT_DEPARTMENTS = ("Communications", "Computer Studies")
 _PORTAL_ROLE_COOKIE = "school_portal_role"
 _AUTH_COOKIE = "school_auth_token"
@@ -716,6 +717,33 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_users_role_active ON users(role, active);
         CREATE INDEX IF NOT EXISTS idx_finance_status_date ON finance_ledger(status, posted_at);
         """)
+        # These migrations are Python helpers and must run outside executescript().
+        ensure_column(conn, "finance_ledger", "receipt_path TEXT NOT NULL DEFAULT ''")
+        conn.executescript("""
+        CREATE TABLE IF NOT EXISTS attendance_events (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,action TEXT NOT NULL CHECK(action IN ('IN','OUT')),method TEXT NOT NULL DEFAULT 'QR',office_token TEXT,event_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,source TEXT NOT NULL DEFAULT 'online',latitude REAL,longitude REAL,speed_kph REAL,device_note TEXT,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE INDEX IF NOT EXISTS idx_attendance_user_time ON attendance_events(user_id,event_at);
+        CREATE TABLE IF NOT EXISTS teacher_assignments (id INTEGER PRIMARY KEY AUTOINCREMENT,teacher_user_id INTEGER NOT NULL,class_name TEXT NOT NULL,subject TEXT NOT NULL,unit_code TEXT,active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS communication_messages (id INTEGER PRIMARY KEY AUTOINCREMENT,sender_user_id INTEGER NOT NULL,recipient_user_id INTEGER NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,read_at TEXT,FOREIGN KEY(sender_user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(recipient_user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS class_attendance (id INTEGER PRIMARY KEY AUTOINCREMENT,teacher_user_id INTEGER NOT NULL,student_id INTEGER NOT NULL,class_name TEXT NOT NULL,subject TEXT NOT NULL,attendance_date TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('Present','Absent','Late','Excused')),note TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(teacher_user_id,student_id,class_name,subject,attendance_date),FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS fee_structures (id INTEGER PRIMARY KEY AUTOINCREMENT,class_level TEXT NOT NULL,item_name TEXT NOT NULL,amount REAL NOT NULL CHECK(amount >= 0),period TEXT NOT NULL DEFAULT 'Term 1',active INTEGER NOT NULL DEFAULT 1,created_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL);
+        CREATE TABLE IF NOT EXISTS fee_charges (id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER NOT NULL,fee_structure_id INTEGER,amount REAL NOT NULL,description TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Posted',created_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE,FOREIGN KEY(fee_structure_id) REFERENCES fee_structures(id) ON DELETE SET NULL,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL);
+        CREATE TABLE IF NOT EXISTS payment_integrations (id INTEGER PRIMARY KEY CHECK(id=1),provider TEXT NOT NULL DEFAULT 'Manual',account_name TEXT NOT NULL DEFAULT '',collection_account TEXT NOT NULL DEFAULT '',callback_secret TEXT NOT NULL DEFAULT '',auto_match INTEGER NOT NULL DEFAULT 0,notes TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS external_payment_events (id INTEGER PRIMARY KEY AUTOINCREMENT,provider TEXT NOT NULL,external_reference TEXT NOT NULL UNIQUE,amount REAL NOT NULL,payer_name TEXT,payer_phone TEXT,admission_no TEXT,payload_json TEXT,status TEXT NOT NULL DEFAULT 'Received',matched_student_id INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,processed_at TEXT,FOREIGN KEY(matched_student_id) REFERENCES students(id) ON DELETE SET NULL);
+        CREATE TABLE IF NOT EXISTS transport_trips (id INTEGER PRIMARY KEY AUTOINCREMENT,driver_user_id INTEGER NOT NULL,vehicle TEXT NOT NULL,route_name TEXT,status TEXT NOT NULL DEFAULT 'Active',started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,ended_at TEXT,FOREIGN KEY(driver_user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS driver_locations (id INTEGER PRIMARY KEY AUTOINCREMENT,trip_id INTEGER,driver_user_id INTEGER NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,speed_kph REAL DEFAULT 0,accuracy REAL,recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,source TEXT NOT NULL DEFAULT 'online',FOREIGN KEY(trip_id) REFERENCES transport_trips(id) ON DELETE SET NULL,FOREIGN KEY(driver_user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE INDEX IF NOT EXISTS idx_driver_locations_latest ON driver_locations(driver_user_id,recorded_at);
+        CREATE TABLE IF NOT EXISTS markbook_entries (id INTEGER PRIMARY KEY AUTOINCREMENT,teacher_user_id INTEGER NOT NULL,class_name TEXT NOT NULL,subject TEXT NOT NULL,student_id INTEGER NOT NULL,assessment TEXT NOT NULL,mark REAL NOT NULL,max_mark REAL NOT NULL DEFAULT 100,status TEXT NOT NULL DEFAULT 'Draft',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS attendance_qr_settings (id INTEGER PRIMARY KEY CHECK(id=1),office_name TEXT NOT NULL DEFAULT 'Main Office',token TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS finance_closings (id INTEGER PRIMARY KEY AUTOINCREMENT,closing_date TEXT NOT NULL,submitted_by INTEGER NOT NULL,notes TEXT,status TEXT NOT NULL DEFAULT 'Submitted',submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(submitted_by) REFERENCES users(id) ON DELETE RESTRICT);
+        INSERT OR IGNORE INTO attendance_qr_settings(id,office_name,token) VALUES(1,'Main Office',lower(hex(randomblob(16))));
+        INSERT OR IGNORE INTO payment_integrations(id,provider) VALUES(1,'Manual');
+        """)
+        ensure_column(conn, "users", "workspace_type TEXT NOT NULL DEFAULT 'Teaching'")
+        ensure_column(conn, "school_settings", "offline_enabled INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "school_settings", "backup_reminder_time TEXT NOT NULL DEFAULT '16:00'")
+        ensure_column(conn, "school_settings", "backup_auto_time TEXT NOT NULL DEFAULT '16:30'")
+        ensure_column(conn, "school_settings", "tracking_enabled INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "school_settings", "scanner_enabled INTEGER NOT NULL DEFAULT 1")
         conn.execute("INSERT OR IGNORE INTO finance_accounts(id, account_name, opening_balance) VALUES(1, 'Institution Operating Account', 0)")
         conn.execute("UPDATE users SET qr_access_token=lower(hex(randomblob(16))) WHERE role!='System' AND (qr_access_token IS NULL OR qr_access_token='')")
         if conn.execute("SELECT COUNT(*) FROM system_help").fetchone()[0] == 0:
@@ -1006,6 +1034,8 @@ def current_user():
 def login_required(view: Callable):
     @wraps(view)
     def wrapper(*args, **kwargs):
+        if not current_user() and not auth_required():
+            _ensure_demo_identity()
         if not current_user():
             return redirect(url_for("login", role=request.args.get("role", "")))
         return view(*args, **kwargs)
@@ -1019,6 +1049,8 @@ def role_required(*roles: str):
             user = current_user()
             if not user or user["role"] not in roles:
                 abort(403)
+            if user["role"] == "Teacher" and "Teacher" in roles and workspace_type_for_user(user) != "Teaching":
+                abort(403)
             return view(*args, **kwargs)
         return wrapper
     return decorator
@@ -1029,9 +1061,52 @@ def auth_initialized() -> bool:
     return bool(row and row["auth_initialized"])
 
 
+# DEMO_AUTH_BYPASS is intentionally enabled for presentation/local testing.
+# Set it to False before commercial deployment to restore the normal login gate.
+DEMO_AUTH_BYPASS = True
+
 def auth_required() -> bool:
+    if DEMO_AUTH_BYPASS:
+        return False
     row = q("SELECT auth_required FROM school_settings WHERE id=1", one=True)
     return bool(row and row["auth_required"])
+
+def _demo_role_for_request() -> str:
+    path = request.path.lower()
+    endpoint = (request.endpoint or "").lower()
+    rules = [
+        (("/admin", "admin_"), "Admin"),
+        (("/ict", "ict_"), "ICT"),
+        (("/finance", "finance_"), "Finance"),
+        (("/teacher", "teacher_", "/dashboard"), "Teacher"),
+        (("/student", "student_"), "Student"),
+        (("/parent", "parent_"), "Parent"),
+        (("/librarian", "librarian_", "/library"), "Librarian"),
+        (("/driver", "driver_"), "Driver"),
+        (("/workforce", "workforce_"), "Other Staff"),
+    ]
+    for needles, role in rules:
+        if any(n in path or n in endpoint for n in needles):
+            return role
+    return (session.get("active_portal_role") or "Admin")
+
+def _ensure_demo_identity() -> None:
+    if not DEMO_AUTH_BYPASS or current_user():
+        return
+    desired = _demo_role_for_request()
+    if desired == "Parent" and not parent_portal_enabled():
+        desired = "Admin"
+    candidates = q("SELECT id FROM users WHERE role=? AND active=1 AND role!='System' ORDER BY id", (desired,))
+    if not candidates and desired in {"Driver", "Guard", "Cook", "Other Staff"}:
+        candidates = q("SELECT id FROM users WHERE active=1 AND role NOT IN ('System','Student','Parent') ORDER BY id")
+    if not candidates:
+        candidates = q("SELECT id FROM users WHERE role='Admin' AND active=1 ORDER BY id")
+    if candidates:
+        uid = candidates[0]["id"]
+        session.permanent = True
+        session["user_id"] = uid
+        session["active_portal_role"] = desired
+        g.user = q("SELECT id, full_name, username, role, student_id, active FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
 
 
 def role_target(role: str) -> str:
@@ -1046,6 +1121,21 @@ def role_target(role: str) -> str:
     }[role]
 
 
+def workspace_type_for_user(user) -> str:
+    if not user: return "Teaching"
+    try:
+        row=q("SELECT workspace_type FROM users WHERE id=?",(user["id"],),one=True)
+        wt=(row["workspace_type"] if row else "") or ""
+    except Exception:
+        wt=""
+    return wt or ("Teaching" if user["role"]=="Teacher" else user["role"])
+
+def specialized_dashboard_for(user) -> str:
+    wt=workspace_type_for_user(user)
+    if wt=="Driver": return url_for("driver_dashboard")
+    if wt in {"Guard","Cook","Other Staff"}: return url_for("workforce_dashboard", kind=wt)
+    return role_target(user["role"])
+
 def enter_role_without_login(role: str):
     if role == "Parent" and not parent_portal_enabled():
         flash("Parent accounts are disabled for this institution mode.", "warning")
@@ -1053,21 +1143,24 @@ def enter_role_without_login(role: str):
     # Passwordless mode is intended only as a controlled demo/single-user setup.
     # Once a role has multiple active accounts, require an actual identity so one
     # user's dashboard cannot silently become another user's account.
-    if role == "Admin" or auth_required():
+    if auth_required():
         return redirect(url_for("login", role=role))
     users = q(
         "SELECT id FROM users WHERE role=? AND active=1 AND role!='System' ORDER BY id",
         (role,),
     )
     if not users:
-        flash(f"No active {role} account has been created yet.", "warning")
-        return redirect(url_for("index"))
-    if len(users) != 1:
-        flash(f"{role} access requires login because multiple active {role} accounts exist.", "warning")
-        return redirect(url_for("login", role=role))
+        # In presentation mode there may be no real account yet. Use the closest
+        # permitted account so the workspace can still be demonstrated.
+        _ensure_demo_identity()
+        target = role_target(role) if role in ALL_PORTAL_ROLES else url_for("dashboard")
+        return redirect(target)
     session.clear()
+    session.permanent = True
     session["user_id"] = users[0]["id"]
-    return redirect(role_target(role))
+    session["active_portal_role"] = role
+    user = q("SELECT * FROM users WHERE id=?", (users[0]["id"],), one=True)
+    return redirect(specialized_dashboard_for(user))
 
 
 def selected_role_from_request(default=""):
@@ -1435,7 +1528,7 @@ def login():
         session["user_id"] = user["id"]
         session["active_portal_role"] = user["role"]
         context = _portal_context_for(user["id"])
-        target = {"Admin":url_for("admin_dashboard"),"ICT":url_for("ict_dashboard"),"Finance":url_for("finance_dashboard"),"Teacher":url_for("teacher_dashboard"),"Student":url_for("student_dashboard"),"Parent":url_for("parent_dashboard"),"Librarian":url_for("librarian_dashboard")}[user["role"]]
+        target = specialized_dashboard_for(user)
         return redirect(target + "?" + urllib.parse.urlencode({"portal_context": context}))
     return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, setup_required=not auth_initialized())
 
@@ -1488,6 +1581,209 @@ def parent_entry(): return enter_role("Parent")
 @app.route("/librarian")
 def librarian_entry(): return enter_role("Librarian")
 
+
+@app.route("/communication")
+@login_required
+def communication_center():
+    user=current_user(); users=q("SELECT id,full_name,username,role,workspace_type FROM users WHERE active=1 AND id!=? AND role!='System' ORDER BY full_name",(user['id'],)); inbox=q("SELECT m.*,u.full_name AS sender_name,u.role AS sender_role FROM communication_messages m JOIN users u ON u.id=m.sender_user_id WHERE m.recipient_user_id=? ORDER BY m.created_at DESC LIMIT 80",(user['id'],)); sent=q("SELECT m.*,u.full_name AS recipient_name,u.role AS recipient_role FROM communication_messages m JOIN users u ON u.id=m.recipient_user_id WHERE m.sender_user_id=? ORDER BY m.created_at DESC LIMIT 40",(user['id'],)); return render_template('communication.html',settings=school_settings(),actor_name=user['full_name'],role=user['role'],users=users,inbox=inbox,sent=sent)
+
+@app.route("/communication/send",methods=['POST'])
+@login_required
+def communication_send():
+    rid=request.form.get('recipient_user_id',type=int); body=request.form.get('body','').strip(); target=q('SELECT id,full_name FROM users WHERE id=? AND active=1',(rid,),one=True)
+    if not target or not body: flash('Choose a recipient and enter a message.','danger'); return redirect(url_for('communication_center'))
+    execute('INSERT INTO communication_messages(sender_user_id,recipient_user_id,body) VALUES(?,?,?)',(current_user()['id'],rid,body)); audit(current_user()['id'],current_user()['full_name'],'Internal Message',f'Message sent to {target["full_name"]}.'); flash('Message sent.','success'); return redirect(url_for('communication_center'))
+
+@app.route("/communication/read/<int:message_id>",methods=['POST'])
+@login_required
+def communication_read(message_id:int):
+    execute('UPDATE communication_messages SET read_at=CURRENT_TIMESTAMP WHERE id=? AND recipient_user_id=?',(message_id,current_user()['id'])); return redirect(url_for('communication_center'))
+
+@app.route("/teacher/class-attendance",methods=['GET','POST'])
+@login_required
+@role_required('Teacher')
+def teacher_class_attendance():
+    cls=request.values.get('class_name','').strip(); subject=request.values.get('subject','').strip(); date=request.values.get('attendance_date','').strip() or datetime.utcnow().strftime('%Y-%m-%d'); classes=[r['grade'] for r in q('SELECT DISTINCT grade FROM students WHERE active=1 ORDER BY grade')]; students=q('SELECT id,full_name,admission_no FROM students WHERE active=1 AND grade=? ORDER BY full_name',(cls,)) if cls else []
+    if request.method=='POST':
+        saved=0
+        for st in students:
+            status=request.form.get(f"attendance_{st['id']}",'Absent')
+            if status not in {'Present','Absent','Late','Excused'}: status='Absent'
+            note=request.form.get(f"note_{st['id']}",'').strip()
+            execute("INSERT INTO class_attendance(teacher_user_id,student_id,class_name,subject,attendance_date,status,note) VALUES(?,?,?,?,?,?,?) ON CONFLICT(teacher_user_id,student_id,class_name,subject,attendance_date) DO UPDATE SET status=excluded.status,note=excluded.note",(current_user()['id'],st['id'],cls,subject or 'General',date,status,note)); saved+=1
+        flash(f'{saved} class attendance records saved.','success'); return redirect(url_for('teacher_class_attendance',class_name=cls,subject=subject,attendance_date=date))
+    return render_template('teacher_class_attendance.html',settings=school_settings(),actor_name=current_user()['full_name'],classes=classes,students=students,selected_class=cls,subject=subject,attendance_date=date,role=current_user()['role'])
+
+@app.route("/finance/external/<int:event_id>/match",methods=['POST'])
+@login_required
+@role_required('Finance','Admin')
+def finance_match_external(event_id:int):
+    event=q("SELECT * FROM external_payment_events WHERE id=? AND status!='Matched'",(event_id,),one=True); sid=request.form.get('student_id',type=int); student=q('SELECT * FROM students WHERE id=? AND active=1',(sid,),one=True) if sid else None
+    if not event or not student: flash('Payment event or student was not found.','danger'); return redirect(url_for('finance_dashboard'))
+    poster=current_user()['id']; pid=execute("INSERT INTO payments(student_id,amount,method,reference_no,recorded_by,status) VALUES(?,?,?,?,?,'Posted')",(sid,event['amount'],event['provider'],event['external_reference'],poster)); new_balance=max(0,float(student['balance'] or 0)-float(event['amount'])); execute("UPDATE students SET balance=?,payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(new_balance,'Paid' if new_balance==0 else 'Pending',sid)); execute("UPDATE external_payment_events SET status='Matched',matched_student_id=?,processed_at=CURRENT_TIMESTAMP WHERE id=?",(sid,event_id)); audit(current_user()['id'],current_user()['full_name'],'Match External Payment',f'External payment {event["external_reference"]} matched to {student["admission_no"]}.'); flash('External payment matched and posted.','success'); return redirect(url_for('finance_dashboard'))
+
+@app.route("/attendance")
+@login_required
+def attendance_center():
+    user=current_user(); settings=school_settings(); events=q("SELECT * FROM attendance_events WHERE user_id=? ORDER BY event_at DESC,id DESC LIMIT 30",(user['id'],)); office=q("SELECT * FROM attendance_qr_settings WHERE id=1",one=True); qr_data=''
+    if office:
+        img=qrcode.make(f"ATTEND:{office['token']}"); buf=io.BytesIO(); img.save(buf,format='PNG'); qr_data='data:image/png;base64,'+base64.b64encode(buf.getvalue()).decode('ascii')
+    return render_template('attendance_center.html',settings=settings,actor_name=user['full_name'],role=user['role'],workspace_type=workspace_type_for_user(user),events=events,office=office,qr_data=qr_data)
+
+@app.route("/attendance/office-qr")
+@login_required
+@role_required("Admin","ICT")
+def attendance_office_qr():
+    office=q("SELECT * FROM attendance_qr_settings WHERE id=1",one=True)
+    if not office: abort(404)
+    img=qrcode.make(f"ATTEND:{office['token']}"); buf=io.BytesIO(); img.save(buf,format='PNG'); buf.seek(0)
+    return send_file(buf,mimetype='image/png',download_name='institution-attendance-qr.png',as_attachment=False)
+
+@app.route("/attendance/rotate",methods=['POST'])
+@login_required
+@role_required("Admin","ICT")
+def attendance_rotate():
+    execute("UPDATE attendance_qr_settings SET token=?,updated_at=CURRENT_TIMESTAMP WHERE id=1",(uuid.uuid4().hex,)); audit(current_user()['id'],current_user()['full_name'],'Attendance QR Rotated','Institution attendance QR token rotated.'); flash('Attendance QR rotated. Previous QR is now invalid.','success'); return redirect(request.referrer or url_for('attendance'))
+
+@app.route("/attendance/record",methods=['POST'])
+@login_required
+def attendance_record():
+    token=(request.form.get('token') or '').strip(); action=(request.form.get('action') or '').upper(); event_at=(request.form.get('event_at') or '').strip() or None; office=q("SELECT token FROM attendance_qr_settings WHERE id=1",one=True)
+    if action not in {'IN','OUT'} or not office or token!=office['token']: return jsonify({'ok':False,'message':'Invalid institution attendance QR.'}),400
+    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note) VALUES(?,?,?,?,COALESCE(?,CURRENT_TIMESTAMP),?,?,?,?,?)",(current_user()['id'],action,'QR',token,event_at,request.form.get('source','online'),request.form.get('latitude',type=float),request.form.get('longitude',type=float),request.form.get('speed_kph',type=float),request.form.get('device_note','')))
+    return jsonify({'ok':True,'message':f'Checked {"in" if action=="IN" else "out"}.','event_at':event_at or datetime.utcnow().isoformat()+'Z'})
+
+@app.route("/attendance/sync",methods=['POST'])
+@login_required
+def attendance_sync():
+    payload=request.get_json(silent=True) or {}; events=payload.get('events') if isinstance(payload,dict) else None; office=q("SELECT token FROM attendance_qr_settings WHERE id=1",one=True)
+    if not isinstance(events,list) or not office: return jsonify({'ok':False,'message':'Invalid offline queue.'}),400
+    saved=0
+    for item in events[:100]:
+        if item.get('token')!=office['token'] or str(item.get('action','')).upper() not in {'IN','OUT'}: continue
+        execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note) VALUES(?,?,?,?,?,?,?,?,?,?)",(current_user()['id'],str(item['action']).upper(),'QR',office['token'],item.get('event_at') or None,'offline-sync',item.get('latitude'),item.get('longitude'),item.get('speed_kph'),item.get('device_note',''))); saved+=1
+    return jsonify({'ok':True,'saved':saved})
+
+@app.route("/admin/attendance")
+@login_required
+@role_required('Admin','ICT')
+def admin_attendance():
+    events=q("SELECT a.*,u.full_name,u.username,u.role FROM attendance_events a JOIN users u ON u.id=a.user_id ORDER BY a.event_at DESC,a.id DESC LIMIT 200"); office=q("SELECT * FROM attendance_qr_settings WHERE id=1",one=True)
+    return render_template('admin_attendance.html',settings=school_settings(),events=events,office=office,actor_name=current_user()['full_name'],role=current_user()['role'])
+
+@app.route("/teacher/assignments",methods=['POST'])
+@login_required
+@role_required('Teacher')
+def teacher_assignment_add():
+    cls=request.form.get('class_name','').strip(); subject=request.form.get('subject','').strip(); unit=request.form.get('unit_code','').strip()
+    if not cls or not subject: flash('Class and subject are required.','danger'); return redirect(url_for('teacher_dashboard'))
+    execute("INSERT INTO teacher_assignments(teacher_user_id,class_name,subject,unit_code) VALUES(?,?,?,?)",(current_user()['id'],cls,subject,unit)); flash('Teaching assignment added.','success'); return redirect(url_for('teacher_dashboard'))
+
+@app.route("/teacher/markbook",methods=['POST'])
+@login_required
+@role_required('Teacher')
+def teacher_markbook_save():
+    cls=request.form.get('class_name','').strip(); subject=request.form.get('subject','').strip(); assessment=request.form.get('assessment','').strip() or 'Assessment'
+    try: max_mark=float(request.form.get('max_mark','100') or 100)
+    except ValueError: max_mark=100
+    students=q("SELECT id FROM students WHERE active=1 AND grade=? ORDER BY full_name",(cls,)); saved=0
+    for st in students:
+        raw=request.form.get(f"mark_{st['id']}", "")
+        if raw=='': continue
+        try: mark=max(0,min(max_mark,float(raw)))
+        except ValueError: continue
+        execute("INSERT INTO markbook_entries(teacher_user_id,class_name,subject,student_id,assessment,mark,max_mark,status) VALUES(?,?,?,?,?,?,?,'Submitted')",(current_user()['id'],cls,subject,st['id'],assessment,mark,max_mark)); saved+=1
+    audit(current_user()['id'],current_user()['full_name'],'Teacher Markbook',f'{saved} {subject} marks submitted for {cls}.'); flash(f'{saved} marks submitted and organized for Admin review.','success'); return redirect(url_for('teacher_dashboard'))
+
+@app.route("/workforce/<kind>")
+@login_required
+def workforce_dashboard(kind):
+    kind=kind if kind in {'Guard','Cook','Other Staff'} else 'Other Staff'
+    if workspace_type_for_user(current_user())!=kind and current_user()['role'] not in {'Admin','ICT'}: abort(403)
+    return render_template('workforce_dashboard.html',settings=school_settings(),actor_name=current_user()['full_name'],role=current_user()['role'],kind=kind)
+
+@app.route("/driver")
+@login_required
+def driver_dashboard():
+    if workspace_type_for_user(current_user())!='Driver' and current_user()['role'] not in {'Admin','ICT'}: abort(403)
+    trip=q("SELECT * FROM transport_trips WHERE driver_user_id=? AND status='Active' ORDER BY id DESC LIMIT 1",(current_user()['id'],),one=True); history=q("SELECT * FROM transport_trips WHERE driver_user_id=? ORDER BY id DESC LIMIT 12",(current_user()['id'],))
+    return render_template('driver_dashboard.html',settings=school_settings(),actor_name=current_user()['full_name'],trip=trip,history=history)
+
+@app.route("/driver/trip/start",methods=['POST'])
+@login_required
+def driver_trip_start():
+    if workspace_type_for_user(current_user())!='Driver' and current_user()['role'] not in {'Admin','ICT'}: abort(403)
+    existing=q("SELECT id FROM transport_trips WHERE driver_user_id=? AND status='Active'",(current_user()['id'],),one=True)
+    if existing: flash('An active trip is already running.','warning'); return redirect(url_for('driver_dashboard'))
+    execute("INSERT INTO transport_trips(driver_user_id,vehicle,route_name,status) VALUES(?,?,?,'Active')",(current_user()['id'],request.form.get('vehicle','Vehicle').strip() or 'Vehicle',request.form.get('route_name','').strip())); flash('Trip started.','success'); return redirect(url_for('driver_dashboard'))
+
+@app.route("/driver/trip/stop",methods=['POST'])
+@login_required
+def driver_trip_stop():
+    trip=q("SELECT id FROM transport_trips WHERE driver_user_id=? AND status='Active' ORDER BY id DESC LIMIT 1",(current_user()['id'],),one=True)
+    if trip: execute("UPDATE transport_trips SET status='Completed',ended_at=CURRENT_TIMESTAMP WHERE id=?",(trip['id'],))
+    flash('Trip stopped.','success'); return redirect(url_for('driver_dashboard'))
+
+@app.route("/driver/location",methods=['POST'])
+@login_required
+def driver_location():
+    if workspace_type_for_user(current_user())!='Driver' and current_user()['role'] not in {'Admin','ICT'}: abort(403)
+    data=request.get_json(silent=True) or {}; trip=q("SELECT id FROM transport_trips WHERE driver_user_id=? AND status='Active' ORDER BY id DESC LIMIT 1",(current_user()['id'],),one=True)
+    try: lat=float(data.get('latitude')); lon=float(data.get('longitude'))
+    except (TypeError,ValueError): return jsonify({'ok':False}),400
+    execute("INSERT INTO driver_locations(trip_id,driver_user_id,latitude,longitude,speed_kph,accuracy,source) VALUES(?,?,?,?,?,?,?)",(trip['id'] if trip else None,current_user()['id'],lat,lon,float(data.get('speed_kph') or 0),float(data.get('accuracy') or 0),'online')); return jsonify({'ok':True})
+
+@app.route("/admin/transport")
+@login_required
+@role_required('Admin','ICT')
+def admin_transport():
+    rows=q("SELECT u.id,u.full_name,t.vehicle,t.route_name,t.status,t.started_at,t.ended_at,l.latitude,l.longitude,l.speed_kph,l.recorded_at FROM users u LEFT JOIN transport_trips t ON t.driver_user_id=u.id AND t.status='Active' LEFT JOIN driver_locations l ON l.id=(SELECT x.id FROM driver_locations x WHERE x.driver_user_id=u.id ORDER BY x.recorded_at DESC,x.id DESC LIMIT 1) WHERE u.active=1 AND u.workspace_type='Driver' ORDER BY u.full_name")
+    return render_template('admin_transport.html',settings=school_settings(),rows=rows,actor_name=current_user()['full_name'],role=current_user()['role'])
+
+@app.route("/finance/fee-structure",methods=['POST'])
+@login_required
+@role_required('Finance','Admin')
+def finance_fee_structure():
+    cls=request.form.get('class_level','').strip(); item=request.form.get('item_name','').strip()
+    try: amount=float(request.form.get('amount','0') or 0)
+    except ValueError: amount=-1
+    period=request.form.get('period','Term 1').strip() or 'Term 1'
+    if not cls or not item or amount<0: flash('Enter a class, fee item and valid amount.','danger'); return redirect(url_for('finance_dashboard'))
+    execute("INSERT INTO fee_structures(class_level,item_name,amount,period,created_by) VALUES(?,?,?,?,?)",(cls,item,amount,period,current_user()['id'])); flash('Fee structure saved.','success'); return redirect(url_for('finance_dashboard'))
+
+@app.route("/finance/apply-fee",methods=['POST'])
+@login_required
+@role_required('Finance','Admin')
+def finance_apply_fee():
+    sid=request.form.get('student_id',type=int); fid=request.form.get('fee_structure_id',type=int); student=q('SELECT * FROM students WHERE id=? AND active=1',(sid,),one=True); fee=q('SELECT * FROM fee_structures WHERE id=? AND active=1',(fid,),one=True)
+    if not student or not fee: flash('Student or fee structure not found.','danger'); return redirect(url_for('finance_dashboard'))
+    execute("INSERT INTO fee_charges(student_id,fee_structure_id,amount,description,created_by) VALUES(?,?,?,?,?)",(sid,fid,float(fee['amount']),fee['item_name'],current_user()['id'])); new_balance=float(student['balance'] or 0)+float(fee['amount']); execute("UPDATE students SET balance=?,payment_status='Pending',updated_at=CURRENT_TIMESTAMP WHERE id=?",(new_balance,sid)); flash('Fee charge applied and student balance recalculated.','success'); return redirect(url_for('finance_dashboard'))
+
+@app.route("/finance/integration",methods=['POST'])
+@login_required
+@role_required('Admin','Finance')
+def finance_integration():
+    provider=request.form.get('provider','Manual').strip() or 'Manual'; account_name=request.form.get('account_name','').strip(); collection=request.form.get('collection_account','').strip(); secret=request.form.get('callback_secret','').strip(); auto=1 if request.form.get('auto_match')=='1' else 0
+    execute("UPDATE payment_integrations SET provider=?,account_name=?,collection_account=?,callback_secret=?,auto_match=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=1",(provider,account_name,collection,secret,auto,request.form.get('notes','').strip())); flash('Payment intake settings saved.','success'); return redirect(url_for('finance_dashboard'))
+
+@app.route("/api/payments/webhook/<provider>",methods=['POST'])
+def payments_webhook(provider):
+    cfg=q('SELECT * FROM payment_integrations WHERE id=1',one=True)
+    if not cfg or not cfg['callback_secret'] or request.headers.get('X-Webhook-Secret','')!=cfg['callback_secret']: return jsonify({'ok':False,'message':'Unauthorized webhook.'}),401
+    data=request.get_json(silent=True) or {}; ref=str(data.get('reference') or data.get('transaction_id') or data.get('trans_id') or '').strip()
+    try: amount=float(data.get('amount') or 0)
+    except (TypeError,ValueError): amount=0
+    admission=str(data.get('admission_no') or data.get('account') or '').strip(); phone=str(data.get('phone') or data.get('payer_phone') or '').strip(); name=str(data.get('payer_name') or data.get('name') or '').strip()
+    if not ref or amount<=0: return jsonify({'ok':False,'message':'reference and amount required.'}),400
+    try: eid=execute("INSERT INTO external_payment_events(provider,external_reference,amount,payer_name,payer_phone,admission_no,payload_json) VALUES(?,?,?,?,?,?,?)",(provider,ref,amount,name,phone,admission,json.dumps(data)))
+    except sqlite3.IntegrityError: return jsonify({'ok':True,'message':'Already received.'})
+    student=q('SELECT * FROM students WHERE admission_no=?',(admission,),one=True) if admission else None
+    if not student and phone: student=q('SELECT * FROM students WHERE student_phone=? OR guardian_phone=? ORDER BY id LIMIT 1',(phone,phone),one=True)
+    if cfg['auto_match'] and student:
+        poster=q("SELECT id FROM users WHERE role='Admin' AND active=1 ORDER BY id LIMIT 1",one=True); poster_id=poster['id'] if poster else None
+        if poster_id:
+            pid=execute("INSERT INTO payments(student_id,amount,method,reference_no,recorded_by,status) VALUES(?,?,?,?,?,'Posted')",(student['id'],amount,provider,ref,poster_id)); new_balance=max(0,float(student['balance'] or 0)-amount); execute("UPDATE students SET balance=?,payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(new_balance,'Paid' if new_balance==0 else 'Pending',student['id'])); execute("UPDATE external_payment_events SET status='Matched',matched_student_id=?,processed_at=CURRENT_TIMESTAMP WHERE id=?",(student['id'],eid)); return jsonify({'ok':True,'matched':True,'payment_id':pid})
+    return jsonify({'ok':True,'matched':False,'event_id':eid})
 
 @app.route("/coming-soon/<feature>")
 def coming_soon(feature: str):
@@ -1795,26 +2091,21 @@ def admin_dashboard():
                             FROM guardian_links gl JOIN users gu ON gu.id=gl.guardian_user_id
                             JOIN students st ON st.id=gl.student_id ORDER BY gl.created_at DESC"""),
         archived_users=q("SELECT id, full_name, username, role, title, department, archived_at FROM users WHERE active=0 AND role!='System' ORDER BY archived_at DESC, full_name"),
+        finance_closings=q("SELECT c.*,u.full_name AS submitted_name FROM finance_closings c JOIN users u ON u.id=c.submitted_by ORDER BY c.submitted_at DESC,c.id DESC LIMIT 20"),
     )
 
 
 @app.route("/teacher-dashboard")
 @login_required
-@role_required("Teacher")
+@role_required("Teacher", "Admin")
 def teacher_dashboard():
-    user=current_user(); grade=request.args.get("grade", "").strip()
-    grades=[r["grade"] for r in q("SELECT DISTINCT grade FROM students ORDER BY grade")]
-    assignments=assignment_rows(grade or None)
-    submissions=q("""SELECT s.*, a.title, a.subject, a.grade, st.full_name AS student_name, st.admission_no
-                      FROM submissions s JOIN assignments a ON a.id=s.assignment_id
-                      JOIN students st ON st.id=s.student_id
-                      ORDER BY s.submitted_at DESC, s.id DESC LIMIT 50""")
-    messages=q("""SELECT * FROM portal_messages WHERE (sender_role='Parent' OR recipient_role='Teacher') ORDER BY created_at DESC LIMIT 30""")
-    available_students=q("SELECT * FROM students WHERE active=1 ORDER BY grade, full_name")
-    library_items=q("SELECT * FROM library_items WHERE active=1 ORDER BY category,title LIMIT 80") if school_settings()["library_enabled"] else []
-    settings=school_settings(); nav_items=navigation_items("Teacher", settings)
-    return render_template("role_dashboard.html", role="Teacher", workspace=workspace_for("Teacher"), grades=grades, selected_grade=grade, assignments=assignments, submissions=submissions, messages=messages, students=available_students, library_items=library_items, teacher_online_url="https://meet.google.com/new", actor_name=user["full_name"], nav_items=nav_items)
-
+    settings=school_settings(); user=current_user()
+    assignments=q("SELECT * FROM teacher_assignments WHERE teacher_user_id=? AND active=1 ORDER BY class_name,subject",(user["id"],)) if user["role"]=="Teacher" else q("SELECT a.*,u.full_name AS teacher_name FROM teacher_assignments a JOIN users u ON u.id=a.teacher_user_id WHERE a.active=1 ORDER BY a.class_name,a.subject")
+    classes=[r["grade"] for r in q("SELECT DISTINCT grade FROM students WHERE active=1 ORDER BY grade")]
+    students=q("SELECT * FROM students WHERE active=1 ORDER BY grade,full_name LIMIT 300")
+    latest_marks=q("SELECT m.*,s.full_name,s.admission_no FROM markbook_entries m JOIN students s ON s.id=m.student_id WHERE m.teacher_user_id=? ORDER BY m.created_at DESC LIMIT 80",(user["id"],)) if user["role"]=="Teacher" else q("SELECT m.*,s.full_name,s.admission_no,u.full_name AS teacher_name FROM markbook_entries m JOIN students s ON s.id=m.student_id JOIN users u ON u.id=m.teacher_user_id ORDER BY m.created_at DESC LIMIT 80")
+    events=q("SELECT * FROM attendance_events WHERE user_id=? ORDER BY event_at DESC,id DESC LIMIT 20",(user["id"],)) if user["role"]=="Teacher" else []
+    return render_template("teacher_dashboard_pro.html",settings=settings,actor_name=user["full_name"],role=user["role"],assignments=assignments,classes=classes,students=students,latest_marks=latest_marks,events=events,workspace_type=workspace_type_for_user(user),nav_items=navigation_items("Teacher",settings))
 
 @app.route("/student-dashboard")
 @login_required
@@ -1923,8 +2214,14 @@ def finance_dashboard():
     account=q("SELECT * FROM finance_accounts WHERE id=1",one=True)
     system_balance=float(account["opening_balance"] if account else 0)+float(ledger_income or 0)-float(ledger_expense or 0)
     employees=q("SELECT id,full_name,username,role,title,department FROM users WHERE active=1 AND role NOT IN ('System','Student','Parent') ORDER BY full_name")
+    fee_structures=q("SELECT * FROM fee_structures WHERE active=1 ORDER BY class_level,item_name")
+    fee_charges=q("SELECT c.*,s.full_name,s.admission_no FROM fee_charges c JOIN students s ON s.id=c.student_id ORDER BY c.created_at DESC LIMIT 80")
+    payint=q("SELECT * FROM payment_integrations WHERE id=1",one=True)
+    external_events=q("SELECT e.*,s.full_name AS matched_name FROM external_payment_events e LEFT JOIN students s ON s.id=e.matched_student_id ORDER BY e.created_at DESC LIMIT 50")
+    daily_usage=q("SELECT date(posted_at) day,entry_type,category,COALESCE(SUM(amount),0) amount,COUNT(*) count FROM finance_ledger WHERE status='Posted' GROUP BY date(posted_at),entry_type,category ORDER BY day DESC LIMIT 60")
+    closings=q("SELECT c.*,u.full_name AS submitted_name FROM finance_closings c JOIN users u ON u.id=c.submitted_by ORDER BY c.id DESC LIMIT 30")
     nav_items=navigation_items("Finance", settings)
-    return render_template("finance_dashboard.html", role="Finance", workspace=workspace_for("Finance"), settings=settings, payments=payments, total_income=total_income, total_balance=balance, students=students, batches=batches, documents=documents, actor_name=current_user()["full_name"], nav_items=nav_items, ledger=ledger, ledger_income=ledger_income, ledger_expense=ledger_expense, system_balance=system_balance, employees=employees)
+    return render_template("finance_dashboard.html", role="Finance", workspace=workspace_for("Finance"), settings=settings, payments=payments, total_income=total_income, total_balance=balance, students=students, batches=batches, documents=documents, actor_name=current_user()["full_name"], nav_items=nav_items, ledger=ledger, ledger_income=ledger_income, ledger_expense=ledger_expense, system_balance=system_balance, employees=employees, fee_structures=fee_structures, fee_charges=fee_charges, payint=payint, external_events=external_events, daily_usage=daily_usage, closings=closings)
 
 
 @app.route("/ict-dashboard")
@@ -2530,6 +2827,16 @@ def finance_record_payment():
     audit(current_user()['id'],current_user()['full_name'],'Finance Payment',f"Payment #{payment_id}: {amount:.2f} for {student['admission_no']}; balance {new_balance:.2f}.")
     flash("Payment posted and the student/parent balance has been updated.","success"); return redirect(url_for("finance_dashboard"))
 
+@app.route("/finance/submit-day", methods=["POST"])
+@login_required
+@role_required("Finance", "Admin")
+def finance_submit_day():
+    closing_date=request.form.get("closing_date", datetime.utcnow().strftime("%Y-%m-%d")).strip()
+    notes=request.form.get("notes","").strip()
+    execute("INSERT INTO finance_closings(closing_date,submitted_by,notes,status) VALUES(?,?,?,'Submitted')",(closing_date,current_user()["id"],notes))
+    audit(current_user()["id"],current_user()["full_name"],"Finance Day Submitted",f"Finance submitted the day {closing_date} for Administrator review.")
+    flash("Finance records submitted to Administrator for review.","success"); return redirect(url_for("finance_dashboard"))
+
 @app.route("/finance/results/<int:batch_id>/approve", methods=["POST"])
 @login_required
 @role_required("Finance", "Admin")
@@ -2705,7 +3012,21 @@ def admin_institution_profile():
     class_label=request.form.get("class_label","Class").strip() or "Class"
     department_label=request.form.get("department_label","Department").strip() or "Department"
     parent_enabled = 0 if institution_type in {"TVET", "College", "University"} else (1 if request.form.get('parent_portal_enabled') == '1' else 0)
-    execute("""UPDATE school_settings SET institution_type=?, learner_label=?, staff_label=?, academic_period_label=?, class_label=?, department_label=?, parent_portal_enabled=? WHERE id=1""",(institution_type,learner_label,staff_label,academic_period_label,class_label,department_label,parent_enabled))
+    type_orders={
+        "Kindergarten":"Home,Students,Assignments,Messages,Library,Institution",
+        "Primary School":"Home,Students,Assignments,Results,Messages,Library,Institution",
+        "High School":"Home,Students,Classes,Assignments,Results,Messages,Library,Institution",
+        "Secondary School":"Home,Students,Classes,Assignments,Results,Messages,Library,Institution",
+        "TVET":"Home,Students,Departments,Courses,Assessments,Results,Finance,Library,Messages,Institution",
+        "College":"Home,Students,Departments,Courses,Assessments,Results,Finance,Library,Messages,Institution",
+        "University":"Home,Students,Faculties,Departments,Courses,Assessments,Results,Finance,Library,Messages,Institution",
+        "Mixed Institution":"Home,Students,Classes,Departments,Assignments,Results,Finance,Library,Messages,Institution",
+    }
+    order=type_orders.get(institution_type,type_orders["High School"])
+    default_staff="Teacher / Lecturer" if institution_type in {"TVET","College","University"} else "Teacher"
+    default_period="Semester" if institution_type in {"TVET","College","University"} else "Term"
+    default_class="Cohort" if institution_type in {"TVET","College","University"} else "Class"
+    execute("""UPDATE school_settings SET institution_type=?, learner_label=?, staff_label=?, academic_period_label=?, class_label=?, department_label=?, parent_portal_enabled=?, menu_order=? WHERE id=1""",(institution_type,learner_label,staff_label or default_staff,academic_period_label or default_period,class_label or default_class,department_label,parent_enabled,order))
     if institution_type in {"TVET","College","University"}:
         for name in DEFAULT_DEPARTMENTS:
             execute("INSERT OR IGNORE INTO departments(name,category) VALUES(?, 'Academic')",(name,))
@@ -2757,6 +3078,8 @@ def add_user():
     role=request.form.get("role", "Teacher")
     title=request.form.get("title", "").strip()
     department=request.form.get("department", "").strip()
+    workspace_type=request.form.get("workspace_type", "Teaching").strip() or "Teaching"
+    if workspace_type not in {"Teaching","Driver","Guard","Cook","Other Staff"}: workspace_type="Teaching"
     student_id=request.form.get("student_id") or None
     allowed=set(ALL_PORTAL_ROLES) - {SYSTEM_ROLE}
     # ICT is a technical operator, not a privilege escalator.
@@ -2780,9 +3103,9 @@ def add_user():
             admission_no = request.form.get("admission_no", "").strip() or next_admission_no()
             fee = float(school_settings()["school_fee"] or 0)
             student_id = execute("INSERT INTO students(admission_no,full_name,grade,student_phone,student_email,medical_condition,notes,payment_status,balance,active) VALUES(?,?,?,?,?,?,?,'Pending',?,1)", (admission_no, full_name, grade, request.form.get("phone", "").strip(), request.form.get("email", "").strip(), request.form.get("medical_notes", "").strip(), request.form.get("accountability_notes", "").strip(), fee))
-        uid=execute("""INSERT INTO users(full_name, username, password_hash, role, student_id, active, title, department, phone, email, date_of_birth, gender, id_reference, address, emergency_contact, blood_group, medical_notes, accountability_notes)
-                      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                   (full_name,username,generate_password_hash(password),role,student_id,title,department,request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip()))
+        uid=execute("""INSERT INTO users(full_name, username, password_hash, role, student_id, active, title, department, phone, email, date_of_birth, gender, id_reference, address, emergency_contact, blood_group, medical_notes, accountability_notes, workspace_type)
+                      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (full_name,username,generate_password_hash(password),role,student_id,title,department,request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),workspace_type))
         if role=="Parent" and student_id:
             execute("INSERT OR IGNORE INTO guardian_links(guardian_user_id, student_id, relationship, is_primary) VALUES(?,?,?,?)", (uid,student_id,request.form.get("relationship","Guardian").strip() or "Guardian",1))
         audit(actor["id"],actor["full_name"],"Add User",f"{full_name} ({username}) added as {role}; title={title or '—'}; department={department or '—'}.")
@@ -2802,6 +3125,8 @@ def edit_user(user_id:int):
     if actor["role"]=="ICT" and user["role"] in {"Admin","ICT"}: abort(403)
     if request.method=="POST":
         role=request.form.get("role",user["role"])
+        workspace_type=request.form.get("workspace_type", user["workspace_type"] if "workspace_type" in user.keys() else "Teaching").strip() or "Teaching"
+        if workspace_type not in {"Teaching","Driver","Guard","Cook","Other Staff"}: workspace_type="Teaching"
         if actor["role"]=="ICT" and role in {"Admin","ICT"}: abort(403)
         if role not in set(ALL_PORTAL_ROLES)-{SYSTEM_ROLE}: abort(400)
         student_id=request.form.get("student_id") or None
@@ -2814,8 +3139,8 @@ def edit_user(user_id:int):
         if conflict:
             flash("Username already exists. Choose a different username.", "danger")
             return redirect(url_for("edit_user", user_id=user_id))
-        execute("""UPDATE users SET full_name=?, username=?, role=?, student_id=?, title=?, department=?, phone=?, email=?, date_of_birth=?, gender=?, id_reference=?, address=?, emergency_contact=?, blood_group=?, medical_notes=?, accountability_notes=? WHERE id=?""",
-               (request.form.get("full_name","").strip(),new_username,role,student_id,request.form.get("title","").strip(),request.form.get("department","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),user_id))
+        execute("""UPDATE users SET full_name=?, username=?, role=?, student_id=?, title=?, department=?, phone=?, email=?, date_of_birth=?, gender=?, id_reference=?, address=?, emergency_contact=?, blood_group=?, medical_notes=?, accountability_notes=?, workspace_type=? WHERE id=?""",
+               (request.form.get("full_name","").strip(),new_username,role,student_id,request.form.get("title","").strip(),request.form.get("department","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),workspace_type,user_id))
         if role=="Parent" and student_id:
             execute("INSERT OR IGNORE INTO guardian_links(guardian_user_id,student_id,relationship,is_primary) VALUES(?,?,?,?)",(user_id,student_id,request.form.get("relationship","Guardian").strip() or "Guardian",1))
         audit(actor["id"],actor["full_name"],"Edit User",f"Updated {user['username']} ({user['role']}) -> {request.form.get('username','').strip()} ({role}).")
@@ -3061,7 +3386,14 @@ def finance_post_ledger():
         flash("Enter a valid ledger transaction.","danger"); return redirect(url_for("finance_dashboard"))
     if entry_type=="Payroll" and (not payee or not q("SELECT id FROM users WHERE id=? AND active=1 AND role NOT IN ('Student','Parent','System')",(payee,),one=True)):
         flash("Select a valid active employee for payroll.","danger"); return redirect(url_for("finance_dashboard"))
-    execute("INSERT INTO finance_ledger(entry_type,category,payee_user_id,amount,description,reference_no,posted_by) VALUES(?,?,?,?,?,?,?)",(entry_type,category,payee,amount,description,reference,current_user()["id"]))
+    receipt_path=""
+    file=request.files.get("receipt")
+    if file and file.filename:
+        ext=file.filename.rsplit('.',1)[-1].lower() if '.' in file.filename else ''
+        if ext in {"pdf","png","jpg","jpeg","webp"}:
+            rd=UPLOAD_DIR/"finance_receipts"; rd.mkdir(exist_ok=True)
+            name=f"ledger-{datetime.now().strftime('%Y%m%d%H%M%S%f')}.{ext}"; file.save(rd/name); receipt_path="uploads/finance_receipts/"+name
+    execute("INSERT INTO finance_ledger(entry_type,category,payee_user_id,amount,description,reference_no,posted_by,receipt_path) VALUES(?,?,?,?,?,?,?,?)",(entry_type,category,payee,amount,description,reference,current_user()["id"],receipt_path))
     audit(current_user()["id"],current_user()["full_name"],"Finance Transaction",f"Posted {entry_type} of {amount:.2f} ({reference or 'no reference'}).")
     flash("Transaction posted and locked. Only an Administrator can reverse it.","success"); return redirect(url_for("finance_dashboard"))
 
