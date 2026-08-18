@@ -2136,12 +2136,12 @@ def teacher_dashboard():
 @login_required
 def student_dashboard():
     user=current_user()
-    if user.get("role") != "Student" and not DEMO_AUTH_BYPASS:
+    if user["role"] != "Student" and not DEMO_AUTH_BYPASS:
         abort(403)
     student=portal_student(request.args.get("student_id", type=int))
-    if not student and user.get("student_id"):
+    if not student and user["student_id"]:
         student=q("SELECT * FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
-    if not student and user.get("full_name"):
+    if not student and user["full_name"]:
         student=q("SELECT * FROM students WHERE lower(full_name)=lower(?) AND active=1 ORDER BY id DESC LIMIT 1", (user["full_name"],), one=True)
     if not student and DEMO_AUTH_BYPASS:
         student=q("SELECT * FROM students WHERE active=1 ORDER BY grade,full_name LIMIT 1", one=True)
@@ -2164,16 +2164,16 @@ def student_dashboard():
 @login_required
 def parent_dashboard():
     if not parent_portal_enabled(): abort(404)
-    if current_user().get("role") != "Parent" and not DEMO_AUTH_BYPASS:
+    if current_user()["role"] != "Parent" and not DEMO_AUTH_BYPASS:
         abort(403)
-    children=parent_children(current_user()) if current_user().get("role") == "Parent" else []
+    children=parent_children(current_user()) if current_user()["role"] == "Parent" else []
     if not children and DEMO_AUTH_BYPASS:
         demo_child=q("SELECT s.*, COALESCE((SELECT u.full_name FROM users u JOIN guardian_links gl ON gl.guardian_user_id=u.id WHERE gl.student_id=s.id LIMIT 1), '') AS guardian_name FROM students s WHERE s.active=1 ORDER BY s.grade,s.full_name LIMIT 1", one=True)
         children=[demo_child] if demo_child else []
     requested=request.args.get("child_id", type=int)
     child=next((row for row in children if row["id"] == requested), None) if requested else (children[0] if children else None)
     if not child:
-        return render_template("parent_dashboard.html", settings=school_settings(), actor_name=current_user().get("full_name","Parent"), child=None, children=[], assignments=[], results=[], result_releases=[], submissions=[], messages=[], library_items=[], online_classes=[], nav_items=navigation_items("Parent", school_settings()))
+        return render_template("parent_dashboard.html", settings=school_settings(), actor_name=current_user()["full_name"], child=None, children=[], assignments=[], results=[], result_releases=[], submissions=[], messages=[], library_items=[], online_classes=[], nav_items=navigation_items("Parent", school_settings()))
     assignments=assignment_rows(child["grade"])
     results=q("SELECT subject, term, mark, max_mark FROM exam_results WHERE student_id=? ORDER BY term DESC, subject", (child["id"],))
     result_releases=result_release_info(child["id"])
