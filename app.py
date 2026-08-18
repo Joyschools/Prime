@@ -465,6 +465,17 @@ def init_db() -> None:
         ensure_column(conn, "school_settings", "institution_help TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "institution_contact TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "institution_image_path TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "institution_image_2_path TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "institution_image_3_path TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "institution_image_1_position TEXT NOT NULL DEFAULT '50% 50%'")
+        ensure_column(conn, "school_settings", "institution_image_2_position TEXT NOT NULL DEFAULT '50% 50%'")
+        ensure_column(conn, "school_settings", "institution_image_3_position TEXT NOT NULL DEFAULT '50% 50%'")
+        ensure_column(conn, "school_settings", "landing_background_color TEXT NOT NULL DEFAULT '#f4f7fb'")
+        ensure_column(conn, "school_settings", "landing_panel_color TEXT NOT NULL DEFAULT '#ffffff'")
+        ensure_column(conn, "school_settings", "landing_text_color TEXT NOT NULL DEFAULT '#152033'")
+        ensure_column(conn, "school_settings", "landing_accent_color TEXT NOT NULL DEFAULT '#10a37f'")
+        ensure_column(conn, "school_settings", "landing_background_path TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "online_class_provider TEXT NOT NULL DEFAULT 'https://meet.jit.si/'")
         ensure_column(conn, "school_settings", "parent_portal_enabled INTEGER NOT NULL DEFAULT 1")
 
         ensure_column(conn, "students", "guardian_name TEXT")
@@ -606,6 +617,10 @@ def init_db() -> None:
         ensure_column(conn, "users", "address TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "emergency_contact TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "blood_group TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "title TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "department TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "leadership_role TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "leadership_level INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "users", "medical_notes TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "accountability_notes TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "profile_photo TEXT NOT NULL DEFAULT ''")
@@ -719,6 +734,16 @@ def init_db() -> None:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
         );
+        CREATE TABLE IF NOT EXISTS important_dates (id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,event_date TEXT NOT NULL,event_time TEXT,location TEXT,description TEXT,visible INTEGER NOT NULL DEFAULT 1,landing_visible INTEGER NOT NULL DEFAULT 1,created_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL);
+        CREATE INDEX IF NOT EXISTS idx_important_dates_date ON important_dates(event_date,visible,landing_visible);
+        CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,title TEXT NOT NULL,body TEXT NOT NULL,link TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,read_at TEXT,priority TEXT NOT NULL DEFAULT 'Normal',FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id,read_at,created_at);
+        CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,group_type TEXT NOT NULL DEFAULT 'Academic',description TEXT,owner_user_id INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,active INTEGER NOT NULL DEFAULT 1,FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE SET NULL);
+        CREATE TABLE IF NOT EXISTS group_members (id INTEGER PRIMARY KEY AUTOINCREMENT,group_id INTEGER NOT NULL,user_id INTEGER NOT NULL,student_id INTEGER,role TEXT NOT NULL DEFAULT 'Member',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(group_id,user_id),FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE SET NULL);
+        CREATE TABLE IF NOT EXISTS group_posts (id INTEGER PRIMARY KEY AUTOINCREMENT,group_id INTEGER NOT NULL,user_id INTEGER NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS class_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT,teacher_user_id INTEGER NOT NULL,class_name TEXT NOT NULL,subject TEXT NOT NULL,title TEXT NOT NULL,starts_at TEXT NOT NULL,ends_at TEXT,room_name TEXT NOT NULL UNIQUE,provider_url TEXT NOT NULL,description TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,active INTEGER NOT NULL DEFAULT 1,FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE INDEX IF NOT EXISTS idx_class_sessions_start ON class_sessions(starts_at,active);
+        CREATE TABLE IF NOT EXISTS leadership_assignments (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,leadership_role TEXT NOT NULL,level INTEGER NOT NULL DEFAULT 1,department TEXT NOT NULL DEFAULT '',appointed_by INTEGER,active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(appointed_by) REFERENCES users(id) ON DELETE SET NULL);
         CREATE INDEX IF NOT EXISTS idx_library_class ON library_items(class_level, subject, active);
         CREATE INDEX IF NOT EXISTS idx_users_role_active ON users(role, active);
         CREATE INDEX IF NOT EXISTS idx_finance_status_date ON finance_ledger(status, posted_at);
@@ -938,7 +963,7 @@ def _user_from_auth_token(token: str):
         return None
     if not uid:
         return None
-    return q("SELECT id, full_name, username, role, student_id, active FROM users WHERE id = ? AND active = 1 AND role != 'System'", (uid,), one=True)
+    return q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level FROM users WHERE id = ? AND active = 1 AND role != 'System'", (uid,), one=True)
 
 def _portal_context_serializer():
     return URLSafeTimedSerializer(app.config["SECRET_KEY"], salt=_PORTAL_CONTEXT_SALT)
@@ -964,7 +989,7 @@ def _user_from_portal_context(token: str):
     valid = q("SELECT token_id FROM portal_contexts WHERE token_id=? AND user_id=? AND revoked=0", (tid, uid), one=True)
     if not valid:
         return None
-    return q("SELECT id, full_name, username, role, student_id, active FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
+    return q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
 
 def _portal_context_id(token: str):
     try:
@@ -994,7 +1019,7 @@ def load_current_user() -> None:
             return
     user_id = session.get("user_id")
     if user_id:
-        g.user = q("SELECT id, full_name, username, role, student_id, active FROM users WHERE id = ? AND active = 1 AND role != 'System'", (user_id,), one=True)
+        g.user = q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level FROM users WHERE id = ? AND active = 1 AND role != 'System'", (user_id,), one=True)
         if g.user:
             session.permanent = True
             g.portal_context = None
@@ -1041,6 +1066,15 @@ def persist_auth_cookie(response):
                     response.headers["Location"] = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
             except Exception:
                 pass
+    # Institution-wide notification bell + role shortcuts. Kept out of the public landing page.
+    if getattr(g, "user", None) and request.path != "/" and not request.path.startswith("/static/") and response.content_type and response.content_type.startswith("text/html"):
+        try:
+            body=response.get_data(as_text=True)
+            if 'id="prime-global-tools"' not in body and "</body>" in body:
+                shell="""<div id=\"prime-global-tools\" class=\"prime-global-tools\"><a class=\"prime-bell\" href=\"/notifications\" aria-label=\"Notifications\" title=\"Notifications\"><span>●</span><b id=\"prime-notification-count\" class=\"prime-count hidden\"></b></a><button type=\"button\" class=\"prime-shortcuts-btn\" aria-label=\"Open shortcuts\" onclick=\"document.getElementById('prime-shortcuts').classList.toggle('open')\">☰</button><div id=\"prime-shortcuts\" class=\"prime-shortcuts\"><strong>Quick access</strong><a href=\"/calendar\">📅 Calendar</a><a href=\"/notifications\">🔔 Notifications</a><a href=\"/online-classes\">🎥 Live classes</a><a href=\"/groups\">👥 Groups</a><a href=\"/leadership\">🏛 Leadership</a></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-bell span{color:#e11d48;font-size:15px;line-height:1}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}body.auth-body .prime-global-tools{display:none}</style><script>(function(){fetch('/api/notifications').then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});})();</script>"""
+                response.set_data(body.replace("</body>",shell+"</body>",1))
+        except Exception:
+            pass
     return response
 
 
@@ -1123,7 +1157,7 @@ def _ensure_demo_identity() -> None:
         session.permanent = True
         session["user_id"] = uid
         session["active_portal_role"] = desired
-        g.user = q("SELECT id, full_name, username, role, student_id, active FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
+        g.user = q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
 
 
 def role_target(role: str) -> str:
@@ -1187,6 +1221,37 @@ def selected_role_from_request(default=""):
 
 
 
+def important_dates(limit=20, landing=False):
+    if landing:
+        return q("SELECT * FROM important_dates WHERE visible=1 AND landing_visible=1 ORDER BY event_date,event_time,id LIMIT ?", (limit,))
+    return q("SELECT * FROM important_dates WHERE visible=1 ORDER BY event_date,event_time,id LIMIT ?", (limit,))
+
+def notify_user(user_id, title, body, link=''):
+    if not user_id:
+        return
+    execute("INSERT INTO notifications(user_id,title,body,link) VALUES(?,?,?,?)", (int(user_id), title[:160], body[:5000], link[:500] if link else None))
+
+def notify_users(user_ids, title, body, link=''):
+    for uid in set(int(x) for x in user_ids if x):
+        notify_user(uid,title,body,link)
+
+def notification_count(user_id):
+    row=q("SELECT COUNT(*) AS n FROM notifications WHERE user_id=? AND read_at IS NULL",(user_id,),one=True) if user_id else None
+    return int(row['n']) if row else 0
+
+def role_shortcuts(user):
+    if not user: return []
+    common=[('Calendar','/calendar','Important dates'),('Notifications','/notifications','Updates & alerts')]
+    role=user['role']
+    extras={
+        'Teacher':[('Live classes','/online-classes','Host & schedule classes'),('My groups','/groups','Groups, discussions & meetings'),('My leadership','/leadership','Department / HOD responsibilities')],
+        'Student':[('Student shortcuts','/student-dashboard#shortcuts','Learning shortcuts'),('Live classes','/online-classes','Join scheduled classes'),('My groups','/groups','Groups & discussions'),('Student leadership','/leadership','Leadership workspace')],
+        'Parent':[('Family dates','/calendar','School calendar'),('Teacher communication','/communication','Talk to teachers'),('Learning updates','/notifications','Family notifications')],
+        'ICT':[('Content & dates','/calendar','Publish dates'),('Groups','/groups','Manage groups'),('Leadership','/leadership','Set structure')],
+        'Admin':[('Content & dates','/calendar','Publish dates'),('Groups','/groups','Manage groups'),('Leadership','/leadership','Manage structure')],
+    }
+    return common+extras.get(role,[('Groups','/groups','Groups & activities')])
+
 def theme_style(settings=None) -> str:
     settings = settings or school_settings()
     def esc(v):
@@ -1223,6 +1288,9 @@ def auth_template_context():
     return {
         "current_user": current_user(), "school_settings": settings, "portal_title": settings["school_name"], "theme_color": settings["primary_color"], "all_roles": ALL_PORTAL_ROLES, "public_roles": PUBLIC_ROLES,
         "theme_style": theme_style(settings), "portal_landing_url": current_landing_url(),
+        "important_dates": important_dates(12, landing=request.path == '/'),
+        "notification_count": notification_count(current_user()['id']) if current_user() else 0,
+        "role_shortcuts": role_shortcuts(current_user()),
         "institution_type": settings['institution_type'], "learner_label": settings['learner_label'],
         "learner_plural": "Pupils" if settings['learner_label'].lower().startswith('pupil') else "Students",
         "staff_label": settings['staff_label'],
@@ -2310,6 +2378,43 @@ def ict_settings():
     return redirect(url_for("ict_dashboard"))
 
 
+@app.route("/ict/landing-branding", methods=["POST"])
+@login_required
+@role_required("ICT","Admin")
+def ict_landing_branding():
+    # Public landing page branding is intentionally separate from the in-system workspace theme.
+    vals={
+        "landing_background_color": request.form.get("landing_background_color", "#f4f7fb").strip(),
+        "landing_panel_color": request.form.get("landing_panel_color", "#ffffff").strip(),
+        "landing_text_color": request.form.get("landing_text_color", "#152033").strip(),
+        "landing_accent_color": request.form.get("landing_accent_color", "#10a37f").strip(),
+    }
+    positions=[request.form.get(f"institution_image_{i}_position","50% 50%").strip()[:40] for i in (1,2,3)]
+    paths=[]
+    landing_file=request.files.get("landing_background")
+    landing_path=school_settings()["landing_background_path"] or ""
+    if landing_file and landing_file.filename:
+        ext=landing_file.filename.rsplit('.',1)[-1].lower() if '.' in landing_file.filename else ''
+        if ext not in {"png","jpg","jpeg","webp"}:
+            flash("Landing background must be PNG, JPG, JPEG or WEBP.","danger"); return redirect(url_for("ict_dashboard")+"#branding")
+        folder=UPLOAD_DIR/"institution"; folder.mkdir(exist_ok=True)
+        out=folder/f"landing-bg-{uuid.uuid4().hex[:10]}.{ext}"; landing_file.save(out); landing_path="uploads/institution/"+out.name
+    for i in (1,2,3):
+        file=request.files.get(f"institution_image_{i}")
+        existing=school_settings()[f"institution_image_{i if i>1 else 1}_path"] if i>1 else school_settings()["institution_image_path"]
+        path=existing or ""
+        if file and file.filename:
+            ext=file.filename.rsplit('.',1)[-1].lower() if '.' in file.filename else ''
+            if ext not in {"png","jpg","jpeg","webp"}:
+                flash(f"History image {i} must be PNG, JPG, JPEG or WEBP.","danger"); return redirect(url_for("ict_dashboard")+"#branding")
+            folder=UPLOAD_DIR/"institution"; folder.mkdir(exist_ok=True)
+            out=folder/f"history-{i}-{uuid.uuid4().hex[:10]}.{ext}"; file.save(out); path="uploads/institution/"+out.name
+        paths.append(path)
+    execute("""UPDATE school_settings SET landing_background_color=?,landing_panel_color=?,landing_text_color=?,landing_accent_color=?,landing_background_path=?,institution_image_path=?,institution_image_2_path=?,institution_image_3_path=?,institution_image_1_position=?,institution_image_2_position=?,institution_image_3_position=? WHERE id=1""",(vals["landing_background_color"],vals["landing_panel_color"],vals["landing_text_color"],vals["landing_accent_color"],landing_path,paths[0],paths[1],paths[2],positions[0],positions[1],positions[2]))
+    audit(current_user()["id"],current_user()["full_name"],"Landing Page Branding Update","Public landing colors, history images and image positioning updated.")
+    flash("Landing-page branding and institution history visuals saved separately from the logged-in system theme.","success")
+    return redirect(url_for("ict_dashboard")+"#branding")
+
 @app.route("/ict/logo", methods=["POST"])
 @login_required
 @role_required("ICT", "Admin")
@@ -2344,6 +2449,143 @@ def ict_background():
     return redirect(url_for("ict_dashboard"))
 
 
+@app.route("/calendar")
+@login_required
+def calendar_view():
+    return render_template("calendar.html", settings=school_settings(), dates=important_dates(100), actor_name=current_user()["full_name"], role=current_user()["role"])
+
+@app.route("/calendar/create", methods=["POST"])
+@login_required
+@role_required("Admin","ICT")
+def calendar_create():
+    title=request.form.get("title","").strip(); date=request.form.get("event_date","").strip()
+    if not title or not date:
+        flash("Event title and date are required.","danger"); return redirect(url_for("calendar_view"))
+    execute("INSERT INTO important_dates(title,event_date,event_time,location,description,visible,landing_visible,created_by) VALUES(?,?,?,?,?,?,?,?)",(title,date,request.form.get("event_time",""),request.form.get("location",""),request.form.get("description",""),1,1,current_user()["id"]))
+    ids=[r["id"] for r in q("SELECT id FROM users WHERE active=1 AND role!='System'")]
+    notify_users(ids,"Important date added",f"{title} — {date}",url_for("calendar_view"))
+    flash("Important date published to the calendar and landing page.","success"); return redirect(url_for("calendar_view"))
+
+@app.route("/calendar/<int:event_id>/delete", methods=["POST"])
+@login_required
+@role_required("Admin","ICT")
+def calendar_delete(event_id):
+    execute("UPDATE important_dates SET visible=0, landing_visible=0 WHERE id=?",(event_id,)); flash("Calendar event removed.","success"); return redirect(url_for("calendar_view"))
+
+@app.route("/notifications")
+@login_required
+def notifications_view():
+    rows=q("SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT 100",(current_user()["id"],))
+    return render_template("notifications.html",settings=school_settings(),notifications=rows,actor_name=current_user()["full_name"],role=current_user()["role"])
+
+@app.route("/notifications/read", methods=["POST"])
+@login_required
+def notifications_read():
+    nid=request.form.get("id",type=int)
+    if nid: execute("UPDATE notifications SET read_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?",(nid,current_user()["id"]))
+    else: execute("UPDATE notifications SET read_at=CURRENT_TIMESTAMP WHERE user_id=? AND read_at IS NULL",(current_user()["id"],))
+    return redirect(request.referrer or url_for("notifications_view"))
+
+@app.route("/api/notifications")
+@login_required
+def notifications_api():
+    rows=q("SELECT id,title,body,link,created_at,priority FROM notifications WHERE user_id=? AND read_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 8",(current_user()["id"],))
+    return jsonify({"count":notification_count(current_user()["id"]),"items":[dict(r) for r in rows]})
+
+@app.route("/online-classes")
+@login_required
+def online_classes():
+    user=current_user()
+    sessions=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.active=1 AND (cs.starts_at >= datetime('now','-1 day') OR cs.ends_at IS NULL OR cs.ends_at >= datetime('now','-1 day')) ORDER BY cs.starts_at",())
+    if user["role"]=="Teacher": sessions=[r for r in sessions if r["teacher_user_id"]==user["id"]] + [r for r in sessions if r["teacher_user_id"]!=user["id"]]
+    elif user["role"]=="Student" and user["student_id"]:
+        st=q("SELECT grade FROM students WHERE id=?",(user["student_id"],),one=True); grade=st["grade"] if st else ""; sessions=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.active=1 AND lower(cs.class_name)=lower(?) ORDER BY cs.starts_at",(grade,))
+    return render_template("online_classes.html",settings=school_settings(),sessions=sessions,actor_name=user["full_name"],role=user["role"],today=datetime.now().strftime('%Y-%m-%d'))
+
+@app.route("/teacher/online-class/create", methods=["POST"])
+@login_required
+@role_required("Teacher")
+def create_online_class():
+    title=request.form.get("title","").strip() or "Live Class"; cls=request.form.get("class_name","").strip(); subject=request.form.get("subject","").strip(); starts=request.form.get("starts_at","").strip(); ends=request.form.get("ends_at","").strip(); desc=request.form.get("description","").strip()
+    if not cls or not subject or not starts: flash("Class, subject and start time are required.","danger"); return redirect(url_for("online_classes"))
+    room=f"{school_settings()['school_name'].replace(' ','-')}-{cls.replace(' ','-')}-{uuid.uuid4().hex[:8]}"
+    provider=school_settings()["online_class_provider"] or "https://meet.jit.si/"
+    if not provider.endswith('/'): provider+='/'
+    url=provider+urllib.parse.quote(room)
+    execute("INSERT INTO class_sessions(teacher_user_id,class_name,subject,title,starts_at,ends_at,room_name,provider_url,description) VALUES(?,?,?,?,?,?,?,?,?)",(current_user()["id"],cls,subject,title,starts,ends,room,provider,desc))
+    ids=[r["id"] for r in q("SELECT u.id FROM users u JOIN students s ON s.id=u.student_id WHERE u.active=1 AND u.role='Student' AND lower(s.grade)=lower(?)",(cls,))]
+    notify_users(ids,"Online class scheduled",f"{title} — {subject} at {starts}",url_for("online_classes"))
+    flash("Live class scheduled. The room can be opened immediately for a real deployment-day test.","success"); return redirect(url_for("online_classes"))
+
+@app.route("/groups")
+@login_required
+def groups_view():
+    user=current_user(); groups=q("SELECT g.*,u.full_name AS owner_name,(SELECT COUNT(*) FROM group_members gm WHERE gm.group_id=g.id) AS member_count FROM groups g LEFT JOIN users u ON u.id=g.owner_user_id WHERE g.active=1 ORDER BY g.created_at DESC")
+    if user["role"]=="Student": groups=[r for r in groups if q("SELECT 1 FROM group_members WHERE group_id=? AND user_id=?",(r["id"],user["id"]),one=True)]
+    mine=[r for r in groups if r["owner_user_id"]==user["id"]]
+    students=q("SELECT u.id,u.full_name,u.student_id,s.grade,s.admission_no FROM users u LEFT JOIN students s ON s.id=u.student_id WHERE u.role='Student' AND u.active=1 ORDER BY u.full_name") if user["role"] in {"Teacher","Admin","ICT"} else []
+    return render_template("groups.html",settings=school_settings(),groups=groups,mine=mine,students=students,actor_name=user["full_name"],role=user["role"])
+
+@app.route("/groups/create", methods=["POST"])
+@login_required
+@role_required("Teacher","Admin","ICT")
+def group_create():
+    name=request.form.get("name","").strip(); desc=request.form.get("description","").strip(); typ=request.form.get("group_type","Academic").strip() or "Academic"
+    if not name: flash("Group name is required.","danger"); return redirect(url_for("groups_view"))
+    gid=execute("INSERT INTO groups(name,group_type,description,owner_user_id) VALUES(?,?,?,?)",(name,typ,desc,current_user()["id"]))
+    flash("Group created. Add learners below.","success"); return redirect(url_for("groups_view"))
+
+@app.route("/groups/<int:group_id>/members", methods=["POST"])
+@login_required
+@role_required("Teacher","Admin","ICT")
+def group_add_members(group_id):
+    group=q("SELECT * FROM groups WHERE id=?",(group_id,),one=True)
+    if not group: abort(404)
+    if current_user()["role"]=="Teacher" and group["owner_user_id"]!=current_user()["id"]: abort(403)
+    ids=request.form.getlist("user_ids")
+    for uid in ids:
+        u=q("SELECT id,student_id FROM users WHERE id=? AND role='Student' AND active=1",(int(uid),),one=True)
+        if u: execute("INSERT OR IGNORE INTO group_members(group_id,user_id,student_id,role) VALUES(?,?,?,'Member')",(group_id,u["id"],u["student_id"]))
+    flash("Group membership updated.","success"); return redirect(url_for("groups_view"))
+
+@app.route("/groups/<int:group_id>/post", methods=["POST"])
+@login_required
+def group_post(group_id):
+    member=q("SELECT 1 FROM group_members WHERE group_id=? AND user_id=?",(group_id,current_user()["id"]),one=True); group=q("SELECT * FROM groups WHERE id=? AND active=1",(group_id,),one=True)
+    if not group or (current_user()["role"] not in {"Admin","ICT","Teacher"} and not member): abort(403)
+    body=request.form.get("body","").strip()
+    if body: execute("INSERT INTO group_posts(group_id,user_id,body) VALUES(?,?,?)",(group_id,current_user()["id"],body))
+    return redirect(url_for("groups_view"))
+
+@app.route("/student-leadership")
+@login_required
+@role_required("Student")
+def student_leadership():
+    user=current_user()
+    if not user["leadership_role"]:
+        flash("No student leadership assignment is attached to this account.","warning")
+        return redirect(url_for("student_dashboard"))
+    peers=q("SELECT u.full_name,u.leadership_role,u.department,u.leadership_level FROM users u WHERE u.active=1 AND u.leadership_role!='' ORDER BY u.leadership_level DESC,u.department,u.full_name")
+    return render_template("student_leadership.html",settings=school_settings(),role="Student Leader",actor_name=user["full_name"],user=user,peers=peers)
+
+@app.route("/leadership")
+@login_required
+def leadership_view():
+    rows=q("SELECT u.id,u.full_name,u.role,u.title,u.department,u.leadership_role,u.leadership_level FROM users u WHERE u.active=1 AND u.leadership_role!='' ORDER BY u.leadership_level DESC,u.department,u.full_name")
+    return render_template("leadership.html",settings=school_settings(),rows=rows,role=current_user()["role"],actor_name=current_user()["full_name"],users=q("SELECT id,full_name,role FROM users WHERE active=1 AND role!='System' ORDER BY full_name") if current_user()["role"] in {"Admin","ICT"} else [])
+
+@app.route("/leadership/assign", methods=["POST"])
+@login_required
+@role_required("Admin","ICT")
+def leadership_assign():
+    uid=request.form.get("user_id",type=int); role_name=request.form.get("leadership_role","").strip(); level=request.form.get("level",type=int) or 1; dept=request.form.get("department","").strip()
+    u=q("SELECT * FROM users WHERE id=?",(uid,),one=True) if uid else None
+    if not u or not role_name: flash("Select a person and leadership role.","danger"); return redirect(url_for("leadership_view"))
+    execute("UPDATE users SET leadership_role=?,leadership_level=?,department=? WHERE id=?",(role_name,level,dept,uid))
+    execute("INSERT INTO leadership_assignments(user_id,leadership_role,level,department,appointed_by) VALUES(?,?,?,?,?)",(uid,role_name,level,dept,current_user()["id"]))
+    notify_user(uid,"Leadership responsibility assigned",f"You have been assigned: {role_name}" ,url_for("leadership_view"))
+    flash("Leadership structure updated.","success"); return redirect(url_for("leadership_view"))
+
 @app.route("/assignments/create", methods=["POST"])
 @login_required
 @role_required("Teacher", "Staff")
@@ -2359,7 +2601,9 @@ def create_assignment():
             flash("Assignment files must be Word, PDF or image files.", "danger"); return redirect(url_for("teacher_dashboard"))
         filename=f"assignment-{datetime.now().strftime('%Y%m%d%H%M%S%f')}.{ext}"
         file.save(UPLOAD_DIR/filename); attachment_path="uploads/"+filename
-    execute("INSERT INTO assignments(title,subject,grade,description,deadline,attachment_path,posted_by) VALUES(?,?,?,?,?,?,?)", (title,subject,grade,request.form.get("description",""),request.form.get("deadline",""),attachment_path,current_user()["id"]))
+    assignment_id=execute("INSERT INTO assignments(title,subject,grade,description,deadline,attachment_path,posted_by) VALUES(?,?,?,?,?,?,?)", (title,subject,grade,request.form.get("description",""),request.form.get("deadline",""),attachment_path,current_user()["id"]))
+    student_users=q("SELECT u.id FROM users u JOIN students s ON s.id=u.student_id WHERE u.active=1 AND u.role='Student' AND lower(s.grade)=lower(?)",(grade,))
+    notify_users([r["id"] for r in student_users],"New assignment",f"{title} — {subject}",url_for("student_dashboard"))
     audit(current_user()["id"], current_user()["full_name"], "Post Assignment", f"{title} posted to {grade}.")
     flash("Assignment posted to the selected class.", "success")
     return redirect(url_for("teacher_dashboard", grade=grade))
