@@ -76,3 +76,10 @@ For production on Render, attach a persistent disk mounted at `/var/data`. The a
 Optional environment variables: `SECRET_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `PULSE_PEER_URL` (defaults to `https://breathe-xozy.onrender.com`), `PULSE_TIMEOUT_SECONDS`, and `PULSE_ALLOWED_CALLBACK_HOSTS` (comma-separated HTTPS hosts allowed for an incoming `reply_to`).
 
 Heartbeat endpoints: `/pulse_receiver` and `/pulse`. They acknowledge incoming pulses with JSON and schedule a reply to the configured peer.
+
+## V9 presentation polish
+- Dedicated Student and Parent dashboards.
+- Teacher-published live class links appear automatically for learners in the assigned class.
+- Driver workspace remains available from the staff/transport side of the platform.
+- Institution-branded long-form footer with configurable legal name, description, contact and optional platform-provider credit.
+- ICT can control the portal footer presentation alongside the existing theme engine.

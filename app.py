@@ -634,6 +634,12 @@ def init_db() -> None:
         ensure_column(conn, "school_settings", "ai_model TEXT NOT NULL DEFAULT 'gpt-5.6'")
         ensure_column(conn, "school_settings", "help_phone TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "help_email TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "footer_title TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "footer_text TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "footer_contact TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "footer_links TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "platform_credit_enabled INTEGER NOT NULL DEFAULT 1")
+        conn.execute("UPDATE school_settings SET footer_title = school_name WHERE id=1 AND TRIM(COALESCE(footer_title,''))=''")
         ensure_column(conn, "users", "qr_access_token TEXT")
         ensure_column(conn, "users", "position_code TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "library_items", "class_level TEXT NOT NULL DEFAULT ''")
@@ -738,6 +744,7 @@ def init_db() -> None:
         INSERT OR IGNORE INTO attendance_qr_settings(id,office_name,token) VALUES(1,'Main Office',lower(hex(randomblob(16))));
         INSERT OR IGNORE INTO payment_integrations(id,provider) VALUES(1,'Manual');
         """)
+        ensure_column(conn, "teacher_assignments", "online_url TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "workspace_type TEXT NOT NULL DEFAULT 'Teaching'")
         ensure_column(conn, "school_settings", "offline_enabled INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "school_settings", "backup_reminder_time TEXT NOT NULL DEFAULT '16:00'")
@@ -976,8 +983,14 @@ def load_current_user() -> None:
             g.user = contextual
             g.portal_context = context_token
             session.permanent = True
-            session["user_id"] = contextual["id"]
-            session["active_portal_role"] = contextual["role"]
+            # Administrator account-access links intentionally run in a portal
+            # context without replacing the Admin session. This keeps the
+            # original Admin dashboard usable in another tab while the selected
+            # account is being viewed. Normal user login contexts still become
+            # the active session as before.
+            if not session.get("admin_impersonation"):
+                session["user_id"] = contextual["id"]
+                session["active_portal_role"] = contextual["role"]
             return
     user_id = session.get("user_id")
     if user_id:
@@ -999,7 +1012,11 @@ def load_current_user() -> None:
 def persist_auth_cookie(response):
     user = getattr(g, "user", None)
     if user and not getattr(g, "logging_out", False):
-        response.set_cookie(_AUTH_COOKIE, _auth_token_for(user["id"]), max_age=_AUTH_COOKIE_MAX_AGE, httponly=True, secure=app.config.get("SESSION_COOKIE_SECURE", False), samesite="Lax", path="/")
+        # Do not replace the administrator's persistent auth cookie while a
+        # direct-access portal context is being viewed. The Admin session remains
+        # the source of truth for the original command-centre tab.
+        if not (getattr(g, "portal_context", None) and flask_session.get("admin_impersonation")):
+            response.set_cookie(_AUTH_COOKIE, _auth_token_for(user["id"]), max_age=_AUTH_COOKIE_MAX_AGE, httponly=True, secure=app.config.get("SESSION_COOKIE_SECURE", False), samesite="Lax", path="/")
         if request.method == "GET" and response.content_type and response.content_type.startswith("text/html"):
             token = getattr(g, "portal_context", None)
             if token:
@@ -1213,6 +1230,14 @@ def auth_template_context():
         "help_enabled": True,
         "parent_portal_enabled": parent_portal_enabled(),
         "portal_qr_data_uri": portal_qr_data_uri(),
+        "footer_settings": {
+            "title": settings["footer_title"] or settings["school_name"],
+            "text": settings["footer_text"] or "Institution portal for learning, communication, finance and school services.",
+            "contact": settings["footer_contact"] or settings["help_email"] or settings["help_phone"],
+            "links": settings["footer_links"] or "Home,Library,Help,AI Assistant",
+            "platform_credit": bool(settings["platform_credit_enabled"]),
+        },
+        "current_year": datetime.utcnow().year,
     }
 
 
@@ -1675,9 +1700,9 @@ def admin_attendance():
 @login_required
 @role_required('Teacher')
 def teacher_assignment_add():
-    cls=request.form.get('class_name','').strip(); subject=request.form.get('subject','').strip(); unit=request.form.get('unit_code','').strip()
+    cls=request.form.get('class_name','').strip(); subject=request.form.get('subject','').strip(); unit=request.form.get('unit_code','').strip(); online_url=request.form.get('online_url','').strip()
     if not cls or not subject: flash('Class and subject are required.','danger'); return redirect(url_for('teacher_dashboard'))
-    execute("INSERT INTO teacher_assignments(teacher_user_id,class_name,subject,unit_code) VALUES(?,?,?,?)",(current_user()['id'],cls,subject,unit)); flash('Teaching assignment added.','success'); return redirect(url_for('teacher_dashboard'))
+    execute("INSERT INTO teacher_assignments(teacher_user_id,class_name,subject,unit_code,online_url) VALUES(?,?,?,?,?)",(current_user()['id'],cls,subject,unit,online_url)); flash('Teaching assignment added.','success'); return redirect(url_for('teacher_dashboard'))
 
 @app.route("/teacher/markbook",methods=['POST'])
 @login_required
@@ -2105,17 +2130,21 @@ def teacher_dashboard():
     students=q("SELECT * FROM students WHERE active=1 ORDER BY grade,full_name LIMIT 300")
     latest_marks=q("SELECT m.*,s.full_name,s.admission_no FROM markbook_entries m JOIN students s ON s.id=m.student_id WHERE m.teacher_user_id=? ORDER BY m.created_at DESC LIMIT 80",(user["id"],)) if user["role"]=="Teacher" else q("SELECT m.*,s.full_name,s.admission_no,u.full_name AS teacher_name FROM markbook_entries m JOIN students s ON s.id=m.student_id JOIN users u ON u.id=m.teacher_user_id ORDER BY m.created_at DESC LIMIT 80")
     events=q("SELECT * FROM attendance_events WHERE user_id=? ORDER BY event_at DESC,id DESC LIMIT 20",(user["id"],)) if user["role"]=="Teacher" else []
-    return render_template("teacher_dashboard_pro.html",settings=settings,actor_name=user["full_name"],role=user["role"],assignments=assignments,classes=classes,students=students,latest_marks=latest_marks,events=events,workspace_type=workspace_type_for_user(user),nav_items=navigation_items("Teacher",settings))
+    return render_template("teacher_dashboard_pro.html",settings=settings,actor_name=user["full_name"],role=user["role"],assignments=assignments,classes=classes,students=students,latest_marks=latest_marks,events=events,workspace_type=workspace_type_for_user(user),teacher_online_url=(assignments[0]["online_url"] if assignments and "online_url" in assignments[0].keys() and assignments[0]["online_url"] else "https://meet.google.com/"),nav_items=navigation_items("Teacher",settings))
 
 @app.route("/student-dashboard")
 @login_required
-@role_required("Student")
 def student_dashboard():
+    user=current_user()
+    if user.get("role") != "Student" and not DEMO_AUTH_BYPASS:
+        abort(403)
     student=portal_student(request.args.get("student_id", type=int))
-    if not student and current_user()["student_id"]:
-        student=q("SELECT * FROM students WHERE id=? AND active=1", (current_user()["student_id"],), one=True)
-    if not student:
-        student=q("SELECT * FROM students WHERE lower(full_name)=lower(?) AND active=1 ORDER BY id DESC LIMIT 1", (current_user()["full_name"],), one=True)
+    if not student and user.get("student_id"):
+        student=q("SELECT * FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
+    if not student and user.get("full_name"):
+        student=q("SELECT * FROM students WHERE lower(full_name)=lower(?) AND active=1 ORDER BY id DESC LIMIT 1", (user["full_name"],), one=True)
+    if not student and DEMO_AUTH_BYPASS:
+        student=q("SELECT * FROM students WHERE active=1 ORDER BY grade,full_name LIMIT 1", one=True)
     if not student: abort(404)
     assignments=assignment_rows(student["grade"])
     submissions=q("SELECT * FROM submissions WHERE student_id=? ORDER BY submitted_at DESC", (student["id"],))
@@ -2126,28 +2155,34 @@ def student_dashboard():
     election_candidates={e["id"]:q("SELECT * FROM election_candidates WHERE election_id=? AND active=1 ORDER BY position,name",(e["id"],)) for e in elections}
     voted_positions={(r["election_id"], r["position"]) for r in q("SELECT election_id, position FROM election_votes WHERE voter_user_id=?",(current_user()["id"],))}
     library_items=q("SELECT * FROM library_items WHERE active=1 ORDER BY category,title LIMIT 80") if school_settings()["library_enabled"] else []
+    online_classes=q("SELECT a.*,u.full_name AS teacher_name FROM teacher_assignments a JOIN users u ON u.id=a.teacher_user_id WHERE a.active=1 AND lower(a.class_name)=lower(?) ORDER BY a.subject,u.full_name", (student["grade"],))
     settings=school_settings(); nav_items=navigation_items("Student", settings)
-    return render_template("student_dashboard.html", role="Student", workspace=workspace_for("Student"), student=student, assignments=assignments, submissions=submissions, results=results, result_releases=result_releases, messages=messages, elections=elections, election_candidates=election_candidates, voted_positions=voted_positions, library_items=library_items, actor_name=student["full_name"], nav_items=nav_items)
+    return render_template("student_dashboard.html", role="Student", workspace=workspace_for("Student"), student=student, assignments=assignments, submissions=submissions, results=results, result_releases=result_releases, messages=messages, elections=elections, election_candidates=election_candidates, voted_positions=voted_positions, library_items=library_items, online_classes=online_classes, actor_name=student["full_name"], nav_items=nav_items)
 
 
 @app.route("/parent-dashboard")
 @login_required
-@role_required("Parent")
 def parent_dashboard():
     if not parent_portal_enabled(): abort(404)
-    children=parent_children(current_user())
-    if not children: abort(404)
+    if current_user().get("role") != "Parent" and not DEMO_AUTH_BYPASS:
+        abort(403)
+    children=parent_children(current_user()) if current_user().get("role") == "Parent" else []
+    if not children and DEMO_AUTH_BYPASS:
+        demo_child=q("SELECT s.*, COALESCE((SELECT u.full_name FROM users u JOIN guardian_links gl ON gl.guardian_user_id=u.id WHERE gl.student_id=s.id LIMIT 1), '') AS guardian_name FROM students s WHERE s.active=1 ORDER BY s.grade,s.full_name LIMIT 1", one=True)
+        children=[demo_child] if demo_child else []
     requested=request.args.get("child_id", type=int)
-    child=next((row for row in children if row["id"] == requested), None) if requested else children[0]
-    if not child: abort(403)
+    child=next((row for row in children if row["id"] == requested), None) if requested else (children[0] if children else None)
+    if not child:
+        return render_template("parent_dashboard.html", settings=school_settings(), actor_name=current_user().get("full_name","Parent"), child=None, children=[], assignments=[], results=[], result_releases=[], submissions=[], messages=[], library_items=[], online_classes=[], nav_items=navigation_items("Parent", school_settings()))
     assignments=assignment_rows(child["grade"])
     results=q("SELECT subject, term, mark, max_mark FROM exam_results WHERE student_id=? ORDER BY term DESC, subject", (child["id"],))
     result_releases=result_release_info(child["id"])
     submissions=q("""SELECT s.*, a.title, a.subject FROM submissions s JOIN assignments a ON a.id=s.assignment_id WHERE s.student_id=? ORDER BY s.submitted_at DESC""", (child["id"],))
     messages=q("SELECT * FROM portal_messages WHERE recipient_student_id=? ORDER BY created_at DESC LIMIT 30", (child["id"],))
     library_items=q("SELECT * FROM library_items WHERE active=1 ORDER BY category,title LIMIT 80") if school_settings()["library_enabled"] else []
+    online_classes=q("SELECT a.*,u.full_name AS teacher_name FROM teacher_assignments a JOIN users u ON u.id=a.teacher_user_id WHERE a.active=1 AND lower(a.class_name)=lower(?) ORDER BY a.subject,u.full_name", (child["grade"],))
     settings=school_settings(); nav_items=navigation_items("Parent", settings)
-    return render_template("role_dashboard.html", role="Parent", workspace=workspace_for("Parent"), child=child, children=children, assignments=assignments, results=results, result_releases=result_releases, submissions=submissions, messages=messages, library_items=library_items, actor_name=child["guardian_name"] or "Parent", nav_items=nav_items)
+    return render_template("parent_dashboard.html", role="Parent", workspace=workspace_for("Parent"), child=child, children=children, assignments=assignments, results=results, result_releases=result_releases, submissions=submissions, messages=messages, library_items=library_items, online_classes=online_classes, actor_name=child["guardian_name"] or "Parent", nav_items=nav_items)
 
 
 @app.route("/library")
@@ -2252,6 +2287,11 @@ def ict_settings():
     header=request.form.get("header_color", panel).strip() or panel
     text_color=request.form.get("text_color", "#ececf1").strip() or "#ececf1"
     muted=request.form.get("muted_text_color", "#b5bac7").strip() or "#b5bac7"
+    footer_title=request.form.get("footer_title", "").strip()
+    footer_text=request.form.get("footer_text", "").strip()
+    footer_contact=request.form.get("footer_contact", "").strip()
+    footer_links=request.form.get("footer_links", "").strip()
+    platform_credit_enabled=1 if request.form.get("platform_credit_enabled") in {"1","on","true","yes"} else 0
     font_family=request.form.get("font_family", "Inter").strip() or "Inter"
     heading_font=request.form.get("heading_font", font_family).strip() or font_family
     try: radius=max(4,min(28,int(request.form.get("radius_px", "12"))))
@@ -2264,7 +2304,7 @@ def ict_settings():
     labels={k: request.form.get(k, defaults).strip() or defaults for k,defaults in [("home_label","Home"),("assignments_label","Assignments"),("results_label","Results"),("messages_label","Messages"),("finance_label","Finance"),("branding_label","Branding")]}
     custom_css=request.form.get("custom_css", "").strip()[:12000]
     if re.search(r'@import|javascript:|expression\s*\(', custom_css, re.I): custom_css=''
-    execute("""UPDATE school_settings SET school_name=?, portal_subtitle=?, primary_color=?, accent_color=?, background_color=?, panel_color=?, sidebar_color=?, header_color=?, text_color=?, muted_text_color=?, font_family=?, heading_font=?, radius_px=?, button_radius_px=?, theme_mode=?, menu_order=?, home_label=?, assignments_label=?, results_label=?, messages_label=?, finance_label=?, branding_label=?, custom_css=? WHERE id=1""", (school_name,portal_subtitle,primary,accent,bg,panel,sidebar,header,text_color,muted,font_family,heading_font,radius,button_radius,theme_mode,menu_order,labels["home_label"],labels["assignments_label"],labels["results_label"],labels["messages_label"],labels["finance_label"],labels["branding_label"],custom_css))
+    execute("""UPDATE school_settings SET school_name=?, portal_subtitle=?, primary_color=?, accent_color=?, background_color=?, panel_color=?, sidebar_color=?, header_color=?, text_color=?, muted_text_color=?, font_family=?, heading_font=?, radius_px=?, button_radius_px=?, theme_mode=?, menu_order=?, home_label=?, assignments_label=?, results_label=?, messages_label=?, finance_label=?, branding_label=?, custom_css=?, footer_title=?, footer_text=?, footer_contact=?, footer_links=?, platform_credit_enabled=? WHERE id=1""", (school_name,portal_subtitle,primary,accent,bg,panel,sidebar,header,text_color,muted,font_family,heading_font,radius,button_radius,theme_mode,menu_order,labels["home_label"],labels["assignments_label"],labels["results_label"],labels["messages_label"],labels["finance_label"],labels["branding_label"],custom_css,footer_title,footer_text,footer_contact,footer_links,platform_credit_enabled))
     audit(current_user()["id"], current_user()["full_name"], "Portal Theme Update", f"Institution-wide interface theme updated for {school_name}.")
     flash("The institution-wide interface has been redesigned and saved.", "success")
     return redirect(url_for("ict_dashboard"))
@@ -3114,6 +3154,31 @@ def add_user():
         return redirect(request.referrer or url_for("admin_dashboard"))
     flash("Account created successfully.", "success")
     return redirect(request.referrer or url_for("admin_dashboard"))
+
+@app.route("/admin/access/<int:user_id>")
+@login_required
+@role_required("Admin")
+def admin_access_user(user_id: int):
+    """Open any active institutional account directly from the Admin console.
+
+    The selected user's password is neither requested nor changed. Access is
+    represented by a short-lived, revocable portal-context token and the
+    original Admin session is preserved so the administrator can keep the
+    command centre open separately.
+    """
+    user = q("SELECT id, full_name, username, role, active FROM users WHERE id=? AND role!='System'", (user_id,), one=True)
+    if not user:
+        abort(404)
+    if not user["active"]:
+        flash("That account is archived. Restore it before using direct access.", "warning")
+        return redirect(url_for("admin_dashboard"))
+    actor = current_user()
+    session["admin_impersonation"] = True
+    context = _portal_context_for(user_id)
+    audit(actor["id"], actor["full_name"], "Admin Direct Access", f"Opened {user['full_name']} ({user['username']}) as {user['role']} without using the account password.")
+    target = specialized_dashboard_for(user)
+    return redirect(target + "?" + urllib.parse.urlencode({"portal_context": context}))
+
 
 @app.route("/users/<int:user_id>/edit", methods=["GET","POST"])
 @login_required

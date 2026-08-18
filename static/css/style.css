@@ -76,7 +76,8 @@ tbody tr:hover{background:rgba(255,255,255,.03)}
 .role-tip{font-size:13px;color:var(--muted-text)}
 .role-student .topbar,.role-student .feature-panel{border-left:4px solid var(--primary-blue)}
 .role-teacher .topbar,.role-teacher .feature-panel{border-left:4px solid var(--deep-accent-blue)}
-.role-parent .topbar,.role-parent .feature-panel{border-left:4px solid #f59e0b}
+.role-parent .topbar,.role-parent .feature-panel{border-left:1px solid var(--border)}
+.role-parent .topbar{border-top:3px solid #f59e0b}
 .feature-panel{overflow:hidden}
 .feature-badge{padding:6px 10px;border-radius:999px;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;background:rgba(255,255,255,.08)}
 .elections-badge{background:rgba(99,102,241,.18);color:#c7d2fe}
@@ -296,3 +297,11 @@ tbody tr:hover{background:rgba(255,255,255,.03)}
 @media(max-width:600px){.people-filters{grid-template-columns:1fr}}
 
 .topbar h1,.panel h1,.panel h2,.panel h3,.hero-title{font-family:var(--heading-font,var(--font));}
+
+/* Institution closing footer */
+.institution-footer{margin:44px 0 0;padding:0;border-top:1px solid color-mix(in srgb,var(--primary-text) 12%,transparent);background:linear-gradient(180deg,color-mix(in srgb,var(--panel) 82%,transparent),color-mix(in srgb,var(--bg) 92%,transparent));color:var(--primary-text)}
+.institution-footer .footer-main{max-width:1180px;margin:auto;padding:42px 24px 28px;display:grid;grid-template-columns:2fr 1fr 1fr;gap:28px}
+.institution-footer a{display:block;color:var(--primary-text);text-decoration:none;opacity:.78;margin:8px 0}.institution-footer a:hover{opacity:1;text-decoration:underline}
+.institution-footer h3{margin:8px 0 8px;font-family:var(--heading-font)}.institution-footer p{max-width:620px;opacity:.76;line-height:1.65}.footer-kicker{font-size:.74rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;opacity:.65}.footer-bottom{border-top:1px solid color-mix(in srgb,var(--primary-text) 10%,transparent);max-width:1180px;margin:auto;padding:15px 24px 22px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:.78rem;opacity:.62}
+.resource-card img{width:100%;max-height:160px;object-fit:cover;border-radius:10px;margin-bottom:10px}
+@media(max-width:800px){.institution-footer .footer-main{grid-template-columns:1fr;padding:30px 18px 20px}.footer-bottom{padding:14px 18px 20px;display:block}.footer-bottom span{display:block;margin-top:6px}}
