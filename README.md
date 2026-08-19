@@ -86,3 +86,7 @@ Heartbeat endpoints: `/pulse_receiver` and `/pulse`. They acknowledge incoming p
 
 ### V16 reception QR behavior
 Reception uses one institutional staff QR identity per person. On a computer, the logged-in reception workspace displays the signed-in person's QR for display or printing. On a phone, the QR card is hidden and the workspace remains scanner-first so the receptionist can scan another staff member's QR for check-in/check-out. The same QR generated for an Admin or other registered staff member is accepted by the reception scanner; Admin is no longer treated as an invalid staff QR target.
+
+## Prime V17 – Reception / Secretary Workspace
+
+V17 adds the secretary/reception workspace separation, PC-first staff attendance control, institution attendance schedule settings, immediate Admin attendance notifications and CSV export, a whole-staff hub for meetings and duties, teacher duty/meeting visibility, and per-user workspace color/font preferences. Reception has no Admin command-centre navigation and Admin-only routes remain protected by role checks.

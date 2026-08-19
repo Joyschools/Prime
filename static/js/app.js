@@ -110,6 +110,8 @@
     panels.forEach((p) => p.classList.add("hidden"));
     panel.classList.remove("hidden");
     panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.setTimeout(() => window.scrollBy({top:-78,left:0,behavior:"smooth"}), 80);
+    window.setTimeout(() => window.scrollBy({top:-78,left:0,behavior:"smooth"}), 80);
     if (scrollTarget) {
       window.setTimeout(() => document.getElementById(scrollTarget)?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
     }

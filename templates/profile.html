@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ current_user.role }} | Profile</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-<style>{{theme_style|safe}}</style></head>
+<style>{{theme_style|safe}}</style>{{ user_theme_style|safe }}</head>
 <body class="app-body sidebar-style-{{ school_settings.sidebar_style|default("drawer", true) }}">{% include "_notification_bell.html" %}
   <div class="scroll-rail" id="scrollRail" aria-hidden="true"><div class="scroll-track"><div class="scroll-thumb" id="scrollThumb"></div></div></div>
   <main class="content single">
@@ -34,7 +34,9 @@
         <label><span>Full name</span><input name="full_name" value="{{ profile_user.full_name }}" required></label>
         <label><span>Username</span><input value="{{ profile_user.username }}" disabled></label>
         <label><span>Role</span><input value="{{ profile_user.role }}" disabled></label>
-        <label><span>New password</span><div class="password-wrap"><input id="profilePassword" name="password" type="password" minlength="4" placeholder="Leave blank to keep current"><button class="password-toggle" type="button" data-password-target="profilePassword">Show</button></div></label>
+        <label><span>Workspace accent color</span><input type="color" name="ui_accent_color" value="{{ profile_user.ui_accent_color or '#4b6cb7' }}"></label>
+        <label><span>Workspace background</span><input type="color" name="ui_background_color" value="{{ profile_user.ui_background_color or '#41434e' }}"></label>
+        <label><span>Workspace font</span><select name="ui_font_family"><option {% if profile_user.ui_font_family=='Inter' or not profile_user.ui_font_family %}selected{% endif %}>Inter</option><option {% if profile_user.ui_font_family=='Manrope' %}selected{% endif %}>Manrope</option><option {% if profile_user.ui_font_family=='Roboto' %}selected{% endif %}>Roboto</option><option {% if profile_user.ui_font_family=='Open Sans' %}selected{% endif %}>Open Sans</option><option {% if profile_user.ui_font_family=='Nunito' %}selected{% endif %}>Nunito</option><option {% if profile_user.ui_font_family=='Source Sans 3' %}selected{% endif %}>Source Sans 3</option><option {% if profile_user.ui_font_family=='Poppins' %}selected{% endif %}>Poppins</option><option {% if profile_user.ui_font_family=='Georgia' %}selected{% endif %}>Georgia</option><option {% if profile_user.ui_font_family=='Arial' %}selected{% endif %}>Arial</option></select></label>
         <button class="btn btn-primary" type="submit">Save changes</button>
       </form>
     </section>
