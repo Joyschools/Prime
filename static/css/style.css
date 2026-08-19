@@ -1,24 +1,24 @@
 
 :root{
-  --bg:#343541;
-  --bg-soft:#2a2b32;
-  --panel:#40414f;
-  --panel-2:#444654;
-  --panel-3:#2f313d;
-  --primary-navy:#ececf1;
-  --primary-blue:#10a37f;
-  --deep-accent-blue:#0e8a6d;
-  --cool-pale-blue:#3b3d4a;
-  --soft-white:#f7f7f8;
+  --bg:#eef3f8;
+  --bg-soft:#e5ebf2;
+  --panel:#ffffff;
+  --panel-2:#f7f9fc;
+  --panel-3:#f5f7fa;
+  --primary-navy:#102a43;
+  --primary-blue:#2f63b5;
+  --deep-accent-blue:#1f4d8f;
+  --cool-pale-blue:#dce7f5;
+  --soft-white:#f8fafc;
   --white:#ffffff;
-  --primary-text:#ececf1;
-  --muted-text:#b5bac7;
-  --success:#22c55e;
+  --primary-text:#142236;
+  --muted-text:#5f6f82;
+  --success:#2f63b5;
   --danger:#f87171;
-  --border:rgba(255,255,255,0.08);
-  --soft-blue:rgba(255,255,255,0.06);
-  --shadow:0 18px 40px rgba(0,0,0,0.28);
-  --shadow-strong:0 18px 34px rgba(0,0,0,0.40);
+  --border:rgba(15,23,42,0.10);
+  --soft-blue:rgba(47,99,181,0.06);
+  --shadow:0 14px 34px rgba(15,23,42,0.10);
+  --shadow-strong:0 18px 40px rgba(15,23,42,0.16);
   --radius:12px;
   --radius-sm:10px;
   --radius-xs:8px;
@@ -413,3 +413,14 @@ body.app-body.sidebar-style-hover .sidebar:hover .brand-line>div,body.app-body.s
 /* V14 operations workspaces are intentionally broad on desktop. */
 body.app-body .transport-layout,body.app-body .attendance-top,body.app-body .reception-grid{width:100%;min-width:0}
 @media(min-width:821px){body.app-body .content{grid-column:1/-1;min-width:0}.content>.panel,.content>.topbar{width:100%;box-sizing:border-box}}
+
+/* V17 system-wide workspace polish */
+body.app-body{background:#eef3f8;color:var(--primary-text);}
+body.app-body .panel,body.app-body .glass{color:var(--panel-text,var(--primary-text));}
+body.app-body .btn-primary{background:linear-gradient(135deg,#2f63b5,#1f4d8f);box-shadow:0 10px 22px rgba(47,99,181,.18);}
+body.app-body .btn-success{color:#fff;background:linear-gradient(135deg,#2f63b5,#1f4d8f);}
+.sidebar{max-height:calc(100vh - 36px);overflow-y:auto;overscroll-behavior:contain;}
+.sidebar .side-nav{max-height:calc(100vh - 180px);overflow-y:auto;overscroll-behavior:contain;padding-right:3px;}
+.content{min-width:0;}
+@media(max-width:820px){body.app-body{display:block;padding:8px;}body.app-body .sidebar{display:none;}body.app-body.mobile-nav-open .sidebar{display:flex;position:fixed;left:8px;top:8px;width:min(320px,calc(100vw - 16px));height:calc(100vh - 16px);z-index:5002;box-shadow:0 24px 70px rgba(15,23,42,.25);}body.app-body.mobile-nav-open .content{filter:none;}body.app-body .content{padding:58px 8px 12px;}body.app-body .prime-global-tools{top:10px;right:10px;}}
+@media(min-width:821px){body.app-body .sidebar{display:flex!important;position:sticky;} .prime-mobile-nav{display:none!important;}}

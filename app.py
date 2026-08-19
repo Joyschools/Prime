@@ -663,6 +663,7 @@ def init_db() -> None:
         ensure_column(conn, "school_settings", "footer_links TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "platform_credit_enabled INTEGER NOT NULL DEFAULT 1")
         conn.execute("UPDATE school_settings SET footer_title = school_name WHERE id=1 AND TRIM(COALESCE(footer_title,''))=''")
+        conn.execute("UPDATE school_settings SET background_color='#eef3f8', panel_color='#ffffff', sidebar_color='#243b53', header_color='#ffffff', text_color='#142236', muted_text_color='#5f6f82', primary_color='#2f63b5', accent_color='#1f4d8f' WHERE id=1 AND background_color='#343541'")
         ensure_column(conn, "users", "qr_access_token TEXT")
         ensure_column(conn, "users", "position_code TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "school_unit TEXT NOT NULL DEFAULT ''")
@@ -797,6 +798,31 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_reception_open ON reception_visits(check_out,check_in);
         CREATE INDEX IF NOT EXISTS idx_reception_device ON reception_visits(device_token,created_at);
+        CREATE TABLE IF NOT EXISTS staff_meetings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+            starts_at TEXT NOT NULL, room_name TEXT NOT NULL UNIQUE,
+            provider_url TEXT NOT NULL, created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, active INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_staff_meetings_start ON staff_meetings(starts_at,active);
+        CREATE TABLE IF NOT EXISTS staff_duties (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, staff_user_id INTEGER NOT NULL,
+            title TEXT NOT NULL, duty_date TEXT NOT NULL, start_time TEXT, end_time TEXT,
+            location TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+            assigned_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, active INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY(staff_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(assigned_by) REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_staff_duties_staff_date ON staff_duties(staff_user_id,duty_date,active);
+        CREATE TABLE IF NOT EXISTS staff_attendance_settings (
+            id INTEGER PRIMARY KEY CHECK(id=1), sign_in_time TEXT NOT NULL DEFAULT '08:00',
+            sign_out_time TEXT NOT NULL DEFAULT '17:00', grace_minutes INTEGER NOT NULL DEFAULT 10,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_by INTEGER,
+            FOREIGN KEY(updated_by) REFERENCES users(id) ON DELETE SET NULL
+        );
+        INSERT OR IGNORE INTO staff_attendance_settings(id,sign_in_time,sign_out_time,grace_minutes) VALUES(1,'08:00','17:00',10);
         INSERT OR IGNORE INTO payment_integrations(id,provider) VALUES(1,'Manual');
         """)
         ensure_column(conn, "teacher_assignments", "online_url TEXT NOT NULL DEFAULT ''")
@@ -813,6 +839,7 @@ def init_db() -> None:
         ensure_column(conn, "school_settings", "institution_driver_guide_en TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "institution_driver_guide_sw TEXT NOT NULL DEFAULT ''")
         conn.execute("""CREATE TABLE IF NOT EXISTS theme_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, snapshot_type TEXT NOT NULL, settings_json TEXT NOT NULL, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL)""")
+        conn.execute("CREATE TABLE IF NOT EXISTS user_ui_preferences (user_id INTEGER PRIMARY KEY, background_color TEXT NOT NULL DEFAULT '', accent_color TEXT NOT NULL DEFAULT '', font_family TEXT NOT NULL DEFAULT '', font_size INTEGER NOT NULL DEFAULT 16, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)")
         conn.execute("INSERT OR IGNORE INTO finance_accounts(id, account_name, opening_balance) VALUES(1, 'Institution Operating Account', 0)")
         conn.execute("UPDATE users SET qr_access_token=lower(hex(randomblob(16))) WHERE role!='System' AND (qr_access_token IS NULL OR qr_access_token='')")
         if conn.execute("SELECT COUNT(*) FROM system_help").fetchone()[0] == 0:
@@ -1119,7 +1146,7 @@ def persist_auth_cookie(response):
         try:
             body=response.get_data(as_text=True)
             if 'id="prime-global-tools"' not in body and "</body>" in body:
-                shell="""<button id=\"prime-mobile-nav\" class=\"prime-mobile-nav\" type=\"button\" aria-label=\"Open navigation\" aria-expanded=\"false\" title=\"Open navigation\">☰</button><div id=\"prime-global-tools\" class=\"prime-global-tools\"><a class=\"prime-bell\" href=\"/notifications\" aria-label=\"Notifications\" title=\"Notifications\"><span aria-hidden=\"true\">🔔</span><b id=\"prime-notification-count\" class=\"prime-count hidden\"></b></a><button type=\"button\" class=\"prime-shortcuts-btn\" aria-label=\"Open shortcuts\" onclick=\"document.getElementById('prime-shortcuts').classList.toggle('open')\">☰</button><div id=\"prime-shortcuts\" class=\"prime-shortcuts\"><strong>Quick access</strong><a href=\"/calendar\">📅 Calendar</a><a href=\"/notifications\">🔔 Notifications</a><a href=\"/online-classes\">🎥 Live classes</a><a href=\"/groups\">👥 Groups</a><a href=\"/leadership\">🏛 Leadership</a></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-bell span{color:inherit;font-size:18px;line-height:1}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}.prime-mobile-nav{display:none}.prime-mobile-nav.open{display:grid}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav{display:none}@media(max-width:820px){.prime-shortcuts-btn{display:none!important}.prime-mobile-nav{display:grid;place-items:center;position:fixed;left:12px;top:12px;width:44px;height:44px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:20px;cursor:pointer;z-index:5001}.prime-global-tools{right:12px;top:12px}}</style><script>(function(){var m=document.getElementById('prime-mobile-nav');if(m){if(document.getElementById('sidebarToggle')){m.remove();}else{m.addEventListener('click',function(){document.body.classList.toggle('mobile-nav-open');this.setAttribute('aria-expanded',String(document.body.classList.contains('mobile-nav-open')));});}}fetch('/api/notifications').then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});})();</script>"""
+                shell="""<button id=\"prime-mobile-nav\" class=\"prime-mobile-nav\" type=\"button\" aria-label=\"Open navigation\" aria-expanded=\"false\" title=\"Open navigation\"><span class=\"prime-icon\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M4 7h16M4 12h16M4 17h16\"/></svg></span></button><div id=\"prime-global-tools\" class=\"prime-global-tools\"><a class=\"prime-bell\" href=\"/notifications\" aria-label=\"Notifications\" title=\"Notifications\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9\"/><path d=\"M10 21h4\"/></svg><b id=\"prime-notification-count\" class=\"prime-count hidden\"></b></a><button type=\"button\" class=\"prime-shortcuts-btn\" aria-label=\"Open shortcuts\" onclick=\"document.getElementById('prime-shortcuts').classList.toggle('open')\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linecap=\"round\"><circle cx=\"6\" cy=\"6\" r=\"1.5\"/><circle cx=\"12\" cy=\"6\" r=\"1.5\"/><circle cx=\"18\" cy=\"6\" r=\"1.5\"/><circle cx=\"6\" cy=\"12\" r=\"1.5\"/><circle cx=\"12\" cy=\"12\" r=\"1.5\"/><circle cx=\"18\" cy=\"12\" r=\"1.5\"/><circle cx=\"6\" cy=\"18\" r=\"1.5\"/><circle cx=\"12\" cy=\"18\" r=\"1.5\"/><circle cx=\"18\" cy=\"18\" r=\"1.5\"/></svg></button><div id=\"prime-shortcuts\" class=\"prime-shortcuts\"><strong>Quick access</strong><a href=\"/calendar\"><span class=\"qs-icon\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"><rect x=\"3\" y=\"5\" width=\"18\" height=\"16\" rx=\"2\"/><path d=\"M16 3v4M8 3v4M3 10h18\"/></svg></span>Calendar</a><a href=\"/notifications\"><span class=\"qs-icon\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"><path d=\"M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9\"/><path d=\"M10 21h4\"/></svg></span>Notifications</a><a href=\"/online-classes\"><span class=\"qs-icon\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"><rect x=\"3\" y=\"6\" width=\"13\" height=\"12\" rx=\"2\"/><path d=\"m16 10 5-3v10l-5-3z\"/></svg></span>Live classes</a><a href=\"/groups\"><span class=\"qs-icon\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"><circle cx=\"9\" cy=\"8\" r=\"3\"/><path d=\"M3 20c0-3.3 2.7-5 6-5s6 1.7 6 5\"/><path d=\"M16 6.5c2.8.1 4.5 1.6 4.5 4M17 15c2 .5 3.5 1.9 3.9 4\"/></svg></span>Groups</a><a href=\"/staff-room\"><span class=\"qs-icon\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"2\"/><path d=\"M8 20v-2M16 20v-2M7 9h10M7 13h6\"/></svg></span>Staff room</a><a href=\"/settings/my-space\"><span class=\"qs-icon\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"><path d=\"M12 3v18M3 12h18\"/></svg></span>My space</a></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#2f63b5) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.16);cursor:pointer}.prime-bell svg,.prime-shortcuts-btn svg{width:20px;height:20px}.prime-count{position:absolute;right:46px;top:-4px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#d92d20;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:49px;top:1px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:220px;max-height:calc(100vh - 80px);overflow:auto;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#2f63b5) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.18)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(47,99,181,.08)}.qs-icon{width:19px;height:19px;display:grid;place-items:center;color:var(--primary-blue,#2f63b5)}.qs-icon svg{width:18px;height:18px}.prime-mobile-nav{display:none}.prime-icon,.prime-icon svg{width:20px;height:20px;display:grid;place-items:center}.prime-mobile-nav.open{display:grid}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav{display:none}@media(max-width:820px){.prime-shortcuts-btn{display:none!important}.prime-mobile-nav{display:grid;place-items:center;position:fixed;left:12px;top:12px;width:44px;height:44px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.16);cursor:pointer;z-index:5001}.prime-global-tools{right:12px;top:12px}}</style><script>(function(){var m=document.getElementById('prime-mobile-nav');if(m){if(document.getElementById('sidebarToggle')){m.remove();}else{m.addEventListener('click',function(){document.body.classList.toggle('mobile-nav-open');this.setAttribute('aria-expanded',String(document.body.classList.contains('mobile-nav-open')));});}}fetch('/api/notifications',{cache:'no-store'}).then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});if(document.querySelector('.notification-bell')){var gb=document.querySelector('.prime-bell');if(gb)gb.style.display='none';}document.addEventListener('click',function(e){var t=e.target.closest('.nav-group-toggle');if(t){setTimeout(function(){var g=t.closest('.nav-group');if(g)g.scrollIntoView({block:'nearest',behavior:'smooth'});},80);}});})();</script>"""
                 response.set_data(body.replace("</body>",shell+"</body>",1))
         except Exception:
             pass
@@ -1393,6 +1420,35 @@ def _rgba(hex_value, alpha):
     return f'rgba({r},{g},{b},{alpha})'
 
 
+def personal_ui_style(user=None) -> str:
+    """Return safe per-user visual overrides without altering institution settings."""
+    user = user or current_user()
+    if not user:
+        return ''
+    try:
+        pref=q("SELECT * FROM user_ui_preferences WHERE user_id=?",(user['id'],),one=True)
+    except Exception:
+        pref=None
+    if not pref:
+        return ''
+    def clean(v, default):
+        v=str(v or default).replace('<','').replace('>','').replace(';','').replace('\"','')
+        return v
+    bg=clean(pref['background_color'],'')
+    accent=clean(pref['accent_color'],'')
+    font=clean(pref['font_family'],'')
+    size=max(13,min(21,int(pref['font_size'] or 16)))
+    parts=[]
+    if bg and re.fullmatch(r'#[0-9a-fA-F]{6}',bg):
+        parts.append(f'--bg:{bg};')
+    if accent and re.fullmatch(r'#[0-9a-fA-F]{6}',accent):
+        parts.append(f'--primary-blue:{accent};--deep-accent-blue:{accent};')
+    if font and re.fullmatch(r'[A-Za-z][A-Za-z0-9 ,_-]{1,50}',font):
+        parts.append(f"--font:'{font}',Inter,system-ui,sans-serif;--heading-font:'{font}',Inter,system-ui,sans-serif;")
+    parts.append(f'font-size:{size}px;')
+    return ':root{' + ''.join(parts) + '}' if parts else ''
+
+
 def theme_style(settings=None) -> str:
     settings = settings or school_settings()
     def esc(v):
@@ -1452,7 +1508,7 @@ def auth_template_context():
     settings=school_settings()
     return {
         "current_user": current_user(), "school_settings": settings, "portal_title": settings["school_name"], "theme_color": settings["primary_color"], "all_roles": ALL_PORTAL_ROLES, "public_roles": PUBLIC_ROLES,
-        "theme_style": theme_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(),
+        "theme_style": theme_style(settings) + personal_ui_style(current_user()), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(),
         "important_dates": important_dates(12, landing=request.path == '/'),
         "notification_count": notification_count(current_user()['id']) if current_user() else 0,
         "role_shortcuts": role_shortcuts(current_user()),
@@ -1998,18 +2054,93 @@ def finance_match_external(event_id:int):
     if not event or not student: flash('Payment event or student was not found.','danger'); return redirect(url_for('finance_dashboard'))
     poster=current_user()['id']; pid=execute("INSERT INTO payments(student_id,amount,method,reference_no,recorded_by,status) VALUES(?,?,?,?,?,'Posted')",(sid,event['amount'],event['provider'],event['external_reference'],poster)); new_balance=max(0,float(student['balance'] or 0)-float(event['amount'])); execute("UPDATE students SET balance=?,payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(new_balance,'Paid' if new_balance==0 else 'Pending',sid)); execute("UPDATE external_payment_events SET status='Matched',matched_student_id=?,processed_at=CURRENT_TIMESTAMP WHERE id=?",(sid,event_id)); audit(current_user()['id'],current_user()['full_name'],'Match External Payment',f'External payment {event["external_reference"]} matched to {student["admission_no"]}.'); flash('External payment matched and posted.','success'); return redirect(url_for('finance_dashboard'))
 
+def staff_room_allowed(user=None):
+    user=user or current_user()
+    return bool(user and user['role'] not in {'Student','Parent','System'})
+
+@app.route("/staff-room")
+@login_required
+def staff_room():
+    if not DEMO_AUTH_BYPASS and not staff_room_allowed(): abort(403)
+    user=current_user(); settings=school_settings()
+    staff=q("SELECT id,full_name,role,title,department,leadership_role,school_unit,school_location,staff_code,workspace_type FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System') ORDER BY COALESCE(department,''),full_name")
+    duties=q("SELECT d.*,u.full_name AS staff_name,u.role,u.title FROM staff_duties d JOIN users u ON u.id=d.staff_user_id WHERE d.active=1 ORDER BY d.duty_date,d.start_time,u.full_name LIMIT 250")
+    my_duties=q("SELECT d.* FROM staff_duties d WHERE d.staff_user_id=? AND d.active=1 ORDER BY d.duty_date,d.start_time LIMIT 80",(user['id'],))
+    meetings=q("SELECT m.*,u.full_name AS created_name FROM staff_meetings m LEFT JOIN users u ON u.id=m.created_by WHERE m.active=1 ORDER BY m.starts_at DESC LIMIT 100")
+    return render_template('staff_room.html',settings=settings,actor_name=user['full_name'],role=user['role'],staff=staff,duties=duties,my_duties=my_duties,meetings=meetings)
+
+@app.route("/staff-room/meeting", methods=['POST'])
+@login_required
+def staff_room_meeting():
+    user=current_user()
+    if user['role'] not in {'Admin','ICT','Teacher'}: abort(403)
+    title=request.form.get('title','').strip() or 'Staff meeting'
+    starts=request.form.get('starts_at','').strip() or datetime.utcnow().strftime('%Y-%m-%dT%H:%M')
+    description=request.form.get('description','').strip()
+    room='prime-staff-'+secrets.token_urlsafe(9).lower().replace('_','-').replace('-','')
+    provider=f'https://meet.jit.si/{urllib.parse.quote(room)}'
+    mid=execute("INSERT INTO staff_meetings(title,description,starts_at,room_name,provider_url,created_by) VALUES(?,?,?,?,?,?)",(title,description,starts,room,user['id'] and provider,user['id']))
+    recipients=[r['id'] for r in q("SELECT id FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System') AND id!=?",(user['id'],))]
+    notify_users(recipients,'New staff meeting',f'{title} is scheduled for {starts}.',url_for('staff_room'))
+    audit(user['id'],user['full_name'],'Staff Meeting Created',f'{title} scheduled for {starts}.')
+    flash('Staff meeting scheduled and staff notified.','success')
+    return redirect(url_for('staff_room'))
+
+@app.route("/staff-room/duty", methods=['POST'])
+@login_required
+def staff_room_duty():
+    user=current_user()
+    if user['role'] not in {'Admin','ICT'}: abort(403)
+    staff_id=request.form.get('staff_user_id',type=int); title=request.form.get('title','').strip(); duty_date=request.form.get('duty_date','').strip(); start=request.form.get('start_time','').strip(); end=request.form.get('end_time','').strip(); location=request.form.get('location','').strip(); notes=request.form.get('notes','').strip()
+    target=q("SELECT id,full_name FROM users WHERE id=? AND active=1 AND role NOT IN ('Student','Parent','System')",(staff_id,),one=True)
+    if not target or not title or not duty_date:
+        flash('Staff member, duty title and duty date are required.','danger'); return redirect(url_for('staff_room'))
+    execute("INSERT INTO staff_duties(staff_user_id,title,duty_date,start_time,end_time,location,notes,assigned_by) VALUES(?,?,?,?,?,?,?,?)",(staff_id,title,duty_date,start,end,location,notes,user['id']))
+    notify_users([staff_id],'New duty assigned',f'{title} on {duty_date}' + (f' at {start}' if start else '') + (f' — {location}' if location else ''),url_for('staff_room'))
+    audit(user['id'],user['full_name'],'Staff Duty Assigned',f'{target["full_name"]}: {title} on {duty_date}.')
+    flash(f'Duty assigned to {target["full_name"]}.','success'); return redirect(url_for('staff_room'))
+
+@app.route("/admin/attendance/settings", methods=['POST'])
+@login_required
+@role_required('Admin','ICT')
+def staff_attendance_settings_save():
+    sign_in=request.form.get('sign_in_time','08:00').strip() or '08:00'; sign_out=request.form.get('sign_out_time','17:00').strip() or '17:00'
+    try: grace=max(0,min(180,int(request.form.get('grace_minutes','10') or 10)))
+    except ValueError: grace=10
+    if not re.fullmatch(r'\d{2}:\d{2}',sign_in) or not re.fullmatch(r'\d{2}:\d{2}',sign_out):
+        flash('Use valid 24-hour times such as 08:00 and 17:00.','danger'); return redirect(url_for('admin_attendance'))
+    execute("UPDATE staff_attendance_settings SET sign_in_time=?,sign_out_time=?,grace_minutes=?,updated_at=CURRENT_TIMESTAMP,updated_by=? WHERE id=1",(sign_in,sign_out,grace,current_user()['id']))
+    notify_users([r['id'] for r in q("SELECT id FROM users WHERE role='Admin' AND active=1")], 'Attendance schedule updated', f'Staff sign-in {sign_in}; sign-out {sign_out}; grace {grace} minutes.', url_for('admin_attendance'))
+    audit(current_user()['id'],current_user()['full_name'],'Attendance Schedule Updated',f'Sign in {sign_in}; sign out {sign_out}; grace {grace} minutes.')
+    flash('Staff attendance schedule updated.','success'); return redirect(url_for('admin_attendance'))
+
+@app.route("/admin/attendance/export.csv")
+@login_required
+@role_required('Admin','ICT')
+def admin_attendance_csv():
+    rows=q("SELECT a.*,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS position,u.school_unit,u.school_location,u.staff_code FROM attendance_events a JOIN users u ON u.id=a.user_id WHERE u.role NOT IN ('Student','Parent','System') ORDER BY a.event_at DESC,a.id DESC")
+    out=io.StringIO(); w=csv.writer(out); w.writerow(['Name','Username','Role','Position','Staff code','Action','Date & time','School','Location','Source','Method','Latitude','Longitude','Device'])
+    for r in rows: w.writerow([r['full_name'],r['username'],r['role'],r['position'],r['staff_code'],r['action'],r['event_at'],r['school_unit'],r['school_location'],r['source'],r['method'],r['latitude'] or '',r['longitude'] or '',r['device_note'] or ''])
+    b=io.BytesIO(out.getvalue().encode('utf-8-sig')); b.seek(0); return send_file(b,mimetype='text/csv',as_attachment=True,download_name=f"{secure_filename(school_settings()['school_name'])}-staff-attendance.csv")
+
 @app.route("/reception")
 @app.route("/reception/")  # Accept both direct URL forms so deployment/linking never depends on a trailing slash.
 @login_required
 def reception_dashboard():
-    if not is_reception_user(current_user()): abort(403)
+    # Demonstration mode keeps /reception directly explorable; when authentication
+    # is enabled, Reception is a secretary/front-office role and cannot enter the
+    # Admin Command Centre. Admin/ICT may oversee reception without becoming a secretary.
+    if not DEMO_AUTH_BYPASS and not is_reception_user(current_user()): abort(403)
     settings=school_settings(); open_visits=q("SELECT * FROM reception_visits WHERE check_in IS NOT NULL AND check_out IS NULL ORDER BY check_in ASC,id ASC"); recent=q("SELECT * FROM reception_visits ORDER BY id DESC LIMIT 120"); staff=q("SELECT * FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System','Admin') ORDER BY full_name")
+    att_settings=q("SELECT * FROM staff_attendance_settings WHERE id=1",one=True) or {"sign_in_time":"08:00","sign_out_time":"17:00","grace_minutes":10}
+    today=datetime.utcnow().date().isoformat()
+    today_staff_events=q("SELECT a.*,u.full_name,u.username,u.title AS position,u.school_unit,u.school_location,u.staff_code FROM attendance_events a JOIN users u ON u.id=a.user_id WHERE u.role NOT IN ('Student','Parent','System','Admin') AND date(a.event_at)=? ORDER BY a.event_at DESC,a.id DESC",(today,))
     me=current_user(); token=me['qr_access_token'] or uuid.uuid4().hex
     if not me['qr_access_token']:
         execute("UPDATE users SET qr_access_token=? WHERE id=?",(token,me['id']))
     payload='STAFF|'+token+'|'+(me['full_name'] or '')+'|'+(me['title'] or me['role'])+'|'+(me['position_code'] or me['staff_code'] or '')
     code=qrcode.QRCode(version=3,box_size=9,border=3); code.add_data(payload); code.make(fit=True); buf=io.BytesIO(); code.make_image().save(buf,format='PNG'); self_qr_data='data:image/png;base64,'+base64.b64encode(buf.getvalue()).decode('ascii')
-    return render_template('reception_dashboard.html',settings=settings,actor_name=me['full_name'],role=me['role'],open_visits=open_visits,recent=recent,staff=staff,school_unit=settings['school_name'],school_location=settings['institution_affiliations'] or '',self_qr_data=self_qr_data,self_qr_code=me['position_code'] or me['staff_code'] or '')
+    return render_template('reception_dashboard.html',settings=settings,actor_name=me['full_name'],role=me['role'],open_visits=open_visits,recent=recent,staff=staff,attendance_settings=att_settings,today_staff_events=today_staff_events,school_unit=settings['school_name'],school_location=settings['institution_affiliations'] or '',self_qr_data=self_qr_data,self_qr_code=me['position_code'] or me['staff_code'] or '')
 
 @app.route("/reception/scan",methods=["POST"])
 @login_required
@@ -2119,10 +2250,11 @@ def attendance_sync():
 @login_required
 @role_required('Admin','ICT')
 def admin_attendance():
-    events=q("SELECT a.*,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS position,u.school_unit,u.school_location FROM attendance_events a JOIN users u ON u.id=a.user_id ORDER BY a.event_at DESC,a.id DESC LIMIT 300")
-    visits=q("SELECT * FROM reception_visits ORDER BY COALESCE(check_out,check_in) DESC,id DESC LIMIT 300")
+    events=q("SELECT a.*,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS position,u.school_unit,u.school_location,u.staff_code FROM attendance_events a JOIN users u ON u.id=a.user_id WHERE u.role NOT IN ('Student','Parent','System','Admin') ORDER BY a.event_at DESC,a.id DESC LIMIT 500")
+    visits=q("SELECT * FROM reception_visits ORDER BY COALESCE(check_out,check_in) DESC,id DESC LIMIT 500")
     office=q("SELECT * FROM attendance_qr_settings WHERE id=1",one=True)
-    return render_template('admin_attendance.html',settings=school_settings(),events=events,visits=visits,office=office,actor_name=current_user()['full_name'],role=current_user()['role'])
+    att_settings=q("SELECT * FROM staff_attendance_settings WHERE id=1",one=True) or {"sign_in_time":"08:00","sign_out_time":"17:00","grace_minutes":10}
+    return render_template('admin_attendance.html',settings=school_settings(),events=events,visits=visits,office=office,attendance_settings=att_settings,actor_name=current_user()['full_name'],role=current_user()['role'])
 
 @app.route("/teacher/assignments",methods=['POST'])
 @login_required
@@ -3172,6 +3304,26 @@ def send_message():
     flash("Message sent.", "success")
     return redirect(request.referrer or url_for("index"))
 
+
+@app.route("/settings/my-space", methods=['GET','POST'])
+@login_required
+def my_space_settings():
+    user=current_user()
+    if request.method=='POST':
+        bg=request.form.get('background_color','').strip(); accent=request.form.get('accent_color','').strip(); font=request.form.get('font_family','Inter').strip(); size=request.form.get('font_size','16',type=int) or 16
+        if not re.fullmatch(r'#[0-9a-fA-F]{6}',bg): bg='#eef3f8'
+        if not re.fullmatch(r'#[0-9a-fA-F]{6}',accent): accent='#2f63b5'
+        if font not in {'Inter','Aptos','Segoe UI','Georgia','Arial'}: font='Inter'
+        size=max(13,min(21,size))
+        execute("INSERT INTO user_ui_preferences(user_id,background_color,accent_color,font_family,font_size,updated_at) VALUES(?,?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(user_id) DO UPDATE SET background_color=excluded.background_color,accent_color=excluded.accent_color,font_family=excluded.font_family,font_size=excluded.font_size,updated_at=CURRENT_TIMESTAMP",(user['id'],bg,accent,font,size))
+        flash('Your workspace appearance has been updated.','success'); return redirect(url_for('my_space_settings'))
+    pref=q("SELECT * FROM user_ui_preferences WHERE user_id=?",(user['id'],),one=True) or {'background_color':'#eef3f8','accent_color':'#2f63b5','font_family':'Inter','font_size':16}
+    return render_template('personal_settings.html',settings=school_settings(),pref=pref,actor_name=user['full_name'],role=user['role'])
+
+@app.route("/settings/my-space/reset")
+@login_required
+def my_space_reset():
+    execute("DELETE FROM user_ui_preferences WHERE user_id=?",(current_user()['id'],)); flash('Your personal workspace settings were restored to the institution defaults.','success'); return redirect(url_for('my_space_settings'))
 
 @app.route("/profile", methods=["GET", "POST"])
 @login_required
