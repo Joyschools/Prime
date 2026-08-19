@@ -409,3 +409,7 @@ body.app-body.sidebar-style-hover .sidebar:hover .brand-line>div,body.app-body.s
     pointer-events:auto!important;
   }
 }
+
+/* V14 operations workspaces are intentionally broad on desktop. */
+body.app-body .transport-layout,body.app-body .attendance-top,body.app-body .reception-grid{width:100%;min-width:0}
+@media(min-width:821px){body.app-body .content{grid-column:1/-1;min-width:0}.content>.panel,.content>.topbar{width:100%;box-sizing:border-box}}

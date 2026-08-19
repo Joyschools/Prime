@@ -84,7 +84,7 @@
       <section class="nav-group">
         <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="users-panel"><span>People & Access</span><span class="nav-caret">▾</span></button>
         <div class="nav-group-links">
-          <a class="nav-link" href="/admin/learners">View all learners</a><a class="nav-link" href="/admin/employees">View all employees</a><button class="nav-link nav-action" type="button" data-target="users-panel">Manage users</button>
+          <a class="nav-link" href="/admin/learners">View all learners</a><a class="nav-link" href="/admin/employees">View all employees</a><a class="nav-link" href="/reception">Reception & daily register</a><button class="nav-link nav-action" type="button" data-target="users-panel">Manage users</button>
           <button class="nav-link nav-action" type="button" data-target="public-info-panel">Public page & access</button>
           <button class="nav-link nav-action" type="button" data-target="institution-profile-panel">Institution configuration</button>
         </div>
@@ -395,7 +395,7 @@
           <label><span>Account type</span><select name="role" required>{% for role in all_roles %}{% if role!='System' %}<option value="{{ role }}">{{ role }}</option>{% endif %}{% endfor %}</select></label>
           <label><span>Position / title</span><input name="title" placeholder="HOD, Deputy, Dean, Registrar..."></label>
           <label><span>Department</span><select name="department"><option value="">Not assigned</option>{% for d in departments %}<option value="{{ d.name }}">{{ d.name }}</option>{% endfor %}</select></label>
-          <label><span>Staff workspace</span><select name="workspace_type"><option value="Teaching">Teaching / Lecturer</option><option value="Driver">Driver</option><option value="Guard">Guard / Security</option><option value="Cook">Cook / Catering</option><option value="Other Staff">Other staff</option></select></label>
+          <label><span>Staff workspace</span><select name="workspace_type"><option value="Teaching">Teaching / Lecturer</option><option value="Driver">Driver</option><option value="Reception">Reception / Secretary</option><option value="Guard">Guard / Security</option><option value="Cook">Cook / Catering</option><option value="Other Staff">Other staff</option></select></label>
           <label><span>Phone</span><input name="phone"></label><label><span>Email</span><input type="email" name="email"></label>
           <label><span>Date of birth</span><input type="date" name="date_of_birth"></label><label><span>Gender</span><input name="gender"></label>
           <label><span>ID / reference</span><input name="id_reference"></label><label><span>Blood group</span><input name="blood_group"></label>
