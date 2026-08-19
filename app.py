@@ -1250,7 +1250,7 @@ def resolve_staff_token(raw_token: str):
         parts=token.split('|',5); token=parts[1] if len(parts)>1 else ''
     m=re.search(r'/qr/([A-Za-z0-9_-]+)',token)
     if m: token=m.group(1)
-    return q("SELECT * FROM users WHERE qr_access_token=? AND active=1 AND role NOT IN ('System','Admin')",(token,),one=True) if token else None
+    return q("SELECT * FROM users WHERE qr_access_token=? AND active=1 AND role!='System'",(token,),one=True) if token else None
 
 def reception_admin_ids():
     return [r['id'] for r in q("SELECT id FROM users WHERE active=1 AND role='Admin'")]
@@ -2003,7 +2003,12 @@ def finance_match_external(event_id:int):
 def reception_dashboard():
     if not is_reception_user(current_user()): abort(403)
     settings=school_settings(); open_visits=q("SELECT * FROM reception_visits WHERE check_in IS NOT NULL AND check_out IS NULL ORDER BY check_in ASC,id ASC"); recent=q("SELECT * FROM reception_visits ORDER BY id DESC LIMIT 120"); staff=q("SELECT * FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System','Admin') ORDER BY full_name")
-    return render_template('reception_dashboard.html',settings=settings,actor_name=current_user()['full_name'],role=current_user()['role'],open_visits=open_visits,recent=recent,staff=staff,school_unit=settings['school_name'],school_location=settings['institution_affiliations'] or '')
+    me=current_user(); token=me['qr_access_token'] or uuid.uuid4().hex
+    if not me['qr_access_token']:
+        execute("UPDATE users SET qr_access_token=? WHERE id=?",(token,me['id']))
+    payload='STAFF|'+token+'|'+(me['full_name'] or '')+'|'+(me['title'] or me['role'])+'|'+(me['position_code'] or me['staff_code'] or '')
+    code=qrcode.QRCode(version=3,box_size=9,border=3); code.add_data(payload); code.make(fit=True); buf=io.BytesIO(); code.make_image().save(buf,format='PNG'); self_qr_data='data:image/png;base64,'+base64.b64encode(buf.getvalue()).decode('ascii')
+    return render_template('reception_dashboard.html',settings=settings,actor_name=me['full_name'],role=me['role'],open_visits=open_visits,recent=recent,staff=staff,school_unit=settings['school_name'],school_location=settings['institution_affiliations'] or '',self_qr_data=self_qr_data,self_qr_code=me['position_code'] or me['staff_code'] or '')
 
 @app.route("/reception/scan",methods=["POST"])
 @login_required

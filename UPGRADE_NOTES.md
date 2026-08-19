@@ -41,3 +41,11 @@ The available execution environment for this packaging pass does not have Flask 
 - Full JSON system backup with database records, settings and included uploaded assets; JSON restore plus SQLite rollback.
 - User portal QR opens the institution login/landing page without storing plaintext credentials.
 - Advanced admin theme engine: colors, typography, radius, sidebar/header colors, navigation and bounded custom CSS.
+
+## V16 final reception QR behavior
+
+- Reception staff now have the same institutional staff QR identity as other staff, including Admin accounts.
+- On desktop/computer reception workspaces, the logged-in person's QR is displayed for display/printing.
+- On phones, the desktop QR card is hidden and the reception workspace remains scanner-first for check-in/out.
+- Reception scanning accepts the same staff QR generated from the user profile/attendance QR endpoint, including Admin.
+- Registered staff continue to be resolved from the QR record rather than treated as generic Admin/anonymous users.

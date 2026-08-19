@@ -83,3 +83,6 @@ Heartbeat endpoints: `/pulse_receiver` and `/pulse`. They acknowledge incoming p
 - Driver workspace remains available from the staff/transport side of the platform.
 - Institution-branded long-form footer with configurable legal name, description, contact and optional platform-provider credit.
 - ICT can control the portal footer presentation alongside the existing theme engine.
+
+### V16 reception QR behavior
+Reception uses one institutional staff QR identity per person. On a computer, the logged-in reception workspace displays the signed-in person's QR for display or printing. On a phone, the QR card is hidden and the workspace remains scanner-first so the receptionist can scan another staff member's QR for check-in/check-out. The same QR generated for an Admin or other registered staff member is accepted by the reception scanner; Admin is no longer treated as an invalid staff QR target.
