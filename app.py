@@ -1178,7 +1178,6 @@ def _demo_role_for_request() -> str:
         (("/admin", "admin_"), "Admin"),
         (("/ict", "ict_"), "ICT"),
         (("/finance", "finance_"), "Finance"),
-        (("/reception", "reception_"), "Reception"),
         (("/teacher", "teacher_", "/dashboard"), "Teacher"),
         (("/student", "student_"), "Student"),
         (("/parent", "parent_"), "Parent"),
@@ -1198,11 +1197,6 @@ def _ensure_demo_identity() -> None:
     if desired == "Parent" and not parent_portal_enabled():
         desired = "Admin"
     candidates = q("SELECT id FROM users WHERE role=? AND active=1 AND role!='System' ORDER BY id", (desired,))
-    if not candidates and desired == "Reception":
-        # Reception is a workspace, not a separate users.role. Resolve a real
-        # receptionist by workspace_type/reception_enabled so /reception cannot
-        # silently fall back to an Administrator account.
-        candidates = q("SELECT id FROM users WHERE active=1 AND role NOT IN ('System','Student','Parent','Admin','ICT') AND (workspace_type='Reception' OR reception_enabled=1) ORDER BY id")
     if not candidates and desired in {"Driver", "Guard", "Cook", "Other Staff"}:
         candidates = q("SELECT id FROM users WHERE active=1 AND role NOT IN ('System','Student','Parent') ORDER BY id")
     if not candidates:
@@ -2008,12 +2002,6 @@ def finance_match_external(event_id:int):
 @app.route("/reception/")  # Accept both direct URL forms so deployment/linking never depends on a trailing slash.
 @login_required
 def reception_dashboard():
-    # Reception is a secretary/front-office workspace. In the current
-    # no-auth/demo mode, the workspace is opened directly from
-    # its URL. Admin/ICT identities are valid fallback identities for the
-    # reception workspace, so do not contradict login_required() by rejecting
-    # them here with a 403. Normal authentication behaviour remains unchanged
-    # when DEMO_AUTH_BYPASS is disabled.
     if not is_reception_user(current_user()): abort(403)
     settings=school_settings(); open_visits=q("SELECT * FROM reception_visits WHERE check_in IS NOT NULL AND check_out IS NULL ORDER BY check_in ASC,id ASC"); recent=q("SELECT * FROM reception_visits ORDER BY id DESC LIMIT 120"); staff=q("SELECT * FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System','Admin') ORDER BY full_name")
     me=current_user(); token=me['qr_access_token'] or uuid.uuid4().hex
