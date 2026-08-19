@@ -1011,7 +1011,7 @@ def _user_from_auth_token(token: str):
         return None
     if not uid:
         return None
-    return q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled FROM users WHERE id = ? AND active = 1 AND role != 'System'", (uid,), one=True)
+    return q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token FROM users WHERE id = ? AND active = 1 AND role != 'System'", (uid,), one=True)
 
 def _portal_context_serializer():
     return URLSafeTimedSerializer(app.config["SECRET_KEY"], salt=_PORTAL_CONTEXT_SALT)
@@ -1037,7 +1037,7 @@ def _user_from_portal_context(token: str):
     valid = q("SELECT token_id FROM portal_contexts WHERE token_id=? AND user_id=? AND revoked=0", (tid, uid), one=True)
     if not valid:
         return None
-    return q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
+    return q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
 
 def _portal_context_id(token: str):
     try:
@@ -1067,7 +1067,7 @@ def load_current_user() -> None:
             return
     user_id = session.get("user_id")
     if user_id:
-        g.user = q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled FROM users WHERE id = ? AND active = 1 AND role != 'System'", (user_id,), one=True)
+        g.user = q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token FROM users WHERE id = ? AND active = 1 AND role != 'System'", (user_id,), one=True)
         if g.user:
             session.permanent = True
             g.portal_context = None
@@ -1206,7 +1206,7 @@ def _ensure_demo_identity() -> None:
         session.permanent = True
         session["user_id"] = uid
         session["active_portal_role"] = desired
-        g.user = q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
+        g.user = q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
 
 
 def role_target(role: str) -> str:
