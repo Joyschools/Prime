@@ -475,6 +475,11 @@ def init_db() -> None:
         ensure_column(conn, "school_settings", "landing_text_color TEXT NOT NULL DEFAULT '#152033'")
         ensure_column(conn, "school_settings", "landing_accent_color TEXT NOT NULL DEFAULT '#10a37f'")
         ensure_column(conn, "school_settings", "landing_background_path TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "landing_font_family TEXT NOT NULL DEFAULT 'Inter'")
+        ensure_column(conn, "school_settings", "landing_heading_font TEXT NOT NULL DEFAULT 'Manrope'")
+        ensure_column(conn, "school_settings", "landing_content_width INTEGER NOT NULL DEFAULT 1240")
+        ensure_column(conn, "school_settings", "landing_hero_layout TEXT NOT NULL DEFAULT 'split'")
+        ensure_column(conn, "school_settings", "landing_role_columns INTEGER NOT NULL DEFAULT 3")
         ensure_column(conn, "school_settings", "online_class_provider TEXT NOT NULL DEFAULT 'https://meet.jit.si/'")
         ensure_column(conn, "school_settings", "parent_portal_enabled INTEGER NOT NULL DEFAULT 1")
 
@@ -1252,26 +1257,85 @@ def role_shortcuts(user):
     }
     return common+extras.get(role,[('Groups','/groups','Groups & activities')])
 
+def _hex_rgb(value, fallback=(52,53,65)):
+    value=str(value or '').strip().lstrip('#')
+    if len(value)==3:
+        value=''.join(ch*2 for ch in value)
+    if len(value)!=6 or not re.fullmatch(r'[0-9a-fA-F]{6}', value):
+        return fallback
+    return tuple(int(value[i:i+2],16) for i in (0,2,4))
+
+
+def _rel_luminance(rgb):
+    vals=[]
+    for c in rgb:
+        x=c/255.0
+        vals.append(x/12.92 if x<=0.03928 else ((x+0.055)/1.055)**2.4)
+    return 0.2126*vals[0]+0.7152*vals[1]+0.0722*vals[2]
+
+
+def _contrast_ratio(a,b):
+    la=_rel_luminance(_hex_rgb(a)); lb=_rel_luminance(_hex_rgb(b))
+    hi=max(la,lb); lo=min(la,lb)
+    return (hi+0.05)/(lo+0.05)
+
+
+def _best_text(background, requested, minimum=4.5):
+    requested=str(requested or '').strip() or '#ececf1'
+    if _contrast_ratio(background, requested) >= minimum:
+        return requested
+    return '#101828' if _contrast_ratio(background, '#101828') >= _contrast_ratio(background, '#ffffff') else '#ffffff'
+
+
+def _rgba(hex_value, alpha):
+    r,g,b=_hex_rgb(hex_value)
+    return f'rgba({r},{g},{b},{alpha})'
+
+
 def theme_style(settings=None) -> str:
     settings = settings or school_settings()
     def esc(v):
         return str(v).replace('<','').replace('>','').replace('"','').replace(';','')
-    bg=esc(settings['background_color']); panel=esc(settings['panel_color']); text=esc(settings['text_color']); muted=esc(settings['muted_text_color'])
-    if settings['theme_mode']=='light':
-        bg='#f5f7fb'; panel='#ffffff'; text='#18212f'; muted='#667085'
+    bg=esc(settings['background_color'] or '#343541')
+    panel=esc(settings['panel_color'] or bg)
+    sidebar=esc(settings['sidebar_color'] or panel)
+    header=esc(settings['header_color'] or panel)
+    requested_text=esc(settings['text_color'] or '#ececf1')
+    requested_muted=esc(settings['muted_text_color'] or '#b5bac7')
+    # User-selected colours remain authoritative, but unreadable combinations are automatically corrected.
+    body_text=_best_text(bg, requested_text)
+    panel_text=_best_text(panel, body_text)
+    sidebar_text=_best_text(sidebar, body_text)
+    header_text=_best_text(header, body_text)
+    muted=_best_text(bg, requested_muted, minimum=3.0)
+    input_bg=_best_text(panel, bg, minimum=1.2) if _contrast_ratio(panel,bg)<1.12 else bg
+    primary_button_text=_best_text(settings['primary_color'] or '#10a37f', '#ffffff')
+    heading_font=esc(settings['heading_font'] or settings['font_family'] or 'Inter')
+    font_family=esc(settings['font_family'] or 'Inter')
     css=(
-        f":root{{--bg:{bg};--panel:{panel};"
-        f"--primary-blue:{esc(settings['primary_color'])};--deep-accent-blue:{esc(settings['accent_color'])};"
-        f"--primary-text:{text};--muted-text:{muted};"
-        f"--font:'{esc(settings['font_family'])}',Inter,system-ui,sans-serif;--heading-font:'{esc(settings['heading_font'])}',{esc(settings['font_family'])},Inter,sans-serif;--radius:{int(settings['radius_px'] or 12)}px;"
-        f"--radius-sm:{int(settings['button_radius_px'] or 10)}px;--sidebar-bg:{esc(settings['sidebar_color'])};"
-        f"--header-bg:{esc(settings['header_color'])};}}"
+        f":root{{--bg:{bg};--panel:{panel};--panel-3:{input_bg};"
+        f"--primary-blue:{esc(settings['primary_color'] or '#10a37f')};--deep-accent-blue:{esc(settings['accent_color'] or '#0e8a6d')};"
+        f"--primary-text:{body_text};--muted-text:{muted};--panel-text:{panel_text};--sidebar-text:{sidebar_text};--header-text:{header_text};"
+        f"--text-soft:{_rgba(body_text,.06)};--text-border:{_rgba(body_text,.14)};--text-hover:{_rgba(body_text,.10)};"
+        f"--input-text:{_best_text(input_bg,body_text)};--primary-button-text:{primary_button_text};"
+        f"--font:'{font_family}',Inter,system-ui,sans-serif;--heading-font:'{heading_font}',{font_family},Inter,sans-serif;"
+        f"--radius:{int(settings['radius_px'] or 12)}px;--radius-sm:{int(settings['button_radius_px'] or 10)}px;--sidebar-bg:{sidebar};--header-bg:{header};}}"
     )
     extra=settings['custom_css'] or ''
-    # Admin-entered CSS is deliberately limited to a length bound and unsafe import/javascript patterns.
     if len(extra)>12000 or re.search(r'@import|javascript:|expression\s*\(', extra, re.I):
         extra=''
     return css+extra
+
+
+def landing_style(settings=None) -> str:
+    settings=settings or school_settings()
+    ff=str(settings['landing_font_family'] or 'Inter').replace('<','').replace('>','').replace(';','').replace('"','')
+    hf=str(settings['landing_heading_font'] or ff).replace('<','').replace('>','').replace(';','').replace('"','')
+    width=max(900,min(1600,int(settings['landing_content_width'] or 1240)))
+    cols=max(1,min(3,int(settings['landing_role_columns'] or 3)))
+    hero=str(settings['landing_hero_layout'] or 'split')
+    hero_css='grid-template-columns:minmax(0,1.55fr) minmax(260px,.65fr);' if hero=='split' else 'grid-template-columns:1fr;'
+    return f".landing-shell{{width:min({width}px,calc(100% - 48px));}} .landing-hero{{{hero_css}}} .role-grid{{grid-template-columns:repeat({cols},minmax(0,1fr));}} .landing-font-scope{{font-family:'{ff}',Inter,system-ui,sans-serif;}} .landing-heading-scope{{font-family:'{hf}',{ff},Inter,system-ui,sans-serif;}}"
 
 
 def current_landing_url() -> str:
@@ -1287,7 +1351,7 @@ def auth_template_context():
     settings=school_settings()
     return {
         "current_user": current_user(), "school_settings": settings, "portal_title": settings["school_name"], "theme_color": settings["primary_color"], "all_roles": ALL_PORTAL_ROLES, "public_roles": PUBLIC_ROLES,
-        "theme_style": theme_style(settings), "portal_landing_url": current_landing_url(),
+        "theme_style": theme_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(),
         "important_dates": important_dates(12, landing=request.path == '/'),
         "notification_count": notification_count(current_user()['id']) if current_user() else 0,
         "role_shortcuts": role_shortcuts(current_user()),
@@ -2368,11 +2432,13 @@ def ict_settings():
     except ValueError: button_radius=10
     theme_mode=request.form.get("theme_mode", "dark").strip().lower() if request.form.get("theme_mode") else "dark"
     if theme_mode not in {"dark","light","system"}: theme_mode="dark"
+    sidebar_style=request.form.get("sidebar_style", "drawer").strip().lower()
+    if sidebar_style not in {"drawer","left","top","hover"}: sidebar_style="drawer"
     menu_order=request.form.get("menu_order", "Home,Assignments,Submissions,Online classes").strip() or "Home,Assignments,Submissions,Online classes"
     labels={k: request.form.get(k, defaults).strip() or defaults for k,defaults in [("home_label","Home"),("assignments_label","Assignments"),("results_label","Results"),("messages_label","Messages"),("finance_label","Finance"),("branding_label","Branding")]}
     custom_css=request.form.get("custom_css", "").strip()[:12000]
     if re.search(r'@import|javascript:|expression\s*\(', custom_css, re.I): custom_css=''
-    execute("""UPDATE school_settings SET school_name=?, portal_subtitle=?, primary_color=?, accent_color=?, background_color=?, panel_color=?, sidebar_color=?, header_color=?, text_color=?, muted_text_color=?, font_family=?, heading_font=?, radius_px=?, button_radius_px=?, theme_mode=?, menu_order=?, home_label=?, assignments_label=?, results_label=?, messages_label=?, finance_label=?, branding_label=?, custom_css=?, footer_title=?, footer_text=?, footer_contact=?, footer_links=?, platform_credit_enabled=? WHERE id=1""", (school_name,portal_subtitle,primary,accent,bg,panel,sidebar,header,text_color,muted,font_family,heading_font,radius,button_radius,theme_mode,menu_order,labels["home_label"],labels["assignments_label"],labels["results_label"],labels["messages_label"],labels["finance_label"],labels["branding_label"],custom_css,footer_title,footer_text,footer_contact,footer_links,platform_credit_enabled))
+    execute("""UPDATE school_settings SET school_name=?, portal_subtitle=?, primary_color=?, accent_color=?, background_color=?, panel_color=?, sidebar_color=?, header_color=?, text_color=?, muted_text_color=?, font_family=?, heading_font=?, radius_px=?, button_radius_px=?, theme_mode=?, sidebar_style=?, menu_order=?, home_label=?, assignments_label=?, results_label=?, messages_label=?, finance_label=?, branding_label=?, custom_css=?, footer_title=?, footer_text=?, footer_contact=?, footer_links=?, platform_credit_enabled=? WHERE id=1""", (school_name,portal_subtitle,primary,accent,bg,panel,sidebar,header,text_color,muted,font_family,heading_font,radius,button_radius,theme_mode,sidebar_style,menu_order,labels["home_label"],labels["assignments_label"],labels["results_label"],labels["messages_label"],labels["finance_label"],labels["branding_label"],custom_css,footer_title,footer_text,footer_contact,footer_links,platform_credit_enabled))
     audit(current_user()["id"], current_user()["full_name"], "Portal Theme Update", f"Institution-wide interface theme updated for {school_name}.")
     flash("The institution-wide interface has been redesigned and saved.", "success")
     return redirect(url_for("ict_dashboard"))
@@ -2388,7 +2454,13 @@ def ict_landing_branding():
         "landing_panel_color": request.form.get("landing_panel_color", "#ffffff").strip(),
         "landing_text_color": request.form.get("landing_text_color", "#152033").strip(),
         "landing_accent_color": request.form.get("landing_accent_color", "#10a37f").strip(),
+        "landing_font_family": request.form.get("landing_font_family", "Inter").strip() or "Inter",
+        "landing_heading_font": request.form.get("landing_heading_font", "Manrope").strip() or "Manrope",
+        "landing_content_width": max(900,min(1600,int(request.form.get("landing_content_width", "1240") or 1240))),
+        "landing_hero_layout": request.form.get("landing_hero_layout", "split").strip().lower() if request.form.get("landing_hero_layout") else "split",
+        "landing_role_columns": max(1,min(3,int(request.form.get("landing_role_columns", "3") or 3))),
     }
+    if vals["landing_hero_layout"] not in {"split","stacked"}: vals["landing_hero_layout"]="split"
     positions=[request.form.get(f"institution_image_{i}_position","50% 50%").strip()[:40] for i in (1,2,3)]
     paths=[]
     landing_file=request.files.get("landing_background")
@@ -2410,7 +2482,7 @@ def ict_landing_branding():
             folder=UPLOAD_DIR/"institution"; folder.mkdir(exist_ok=True)
             out=folder/f"history-{i}-{uuid.uuid4().hex[:10]}.{ext}"; file.save(out); path="uploads/institution/"+out.name
         paths.append(path)
-    execute("""UPDATE school_settings SET landing_background_color=?,landing_panel_color=?,landing_text_color=?,landing_accent_color=?,landing_background_path=?,institution_image_path=?,institution_image_2_path=?,institution_image_3_path=?,institution_image_1_position=?,institution_image_2_position=?,institution_image_3_position=? WHERE id=1""",(vals["landing_background_color"],vals["landing_panel_color"],vals["landing_text_color"],vals["landing_accent_color"],landing_path,paths[0],paths[1],paths[2],positions[0],positions[1],positions[2]))
+    execute("""UPDATE school_settings SET landing_background_color=?,landing_panel_color=?,landing_text_color=?,landing_accent_color=?,landing_font_family=?,landing_heading_font=?,landing_content_width=?,landing_hero_layout=?,landing_role_columns=?,landing_background_path=?,institution_image_path=?,institution_image_2_path=?,institution_image_3_path=?,institution_image_1_position=?,institution_image_2_position=?,institution_image_3_position=? WHERE id=1""",(vals["landing_background_color"],vals["landing_panel_color"],vals["landing_text_color"],vals["landing_accent_color"],vals["landing_font_family"],vals["landing_heading_font"],vals["landing_content_width"],vals["landing_hero_layout"],vals["landing_role_columns"],landing_path,paths[0],paths[1],paths[2],positions[0],positions[1],positions[2]))
     audit(current_user()["id"],current_user()["full_name"],"Landing Page Branding Update","Public landing colors, history images and image positioning updated.")
     flash("Landing-page branding and institution history visuals saved separately from the logged-in system theme.","success")
     return redirect(url_for("ict_dashboard")+"#branding")

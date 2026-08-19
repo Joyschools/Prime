@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Edit {{ user.full_name }} | People & Access</title><link rel="stylesheet" href="{{ url_for('static',filename='css/style.css') }}"><style>{{theme_style|safe}}</style></head>
-<body class="app-body admin-body">
+<body class="app-body admin-body sidebar-style-{{ school_settings.sidebar_style|default("drawer", true) }}">{% include "_notification_bell.html" %}
 <main class="content" style="max-width:1100px;margin:0 auto">
 <header class="topbar glass slim-topbar"><div class="topbar-left"><div class="topbar-brand"><div class="topbar-title">People & Access</div><div class="topbar-subtitle">Edit institutional profile</div></div></div><div class="topbar-right"><a class="btn btn-ghost mini" href="{{ url_for('admin_dashboard') }}">Back</a></div></header>
 <section class="panel glass" style="margin-top:16px"><div class="panel-head"><div><div class="eyebrow">Identity</div><h2>{{ user.full_name }}</h2><p class="muted">{{ user.role }}{% if user.title %} · {{ user.title }}{% endif %}{% if user.department %} · {{ user.department }}{% endif %}</p></div><span class="status-pill {{ 'status-paid' if user.active else 'status-pending' }}">{{ 'Active' if user.active else 'Archived' }}</span></div>
