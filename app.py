@@ -1314,11 +1314,19 @@ def record_reception_scan(action, token='', device_token='', full_name='', phone
     return {'ok':True,'visit_id':vid,'name':full_name or 'Unregistered person','message':f'{full_name or "Unregistered person"} checked in at {now}.','registered':False}
 
 def specialized_dashboard_for(user) -> str:
+    # Role is the first authority boundary. A staff workspace (including Reception)
+    # must never override an explicitly assigned Admin/ICT/Finance/etc. role.
+    # This prevents an Admin account with legacy/accidental workspace_type=Reception
+    # from being redirected into the Reception desk.
+    role=(user["role"] if user else "")
+    if role in {"Admin","ICT","Finance","Teacher","Student","Parent","Librarian"}:
+        return role_target(role)
     wt=workspace_type_for_user(user)
     if wt=="Driver": return url_for("driver_dashboard")
-    if wt==RECEPTION_WORKSPACE or is_reception_user(user): return url_for("reception_dashboard")
+    if wt==RECEPTION_WORKSPACE or (role not in {"Admin","ICT"} and is_reception_user(user)):
+        return url_for("reception_dashboard")
     if wt in {"Guard","Cook","Other Staff"}: return url_for("workforce_dashboard", kind=wt)
-    return role_target(user["role"])
+    return role_target(role)
 
 def enter_role_without_login(role: str):
     if role == "Parent" and not parent_portal_enabled():
