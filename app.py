@@ -781,6 +781,13 @@ def init_db() -> None:
         ensure_column(conn, "school_settings", "backup_auto_time TEXT NOT NULL DEFAULT '16:30'")
         ensure_column(conn, "school_settings", "tracking_enabled INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "school_settings", "scanner_enabled INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "school_settings", "institution_portal_guide TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "institution_admin_guide TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "institution_ict_guide TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "institution_finance_guide TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "institution_driver_guide_en TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "institution_driver_guide_sw TEXT NOT NULL DEFAULT ''")
+        conn.execute("""CREATE TABLE IF NOT EXISTS theme_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, snapshot_type TEXT NOT NULL, settings_json TEXT NOT NULL, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL)""")
         conn.execute("INSERT OR IGNORE INTO finance_accounts(id, account_name, opening_balance) VALUES(1, 'Institution Operating Account', 0)")
         conn.execute("UPDATE users SET qr_access_token=lower(hex(randomblob(16))) WHERE role!='System' AND (qr_access_token IS NULL OR qr_access_token='')")
         if conn.execute("SELECT COUNT(*) FROM system_help").fetchone()[0] == 0:
@@ -794,6 +801,17 @@ def init_db() -> None:
                 ('AI assistant','AI','AI features require an OpenAI API key on the server environment. The assistant uses the configured provider/model and records a small audit preview without storing API keys in the database.','All',70),
             ]
             conn.executemany('INSERT INTO system_help(title,category,content,role_scope,sort_order) VALUES(?,?,?,?,?)',help_rows)
+
+        guide_seed = [
+            ("portal-user-guide", "Portal Guide", "A professional orientation to the institution portal: sign in through the appropriate role, use the workspace navigation to reach academic, communication, attendance and support services, review notifications and important dates routinely, protect your credentials, and use the institution help centre when a process requires assistance. Administrative, ICT and Finance procedures are intentionally kept within their restricted workspaces and are not published as public navigation links.", "All", 5),
+            ("admin-guide", "Administrator Guide", "Administrators manage institutional structure, accounts, permissions, security controls, backups, public-facing information and system-wide visual settings. Use People & Access for account lifecycle management; use institution and branding controls for public content; review audit and backup facilities regularly; and use direct account access only for legitimate support or oversight. Restricted administrator paths are deliberately omitted from public guides.", "Admin", 15),
+            ("ict-guide", "ICT Guide", "ICT personnel maintain technical operations, user support, attendance technology, device access, public landing-page presentation and institution-wide workspace settings. Use the ICT control deck for technical configuration and support tasks. Avoid exposing administrator-only security controls or finance processes to ordinary portal users.", "ICT", 25),
+            ("finance-guide", "Finance Guide", "Finance personnel manage approved fee structures, payments, ledger entries, institutional income, expenditure, payroll and daily handovers. Post records against the correct category and reference, preserve supporting documentation, and escalate reversals or exceptional corrections to an Administrator. Financial controls are intentionally concealed from public and teaching workspaces.", "Finance", 35),
+            ("driver-guide", "Driver Guide", "English: Start a trip with the assigned vehicle and route, keep the trip active only while operating the institution journey, share location only while on duty when enabled, use attendance check-in/out when required, review notifications and important dates, and stop the trip when the journey ends.\n\nKiswahili: Anzisha safari kwa gari na njia uliyopewa, acha safari ikiwa hai tu unapokuwa unaendesha safari ya taasisi, tumia ushiriki wa eneo ukiwa kazini unapowashwa, tumia kuingia/kutoka kazini inapohitajika, angalia taarifa na tarehe muhimu, kisha simamisha safari safari inapokamilika.", "Driver", 45),
+        ]
+        for slug,title,content,scope,sort_order in guide_seed:
+            if not conn.execute("SELECT 1 FROM system_help WHERE title=? LIMIT 1", (title,)).fetchone():
+                conn.execute('INSERT INTO system_help(title,category,content,role_scope,sort_order) VALUES(?,?,?,?,?)',(title,"Portal Guidance",content,scope,sort_order))
 
         # Convert legacy seeded accounts to an inert System account on this build.
         auth_row = conn.execute("SELECT auth_initialized FROM school_settings WHERE id=1").fetchone()
@@ -1076,10 +1094,11 @@ def persist_auth_cookie(response):
         try:
             body=response.get_data(as_text=True)
             if 'id="prime-global-tools"' not in body and "</body>" in body:
-                shell="""<div id=\"prime-global-tools\" class=\"prime-global-tools\"><a class=\"prime-bell\" href=\"/notifications\" aria-label=\"Notifications\" title=\"Notifications\"><span>●</span><b id=\"prime-notification-count\" class=\"prime-count hidden\"></b></a><button type=\"button\" class=\"prime-shortcuts-btn\" aria-label=\"Open shortcuts\" onclick=\"document.getElementById('prime-shortcuts').classList.toggle('open')\">☰</button><div id=\"prime-shortcuts\" class=\"prime-shortcuts\"><strong>Quick access</strong><a href=\"/calendar\">📅 Calendar</a><a href=\"/notifications\">🔔 Notifications</a><a href=\"/online-classes\">🎥 Live classes</a><a href=\"/groups\">👥 Groups</a><a href=\"/leadership\">🏛 Leadership</a></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-bell span{color:#e11d48;font-size:15px;line-height:1}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}body.auth-body .prime-global-tools{display:none}</style><script>(function(){fetch('/api/notifications').then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});})();</script>"""
+                shell="""<div id=\"prime-global-tools\" class=\"prime-global-tools\"><a class=\"prime-bell\" href=\"/notifications\" aria-label=\"Notifications\" title=\"Notifications\"><span aria-hidden="true">🔔</span><b id=\"prime-notification-count\" class=\"prime-count hidden\"></b></a><button type=\"button\" class=\"prime-shortcuts-btn\" aria-label=\"Open shortcuts\" onclick=\"document.getElementById('prime-shortcuts').classList.toggle('open')\">☰</button><div id=\"prime-shortcuts\" class=\"prime-shortcuts\"><strong>Quick access</strong><a href=\"/calendar\">📅 Calendar</a><a href=\"/notifications\">🔔 Notifications</a><a href=\"/online-classes\">🎥 Live classes</a><a href=\"/groups\">👥 Groups</a><a href=\"/leadership\">🏛 Leadership</a></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-bell span{color:inherit;font-size:18px;line-height:1}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}body.auth-body .prime-global-tools{display:none}</style><script>(function(){fetch('/api/notifications').then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});})();</script>"""
                 response.set_data(body.replace("</body>",shell+"</body>",1))
         except Exception:
             pass
+    response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=(self), geolocation=(self)")
     return response
 
 
@@ -2348,13 +2367,13 @@ def institution():
 
 @app.route("/institution/save", methods=["POST"])
 @login_required
-@role_required("Admin")
+@role_required("Admin", "ICT")
 def institution_save():
-    values={k:request.form.get(k,"").strip() for k in ["institution_history","institution_performance","institution_religion","institution_affiliations","institution_help","institution_contact"]}
+    values={k:request.form.get(k,"").strip() for k in ["institution_history","institution_performance","institution_religion","institution_affiliations","institution_help","institution_contact","institution_portal_guide","institution_admin_guide","institution_ict_guide","institution_finance_guide","institution_driver_guide_en","institution_driver_guide_sw"]}
     image=request.files.get("institution_image"); image_path=school_settings()["institution_image_path"] or ""
     if image and image.filename:
         dest=UPLOAD_DIR/"institution"; dest.mkdir(exist_ok=True); fname=secure_filename(image.filename); out=dest/f"{uuid.uuid4().hex}-{fname}"; image.save(out); image_path="uploads/institution/"+out.name
-    execute("UPDATE school_settings SET institution_history=?, institution_performance=?, institution_religion=?, institution_affiliations=?, institution_help=?, institution_contact=?, institution_image_path=?, institution_enabled=1 WHERE id=1",(values["institution_history"],values["institution_performance"],values["institution_religion"],values["institution_affiliations"],values["institution_help"],values["institution_contact"],image_path))
+    execute("UPDATE school_settings SET institution_history=?, institution_performance=?, institution_religion=?, institution_affiliations=?, institution_help=?, institution_contact=?, institution_portal_guide=?, institution_admin_guide=?, institution_ict_guide=?, institution_finance_guide=?, institution_driver_guide_en=?, institution_driver_guide_sw=?, institution_image_path=?, institution_enabled=1 WHERE id=1",(values["institution_history"],values["institution_performance"],values["institution_religion"],values["institution_affiliations"],values["institution_help"],values["institution_contact"],values["institution_portal_guide"],values["institution_admin_guide"],values["institution_ict_guide"],values["institution_finance_guide"],values["institution_driver_guide_en"],values["institution_driver_guide_sw"],image_path))
     flash("Institution information updated.","success"); return redirect(url_for("institution"))
 
 @app.route("/ict/features", methods=["POST"])
@@ -2405,10 +2424,23 @@ def ict_dashboard():
     return render_template("role_dashboard.html", role="ICT", workspace=workspace_for("ICT"), settings=settings, actor_name=current_user()["full_name"], nav_items=nav_items, onboarding_students=q("SELECT id, full_name, admission_no FROM students ORDER BY full_name"), elections=elections, election_candidates=election_candidates, library_items=library_items, students=students, users=users)
 
 
+def _theme_snapshot_payload(settings):
+    keys=["school_name","portal_subtitle","primary_color","accent_color","background_color","panel_color","sidebar_color","header_color","text_color","muted_text_color","font_family","heading_font","radius_px","button_radius_px","theme_mode","sidebar_style","menu_order","home_label","assignments_label","results_label","messages_label","finance_label","branding_label","custom_css","footer_title","footer_text","footer_contact","footer_links","platform_credit_enabled","landing_background_color","landing_panel_color","landing_text_color","landing_accent_color","landing_font_family","landing_heading_font","landing_content_width","landing_hero_layout","landing_role_columns","landing_background_path","institution_image_path","institution_image_2_path","institution_image_3_path","institution_image_1_position","institution_image_2_position","institution_image_3_position"]
+    return {k: settings[k] for k in keys if k in settings.keys()}
+
+def _save_theme_snapshot(snapshot_type, actor_id):
+    settings=q("SELECT * FROM school_settings WHERE id=1",one=True)
+    if not settings: return
+    execute("INSERT INTO theme_snapshots(snapshot_type,settings_json,created_by) VALUES(?,?,?)",(snapshot_type,json.dumps(_theme_snapshot_payload(settings),ensure_ascii=False),actor_id))
+    # Keep a compact history; the latest three restore points are enough for practical rollback.
+    ids=q("SELECT id FROM theme_snapshots WHERE snapshot_type=? ORDER BY id DESC",(snapshot_type,))
+    for row in ids[3:]: execute("DELETE FROM theme_snapshots WHERE id=?",(row["id"],))
+
 @app.route("/ict/settings", methods=["POST"])
 @login_required
 @role_required("ICT", "Admin")
 def ict_settings():
+    _save_theme_snapshot("workspace", current_user()["id"])
     school_name=request.form.get("school_name", "School").strip() or "School"
     portal_subtitle=request.form.get("portal_subtitle", "School Portal System").strip() or "School Portal System"
     primary=request.form.get("primary_color", "#10a37f").strip() or "#10a37f"
@@ -2448,6 +2480,7 @@ def ict_settings():
 @login_required
 @role_required("ICT","Admin")
 def ict_landing_branding():
+    _save_theme_snapshot("landing", current_user()["id"])
     # Public landing page branding is intentionally separate from the in-system workspace theme.
     vals={
         "landing_background_color": request.form.get("landing_background_color", "#f4f7fb").strip(),
@@ -3649,12 +3682,20 @@ def export_data(kind: str):
 @app.route("/system-help")
 @login_required
 def system_help():
-    user=current_user(); rows=q("SELECT * FROM system_help WHERE active=1 ORDER BY category,sort_order,title")
+    user=current_user(); settings=school_settings(); rows=q("SELECT * FROM system_help WHERE active=1 ORDER BY category,sort_order,title")
     visible=[]
     for row in rows:
         scope=(row["role_scope"] or "All").split(",")
         if "All" in scope or user["role"] in [x.strip() for x in scope]: visible.append(row)
-    return render_template("system_help.html", role=user["role"], workspace=workspace_for(user["role"]), help_rows=visible, settings=school_settings(), actor_name=user["full_name"])
+    role_guides={
+        "Admin": settings["institution_admin_guide"],
+        "ICT": settings["institution_ict_guide"],
+        "Finance": settings["institution_finance_guide"],
+        "Teacher": settings["institution_portal_guide"],
+        "Student": settings["institution_portal_guide"],
+        "Parent": settings["institution_portal_guide"],
+    }
+    return render_template("system_help.html", role=user["role"], workspace=workspace_for(user["role"]), help_rows=visible, settings=settings, actor_name=user["full_name"], role_guide=role_guides.get(user["role"], settings["institution_portal_guide"]))
 
 @app.route("/ai-assistant")
 @login_required
@@ -3788,6 +3829,31 @@ def finance_reverse_ledger(entry_id:int):
     execute("UPDATE finance_ledger SET status='Reversed',reversed_by=?,reversed_at=CURRENT_TIMESTAMP WHERE id=? AND status='Posted'",(current_user()["id"],entry_id))
     audit(current_user()["id"],current_user()["full_name"],"Reverse Finance Transaction",f"Reversed ledger entry #{entry_id}.")
     flash("Transaction reversed by Administrator. Original record remains visible for audit.","success"); return redirect(url_for("finance_dashboard"))
+
+@app.route("/admin/theme/restore/<snapshot_type>", methods=["POST"])
+@login_required
+@role_required("Admin", "ICT")
+def restore_previous_theme(snapshot_type):
+    if snapshot_type not in {"workspace","landing"}: abort(400)
+    snap=q("SELECT * FROM theme_snapshots WHERE snapshot_type=? ORDER BY id DESC LIMIT 1",(snapshot_type,),one=True)
+    if not snap:
+        flash("There is no previous saved setting to restore.","warning")
+        return redirect(request.referrer or url_for("ict_dashboard"))
+    try: data=json.loads(snap["settings_json"])
+    except Exception:
+        flash("The previous setting could not be read.","danger")
+        return redirect(request.referrer or url_for("ict_dashboard"))
+    cols=set(table_columns(get_db(),"school_settings"))
+    allowed={k:v for k,v in data.items() if k in cols}
+    if not allowed:
+        flash("No compatible setting was found in the restore point.","danger")
+        return redirect(request.referrer or url_for("ict_dashboard"))
+    sets=", ".join(f"{k}=?" for k in allowed)
+    execute(f"UPDATE school_settings SET {sets} WHERE id=1",tuple(allowed.values()))
+    execute("DELETE FROM theme_snapshots WHERE id=?",(snap["id"],))
+    audit(current_user()["id"],current_user()["full_name"],"Theme Restore",f"Restored previous {snapshot_type} presentation settings.")
+    flash(f"Previous {snapshot_type} presentation restored.","success")
+    return redirect(request.referrer or url_for("ict_dashboard"))
 
 @app.route("/admin/theme", methods=["POST"])
 @login_required

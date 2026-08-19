@@ -50,6 +50,8 @@
 
   function syncScrollRail() {
     if (!scrollRail || !scrollThumb) return;
+    const touchDevice = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    if (touchDevice || window.innerWidth <= 820) { scrollRail.classList.remove("visible"); scrollRail.style.display = "none"; return; }
     const { scrollTop, viewport, scrollHeight, maxScroll } = getScrollMetrics();
     const scrollable = maxScroll > 4;
     if (!scrollable) {

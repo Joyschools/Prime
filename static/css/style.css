@@ -352,3 +352,15 @@ body.app-body.sidebar-style-hover .sidebar:hover .brand-line>div,body.app-body.s
   .notification-bell{top:10px;right:10px}
   .driver .driver-grid{grid-template-columns:1fr}
 }
+
+/* Desktop-only scroll assist: phones use native touch scrolling and never show the hover rail. */
+.scroll-rail{display:none!important}
+@media (min-width:821px) and (pointer:fine){.scroll-rail{display:flex!important;visibility:hidden;opacity:0;position:fixed;right:5px;top:14px;bottom:14px;width:14px;z-index:1400;align-items:stretch;justify-content:center;transition:opacity .18s ease,visibility .18s ease}.scroll-rail.visible{visibility:visible;opacity:.9}.scroll-track{position:relative;width:4px;height:100%;border-radius:999px;background:color-mix(in srgb,var(--primary-text) 10%,transparent)}.scroll-thumb{position:absolute;left:0;width:4px;min-height:34px;border-radius:999px;background:color-mix(in srgb,var(--primary-text) 42%,transparent);cursor:pointer}.scroll-rail:hover .scroll-thumb,.scroll-rail.dragging .scroll-thumb{background:var(--primary-blue)}}
+@media (max-width:820px){.driver details>div{grid-template-columns:1fr!important}}
+
+.institution-full .info-card p{line-height:1.7}.guide-notice{padding:12px 14px;border-radius:12px;background:var(--text-soft);border:1px solid var(--text-border);font-size:.9rem}
+
+.restore-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px dashed var(--text-border)}
+
+/* Public portal badge uses typography only; notification state belongs exclusively to the actual bell. */
+.auth-body .landing-badge-dot{display:none!important}
