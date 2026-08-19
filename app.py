@@ -2022,10 +2022,30 @@ def finance_match_external(event_id:int):
     if not event or not student: flash('Payment event or student was not found.','danger'); return redirect(url_for('finance_dashboard'))
     poster=current_user()['id']; pid=execute("INSERT INTO payments(student_id,amount,method,reference_no,recorded_by,status) VALUES(?,?,?,?,?,'Posted')",(sid,event['amount'],event['provider'],event['external_reference'],poster)); new_balance=max(0,float(student['balance'] or 0)-float(event['amount'])); execute("UPDATE students SET balance=?,payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(new_balance,'Paid' if new_balance==0 else 'Pending',sid)); execute("UPDATE external_payment_events SET status='Matched',matched_student_id=?,processed_at=CURRENT_TIMESTAMP WHERE id=?",(sid,event_id)); audit(current_user()['id'],current_user()['full_name'],'Match External Payment',f'External payment {event["external_reference"]} matched to {student["admission_no"]}.'); flash('External payment matched and posted.','success'); return redirect(url_for('finance_dashboard'))
 
+@app.route("/receptio")
 @app.route("/reception")
-@app.route("/reception/")  # Accept both direct URL forms so deployment/linking never depends on a trailing slash.
+@app.route("/reception/")  # Accept direct URL, common typo, and trailing-slash forms.
 @login_required
 def reception_dashboard():
+    # Demo/presentation mode only: if the browser is carrying the Admin/ICT
+    # session, resolve /reception to the dedicated Reception account instead
+    # of returning a misleading 403. Normal authenticated deployments keep
+    # the strict role boundary below.
+    if DEMO_AUTH_BYPASS and current_user() and current_user()['role'] in {'Admin','ICT'}:
+        reception_user = q(
+            "SELECT id FROM users WHERE active=1 AND role NOT IN ('System','Admin','ICT','Student','Parent') AND (workspace_type=? OR reception_enabled=1) ORDER BY id LIMIT 1",
+            (RECEPTION_WORKSPACE,),
+            one=True,
+        )
+        if reception_user:
+            session.permanent = True
+            session['user_id'] = reception_user['id']
+            session['active_portal_role'] = RECEPTION_WORKSPACE
+            g.user = q(
+                "SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token FROM users WHERE id=? AND active=1 AND role!='System'",
+                (reception_user['id'],),
+                one=True,
+            )
     if not is_reception_user(current_user()) or current_user()['role'] in {'Admin','ICT'}: abort(403)
     settings=school_settings(); open_visits=q("SELECT * FROM reception_visits WHERE check_in IS NOT NULL AND check_out IS NULL ORDER BY check_in ASC,id ASC"); recent=q("SELECT * FROM reception_visits ORDER BY id DESC LIMIT 120"); staff=q("SELECT * FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System','Admin','ICT') ORDER BY full_name")
     me=current_user(); token=me['qr_access_token'] or uuid.uuid4().hex
