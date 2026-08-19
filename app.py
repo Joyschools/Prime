@@ -19,7 +19,6 @@ from collections.abc import MutableMapping
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
-from html import escape as html_escape
 from typing import Any, Callable, Iterable
 
 from flask import (
@@ -440,9 +439,9 @@ def init_db() -> None:
         ensure_column(conn, "school_settings", "logo_path TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "portal_subtitle TEXT NOT NULL DEFAULT 'School Portal System'")
         ensure_column(conn, "school_settings", "panel_color TEXT NOT NULL DEFAULT '#40414f'")
-        ensure_column(conn, "school_settings", "background_color TEXT NOT NULL DEFAULT '#41434e'")
-        ensure_column(conn, "school_settings", "accent_color TEXT NOT NULL DEFAULT '#3f5fa8'")
-        ensure_column(conn, "school_settings", "primary_color TEXT NOT NULL DEFAULT '#4b6cb7'")
+        ensure_column(conn, "school_settings", "background_color TEXT NOT NULL DEFAULT '#343541'")
+        ensure_column(conn, "school_settings", "accent_color TEXT NOT NULL DEFAULT '#0e8a6d'")
+        ensure_column(conn, "school_settings", "primary_color TEXT NOT NULL DEFAULT '#10a37f'")
         ensure_column(conn, "school_settings", "branding_label TEXT NOT NULL DEFAULT 'Branding'")
         ensure_column(conn, "school_settings", "finance_label TEXT NOT NULL DEFAULT 'Finance'")
         ensure_column(conn, "school_settings", "messages_label TEXT NOT NULL DEFAULT 'Messages'")
@@ -669,9 +668,6 @@ def init_db() -> None:
         ensure_column(conn, "users", "school_unit TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "school_location TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "reception_enabled INTEGER NOT NULL DEFAULT 0")
-        ensure_column(conn, "users", "ui_accent_color TEXT NOT NULL DEFAULT ''")
-        ensure_column(conn, "users", "ui_background_color TEXT NOT NULL DEFAULT ''")
-        ensure_column(conn, "users", "ui_font_family TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "staff_code TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "library_items", "class_level TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "library_items", "subject TEXT NOT NULL DEFAULT ''")
@@ -785,12 +781,6 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_driver_locations_latest ON driver_locations(driver_user_id,recorded_at);
         CREATE TABLE IF NOT EXISTS markbook_entries (id INTEGER PRIMARY KEY AUTOINCREMENT,teacher_user_id INTEGER NOT NULL,class_name TEXT NOT NULL,subject TEXT NOT NULL,student_id INTEGER NOT NULL,assessment TEXT NOT NULL,mark REAL NOT NULL,max_mark REAL NOT NULL DEFAULT 100,status TEXT NOT NULL DEFAULT 'Draft',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS attendance_qr_settings (id INTEGER PRIMARY KEY CHECK(id=1),office_name TEXT NOT NULL DEFAULT 'Main Office',token TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-        CREATE TABLE IF NOT EXISTS attendance_settings (id INTEGER PRIMARY KEY CHECK(id=1),sign_in_time TEXT NOT NULL DEFAULT '08:00',sign_out_time TEXT NOT NULL DEFAULT '17:00',grace_minutes INTEGER NOT NULL DEFAULT 15,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-        INSERT OR IGNORE INTO attendance_settings(id,sign_in_time,sign_out_time,grace_minutes) VALUES(1,'08:00','17:00',15);
-        CREATE TABLE IF NOT EXISTS staff_meetings (id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',starts_at TEXT NOT NULL,ends_at TEXT,room_name TEXT NOT NULL UNIQUE,provider_url TEXT NOT NULL,created_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,active INTEGER NOT NULL DEFAULT 1,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL);
-        CREATE TABLE IF NOT EXISTS staff_duties (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,title TEXT NOT NULL,duty_date TEXT NOT NULL,start_time TEXT,end_time TEXT,location TEXT,notes TEXT NOT NULL DEFAULT '',assigned_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,completed INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(assigned_by) REFERENCES users(id) ON DELETE SET NULL);
-        CREATE INDEX IF NOT EXISTS idx_staff_duties_user_date ON staff_duties(user_id,duty_date,start_time);
-        CREATE INDEX IF NOT EXISTS idx_staff_meetings_start ON staff_meetings(starts_at,active);
         CREATE TABLE IF NOT EXISTS finance_closings (id INTEGER PRIMARY KEY AUTOINCREMENT,closing_date TEXT NOT NULL,submitted_by INTEGER NOT NULL,notes TEXT,status TEXT NOT NULL DEFAULT 'Submitted',submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(submitted_by) REFERENCES users(id) ON DELETE RESTRICT);
         INSERT OR IGNORE INTO attendance_qr_settings(id,office_name,token) VALUES(1,'Main Office',lower(hex(randomblob(16))));
         CREATE TABLE IF NOT EXISTS reception_visits (
@@ -1129,7 +1119,7 @@ def persist_auth_cookie(response):
         try:
             body=response.get_data(as_text=True)
             if 'id="prime-global-tools"' not in body and "</body>" in body:
-                shell='<button id="prime-mobile-nav" class="prime-mobile-nav" type="button" aria-label="Open navigation" aria-expanded="false" title="Open navigation">☰</button><div id="prime-global-tools" class="prime-global-tools"><a class="prime-bell" href="/notifications" aria-label="Notifications" title="Notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><b id="prime-notification-count" class="prime-count hidden"></b></a><button type="button" class="prime-shortcuts-btn" aria-label="Open shortcuts" onclick="document.getElementById(\'prime-shortcuts\').classList.toggle(\'open\')">☰</button><div id="prime-shortcuts" class="prime-shortcuts"><strong>Quick access</strong><a href="/calendar">Calendar</a><a href="/notifications">Notifications</a><a href="/online-classes">Live classes</a><a href="/groups">Groups</a><a href="/leadership">Leadership</a><a href="/staff-hub">Staff hub</a></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#4b6cb7) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-bell svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#4b6cb7) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}.prime-mobile-nav{display:none}.prime-mobile-nav.open{display:grid}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav{display:none}@media(max-width:820px){.prime-shortcuts-btn{display:none!important}.prime-mobile-nav{display:grid;place-items:center;position:fixed;left:12px;top:12px;width:44px;height:44px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:20px;cursor:pointer;z-index:5001}.prime-global-tools{right:12px;top:12px}}</style><script>(function(){var m=document.getElementById(\'prime-mobile-nav\');if(m){if(document.getElementById(\'sidebarToggle\')){m.remove();}else{m.addEventListener(\'click\',function(){document.body.classList.toggle(\'mobile-nav-open\');this.setAttribute(\'aria-expanded\',String(document.body.classList.contains(\'mobile-nav-open\')));});}}fetch(\'/api/notifications\').then(r=>r.json()).then(d=>{var n=document.getElementById(\'prime-notification-count\');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add(\'hidden\');return;}n.classList.remove(\'hidden\');if(c>5){n.textContent=\'\';n.classList.add(\'dot\');}else{n.textContent=String(c);n.classList.remove(\'dot\');}}).catch(function(){});})();</script>'
+                shell="""<button id=\"prime-mobile-nav\" class=\"prime-mobile-nav\" type=\"button\" aria-label=\"Open navigation\" aria-expanded=\"false\" title=\"Open navigation\">☰</button><div id=\"prime-global-tools\" class=\"prime-global-tools\"><a class=\"prime-bell\" href=\"/notifications\" aria-label=\"Notifications\" title=\"Notifications\"><span aria-hidden=\"true\">🔔</span><b id=\"prime-notification-count\" class=\"prime-count hidden\"></b></a><button type=\"button\" class=\"prime-shortcuts-btn\" aria-label=\"Open shortcuts\" onclick=\"document.getElementById('prime-shortcuts').classList.toggle('open')\">☰</button><div id=\"prime-shortcuts\" class=\"prime-shortcuts\"><strong>Quick access</strong><a href=\"/calendar\">📅 Calendar</a><a href=\"/notifications\">🔔 Notifications</a><a href=\"/online-classes\">🎥 Live classes</a><a href=\"/groups\">👥 Groups</a><a href=\"/leadership\">🏛 Leadership</a></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-bell span{color:inherit;font-size:18px;line-height:1}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}.prime-mobile-nav{display:none}.prime-mobile-nav.open{display:grid}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav{display:none}@media(max-width:820px){.prime-shortcuts-btn{display:none!important}.prime-mobile-nav{display:grid;place-items:center;position:fixed;left:12px;top:12px;width:44px;height:44px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:20px;cursor:pointer;z-index:5001}.prime-global-tools{right:12px;top:12px}}</style><script>(function(){var m=document.getElementById('prime-mobile-nav');if(m){if(document.getElementById('sidebarToggle')){m.remove();}else{m.addEventListener('click',function(){document.body.classList.toggle('mobile-nav-open');this.setAttribute('aria-expanded',String(document.body.classList.contains('mobile-nav-open')));});}}fetch('/api/notifications').then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});})();</script>"""
                 response.set_data(body.replace("</body>",shell+"</body>",1))
         except Exception:
             pass
@@ -1188,6 +1178,7 @@ def _demo_role_for_request() -> str:
         (("/admin", "admin_"), "Admin"),
         (("/ict", "ict_"), "ICT"),
         (("/finance", "finance_"), "Finance"),
+        (("/reception", "reception_"), "Reception"),
         (("/teacher", "teacher_", "/dashboard"), "Teacher"),
         (("/student", "student_"), "Student"),
         (("/parent", "parent_"), "Parent"),
@@ -1207,6 +1198,11 @@ def _ensure_demo_identity() -> None:
     if desired == "Parent" and not parent_portal_enabled():
         desired = "Admin"
     candidates = q("SELECT id FROM users WHERE role=? AND active=1 AND role!='System' ORDER BY id", (desired,))
+    if not candidates and desired == "Reception":
+        # Reception is a workspace, not a separate users.role. Resolve a real
+        # receptionist by workspace_type/reception_enabled so /reception cannot
+        # silently fall back to an Administrator account.
+        candidates = q("SELECT id FROM users WHERE active=1 AND role NOT IN ('System','Student','Parent','Admin','ICT') AND (workspace_type='Reception' OR reception_enabled=1) ORDER BY id")
     if not candidates and desired in {"Driver", "Guard", "Cook", "Other Staff"}:
         candidates = q("SELECT id FROM users WHERE active=1 AND role NOT IN ('System','Student','Parent') ORDER BY id")
     if not candidates:
@@ -1407,7 +1403,7 @@ def theme_style(settings=None) -> str:
     settings = settings or school_settings()
     def esc(v):
         return str(v).replace('<','').replace('>','').replace('"','').replace(';','')
-    bg=esc(settings['background_color'] or '#41434e')
+    bg=esc(settings['background_color'] or '#343541')
     panel=esc(settings['panel_color'] or bg)
     sidebar=esc(settings['sidebar_color'] or panel)
     header=esc(settings['header_color'] or panel)
@@ -1420,12 +1416,12 @@ def theme_style(settings=None) -> str:
     header_text=_best_text(header, body_text)
     muted=_best_text(bg, requested_muted, minimum=3.0)
     input_bg=_best_text(panel, bg, minimum=1.2) if _contrast_ratio(panel,bg)<1.12 else bg
-    primary_button_text=_best_text(settings['primary_color'] or '#4b6cb7', '#ffffff')
+    primary_button_text=_best_text(settings['primary_color'] or '#10a37f', '#ffffff')
     heading_font=esc(settings['heading_font'] or settings['font_family'] or 'Inter')
     font_family=esc(settings['font_family'] or 'Inter')
     css=(
         f":root{{--bg:{bg};--panel:{panel};--panel-3:{input_bg};"
-        f"--primary-blue:{esc(settings['primary_color'] or '#4b6cb7')};--deep-accent-blue:{esc(settings['accent_color'] or '#3f5fa8')};"
+        f"--primary-blue:{esc(settings['primary_color'] or '#10a37f')};--deep-accent-blue:{esc(settings['accent_color'] or '#0e8a6d')};"
         f"--primary-text:{body_text};--muted-text:{muted};--panel-text:{panel_text};--sidebar-text:{sidebar_text};--header-text:{header_text};"
         f"--text-soft:{_rgba(body_text,.06)};--text-border:{_rgba(body_text,.14)};--text-hover:{_rgba(body_text,.10)};"
         f"--input-text:{_best_text(input_bg,body_text)};--primary-button-text:{primary_button_text};"
@@ -1457,26 +1453,12 @@ def portal_qr_data_uri() -> str:
     qr=qrcode.QRCode(version=2,box_size=5,border=2); qr.add_data(payload); qr.make(fit=True)
     buf=io.BytesIO(); qr.make_image().save(buf,format="PNG"); return "data:image/png;base64,"+base64.b64encode(buf.getvalue()).decode("ascii")
 
-def user_theme_style(user=None):
-    if not user: return ''
-    row=q("SELECT ui_accent_color,ui_background_color,ui_font_family FROM users WHERE id=?",(user["id"],),one=True)
-    if not row: return ''
-    accent=html_escape(row["ui_accent_color"] or '')
-    bg=html_escape(row["ui_background_color"] or '')
-    font=html_escape(row["ui_font_family"] or '')
-    bits=[]
-    if accent: bits.append(f"--primary-blue:{accent};--deep-accent-blue:{accent};")
-    if bg: bits.append(f"--bg:{bg};")
-    if font: bits.append(f"--font:'{font}',Inter,system-ui,sans-serif;--heading-font:'{font}',Inter,sans-serif;")
-    return '<style>:root{'+''.join(bits)+'}</style>' if bits else ''
-
 @app.context_processor
 def auth_template_context():
     settings=school_settings()
     return {
         "current_user": current_user(), "school_settings": settings, "portal_title": settings["school_name"], "theme_color": settings["primary_color"], "all_roles": ALL_PORTAL_ROLES, "public_roles": PUBLIC_ROLES,
         "theme_style": theme_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(),
-        "user_theme_style": user_theme_style(current_user()),
         "important_dates": important_dates(12, landing=request.path == '/'),
         "notification_count": notification_count(current_user()['id']) if current_user() else 0,
         "role_shortcuts": role_shortcuts(current_user()),
@@ -2022,61 +2004,24 @@ def finance_match_external(event_id:int):
     if not event or not student: flash('Payment event or student was not found.','danger'); return redirect(url_for('finance_dashboard'))
     poster=current_user()['id']; pid=execute("INSERT INTO payments(student_id,amount,method,reference_no,recorded_by,status) VALUES(?,?,?,?,?,'Posted')",(sid,event['amount'],event['provider'],event['external_reference'],poster)); new_balance=max(0,float(student['balance'] or 0)-float(event['amount'])); execute("UPDATE students SET balance=?,payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(new_balance,'Paid' if new_balance==0 else 'Pending',sid)); execute("UPDATE external_payment_events SET status='Matched',matched_student_id=?,processed_at=CURRENT_TIMESTAMP WHERE id=?",(sid,event_id)); audit(current_user()['id'],current_user()['full_name'],'Match External Payment',f'External payment {event["external_reference"]} matched to {student["admission_no"]}.'); flash('External payment matched and posted.','success'); return redirect(url_for('finance_dashboard'))
 
-@app.route("/receptio")
 @app.route("/reception")
-@app.route("/reception/")  # Accept direct URL, common typo, and trailing-slash forms.
+@app.route("/reception/")  # Accept both direct URL forms so deployment/linking never depends on a trailing slash.
 @login_required
 def reception_dashboard():
-    # Demo/presentation mode only: if the browser is carrying the Admin/ICT
-    # session, resolve /reception to the dedicated Reception account instead
-    # of returning a misleading 403. Normal authenticated deployments keep
-    # the strict role boundary below.
-    if DEMO_AUTH_BYPASS and current_user() and current_user()['role'] in {'Admin','ICT'}:
-        reception_user = q(
-            "SELECT id FROM users WHERE active=1 AND role NOT IN ('System','Admin','ICT','Student','Parent') AND (workspace_type=? OR reception_enabled=1) ORDER BY id LIMIT 1",
-            (RECEPTION_WORKSPACE,),
-            one=True,
-        )
-        if reception_user:
-            session.permanent = True
-            session['user_id'] = reception_user['id']
-            session['active_portal_role'] = RECEPTION_WORKSPACE
-            g.user = q(
-                "SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token FROM users WHERE id=? AND active=1 AND role!='System'",
-                (reception_user['id'],),
-                one=True,
-            )
-    if not is_reception_user(current_user()) or current_user()['role'] in {'Admin','ICT'}: abort(403)
-    settings=school_settings(); open_visits=q("SELECT * FROM reception_visits WHERE check_in IS NOT NULL AND check_out IS NULL ORDER BY check_in ASC,id ASC"); recent=q("SELECT * FROM reception_visits ORDER BY id DESC LIMIT 120"); staff=q("SELECT * FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System','Admin','ICT') ORDER BY full_name")
+    # Reception is a secretary/front-office workspace. In the current
+    # no-auth/demo mode, the workspace is opened directly from
+    # its URL. Admin/ICT identities are valid fallback identities for the
+    # reception workspace, so do not contradict login_required() by rejecting
+    # them here with a 403. Normal authentication behaviour remains unchanged
+    # when DEMO_AUTH_BYPASS is disabled.
+    if not is_reception_user(current_user()): abort(403)
+    settings=school_settings(); open_visits=q("SELECT * FROM reception_visits WHERE check_in IS NOT NULL AND check_out IS NULL ORDER BY check_in ASC,id ASC"); recent=q("SELECT * FROM reception_visits ORDER BY id DESC LIMIT 120"); staff=q("SELECT * FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System','Admin') ORDER BY full_name")
     me=current_user(); token=me['qr_access_token'] or uuid.uuid4().hex
     if not me['qr_access_token']:
         execute("UPDATE users SET qr_access_token=? WHERE id=?",(token,me['id']))
     payload='STAFF|'+token+'|'+(me['full_name'] or '')+'|'+(me['title'] or me['role'])+'|'+(me['position_code'] or me['staff_code'] or '')
     code=qrcode.QRCode(version=3,box_size=9,border=3); code.add_data(payload); code.make(fit=True); buf=io.BytesIO(); code.make_image().save(buf,format='PNG'); self_qr_data='data:image/png;base64,'+base64.b64encode(buf.getvalue()).decode('ascii')
-    attendance_cfg=q("SELECT * FROM attendance_settings WHERE id=1",one=True); today=datetime.utcnow().strftime('%Y-%m-%d'); attendance_events=q("SELECT a.*,u.full_name,u.title,u.role FROM attendance_events a JOIN users u ON u.id=a.user_id WHERE date(a.event_at)=? ORDER BY a.event_at DESC,a.id DESC",(today,)); duties=q("SELECT d.*,u.full_name,u.title FROM staff_duties d JOIN users u ON u.id=d.user_id WHERE d.duty_date>=? ORDER BY d.duty_date,d.start_time LIMIT 80",(today,)); meetings=q("SELECT m.*,u.full_name AS creator_name FROM staff_meetings m LEFT JOIN users u ON u.id=m.created_by WHERE m.active=1 ORDER BY m.starts_at LIMIT 30"); return render_template('reception_dashboard.html',settings=settings,actor_name=me['full_name'],role=me['role'],open_visits=open_visits,recent=recent,staff=staff,school_unit=settings['school_name'],school_location=settings['institution_affiliations'] or '',attendance_cfg=attendance_cfg,attendance_events=attendance_events,duties=duties,meetings=meetings)
-
-@app.route("/reception/attendance/record",methods=['POST'])
-@login_required
-def reception_attendance_record():
-    actor=current_user()
-    if not is_reception_user(actor) or actor['role'] in {'Admin','ICT'}: abort(403)
-    uid=request.form.get('user_id',type=int); action=(request.form.get('action') or '').upper(); event_at=(request.form.get('event_at') or '').strip() or datetime.utcnow().isoformat(timespec='seconds')
-    staff=q("SELECT * FROM users WHERE id=? AND active=1 AND role NOT IN ('Student','Parent','System','Admin','ICT')",(uid,),one=True) if uid else None
-    if action not in {'IN','OUT'} or not staff: flash('Select a valid staff member and action.','danger'); return redirect(url_for('reception_dashboard'))
-    existing=q("SELECT * FROM reception_visits WHERE user_id=? AND check_out IS NULL ORDER BY id DESC LIMIT 1",(uid,),one=True)
-    if action=='IN':
-        if existing: flash(f"{staff['full_name']} is already checked in.",'warning')
-        else:
-            execute("INSERT INTO reception_visits(user_id,person_type,full_name,phone,gender,position,staff_code,school_unit,school_location,check_in,source,method) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(uid,'Staff',staff['full_name'],staff['phone'],staff['gender'],staff['title'] or staff['role'],staff['staff_code'] or staff['position_code'],staff['school_unit'] or school_settings()['school_name'],staff['school_location'],event_at,'reception','Desk attendance'))
-            execute("INSERT INTO attendance_events(user_id,action,method,event_at,source,device_note) VALUES(?,?,?,?,?,?)",(uid,'IN','Reception desk',event_at,'reception','Recorded by '+actor['full_name']))
-            notify_users(reception_admin_ids(),'Staff attendance check-in',f"{staff['full_name']} checked in at {event_at}.",url_for('admin_attendance')); flash(f"{staff['full_name']} checked in.",'success')
-    else:
-        if not existing: flash(f"{staff['full_name']} has no open check-in.",'warning')
-        else:
-            execute("UPDATE reception_visits SET check_out=?,source='reception',method='Desk attendance' WHERE id=?",(event_at,existing['id']))
-            execute("INSERT INTO attendance_events(user_id,action,method,event_at,source,device_note) VALUES(?,?,?,?,?,?)",(uid,'OUT','Reception desk',event_at,'reception','Recorded by '+actor['full_name']))
-            notify_users(reception_admin_ids(),'Staff attendance check-out',f"{staff['full_name']} checked out at {event_at}.",url_for('admin_attendance')); flash(f"{staff['full_name']} checked out.",'success')
-    return redirect(url_for('reception_dashboard')+'#attendance-control')
+    return render_template('reception_dashboard.html',settings=settings,actor_name=me['full_name'],role=me['role'],open_visits=open_visits,recent=recent,staff=staff,school_unit=settings['school_name'],school_location=settings['institution_affiliations'] or '',self_qr_data=self_qr_data,self_qr_code=me['position_code'] or me['staff_code'] or '')
 
 @app.route("/reception/scan",methods=["POST"])
 @login_required
@@ -2186,33 +2131,10 @@ def attendance_sync():
 @login_required
 @role_required('Admin','ICT')
 def admin_attendance():
-    events=q("SELECT a.*,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS position,u.school_unit,u.school_location FROM attendance_events a JOIN users u ON u.id=a.user_id ORDER BY a.event_at DESC,a.id DESC LIMIT 500")
+    events=q("SELECT a.*,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS position,u.school_unit,u.school_location FROM attendance_events a JOIN users u ON u.id=a.user_id ORDER BY a.event_at DESC,a.id DESC LIMIT 300")
     visits=q("SELECT * FROM reception_visits ORDER BY COALESCE(check_out,check_in) DESC,id DESC LIMIT 300")
     office=q("SELECT * FROM attendance_qr_settings WHERE id=1",one=True)
-    attendance_cfg=q("SELECT * FROM attendance_settings WHERE id=1",one=True)
-    return render_template('admin_attendance.html',settings=school_settings(),events=events,visits=visits,office=office,attendance_cfg=attendance_cfg,actor_name=current_user()['full_name'],role=current_user()['role'])
-
-@app.route("/admin/attendance/settings",methods=['POST'])
-@login_required
-@role_required('Admin','ICT')
-def admin_attendance_settings():
-    sign_in=(request.form.get('sign_in_time') or '08:00').strip(); sign_out=(request.form.get('sign_out_time') or '17:00').strip()
-    try: grace=max(0,min(240,int(request.form.get('grace_minutes','15') or 15)))
-    except ValueError: grace=15
-    if not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',sign_in) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',sign_out):
-        flash('Use valid 24-hour times such as 08:00 and 17:00.','danger'); return redirect(url_for('admin_attendance'))
-    execute("UPDATE attendance_settings SET sign_in_time=?,sign_out_time=?,grace_minutes=?,updated_at=CURRENT_TIMESTAMP WHERE id=1",(sign_in,sign_out,grace))
-    audit(current_user()['id'],current_user()['full_name'],'Attendance Schedule Updated',f'Staff sign-in {sign_in}, sign-out {sign_out}, grace {grace} minutes.')
-    flash('Attendance schedule saved.','success'); return redirect(url_for('admin_attendance'))
-
-@app.route("/admin/attendance/export")
-@login_required
-@role_required('Admin','ICT')
-def admin_attendance_export():
-    rows=q("SELECT a.event_at,a.action,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS position,u.school_unit,u.school_location,a.method,a.source,a.latitude,a.longitude FROM attendance_events a JOIN users u ON u.id=a.user_id ORDER BY a.event_at DESC,a.id DESC")
-    out=io.StringIO(); w=csv.writer(out); w.writerow(['Date & time','Action','Name','Username','Role','Position','School','Location','Method','Source','Latitude','Longitude'])
-    for r in rows: w.writerow([r[k] for k in ['event_at','action','full_name','username','role','position','school_unit','school_location','method','source','latitude','longitude']])
-    b=io.BytesIO(out.getvalue().encode('utf-8-sig')); b.seek(0); return send_file(b,mimetype='text/csv',as_attachment=True,download_name=f"{secure_filename(school_settings()['school_name'])}-staff-attendance.csv")
+    return render_template('admin_attendance.html',settings=school_settings(),events=events,visits=visits,office=office,actor_name=current_user()['full_name'],role=current_user()['role'])
 
 @app.route("/teacher/assignments",methods=['POST'])
 @login_required
@@ -2648,9 +2570,7 @@ def teacher_dashboard():
     students=q("SELECT * FROM students WHERE active=1 ORDER BY grade,full_name LIMIT 300")
     latest_marks=q("SELECT m.*,s.full_name,s.admission_no FROM markbook_entries m JOIN students s ON s.id=m.student_id WHERE m.teacher_user_id=? ORDER BY m.created_at DESC LIMIT 80",(user["id"],)) if user["role"]=="Teacher" else q("SELECT m.*,s.full_name,s.admission_no,u.full_name AS teacher_name FROM markbook_entries m JOIN students s ON s.id=m.student_id JOIN users u ON u.id=m.teacher_user_id ORDER BY m.created_at DESC LIMIT 80")
     events=q("SELECT * FROM attendance_events WHERE user_id=? ORDER BY event_at DESC,id DESC LIMIT 20",(user["id"],)) if user["role"]=="Teacher" else []
-    duties=q("SELECT d.*,u.full_name AS assigned_name FROM staff_duties d JOIN users u ON u.id=d.user_id WHERE d.user_id=? AND d.duty_date>=date('now') ORDER BY d.duty_date,d.start_time LIMIT 30",(user["id"],)) if user["role"]=="Teacher" else []
-    staff_meetings=q("SELECT * FROM staff_meetings WHERE active=1 AND starts_at>=datetime('now','-1 day') ORDER BY starts_at LIMIT 20")
-    return render_template("teacher_dashboard_pro.html",settings=settings,actor_name=user["full_name"],role=user["role"],assignments=assignments,classes=classes,students=students,latest_marks=latest_marks,events=events,duties=duties,staff_meetings=staff_meetings,workspace_type=workspace_type_for_user(user),teacher_online_url=(assignments[0]["online_url"] if assignments and "online_url" in assignments[0].keys() and assignments[0]["online_url"] else "https://meet.google.com/"),nav_items=navigation_items("Teacher",settings))
+    return render_template("teacher_dashboard_pro.html",settings=settings,actor_name=user["full_name"],role=user["role"],assignments=assignments,classes=classes,students=students,latest_marks=latest_marks,events=events,workspace_type=workspace_type_for_user(user),teacher_online_url=(assignments[0]["online_url"] if assignments and "online_url" in assignments[0].keys() and assignments[0]["online_url"] else "https://meet.google.com/"),nav_items=navigation_items("Teacher",settings))
 
 @app.route("/student-dashboard")
 @login_required
@@ -2966,32 +2886,6 @@ def notifications_api():
     rows=q("SELECT id,title,body,link,created_at,priority FROM notifications WHERE user_id=? AND read_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 8",(current_user()["id"],))
     return jsonify({"count":notification_count(current_user()["id"]),"items":[dict(r) for r in rows]})
 
-@app.route("/staff-hub")
-@login_required
-def staff_hub():
-    user=current_user()
-    if user['role'] in {'Student','Parent'}: abort(403)
-    meetings=q("SELECT m.*,u.full_name AS creator_name FROM staff_meetings m LEFT JOIN users u ON u.id=m.created_by WHERE m.active=1 ORDER BY m.starts_at LIMIT 50"); duties=q("SELECT d.*,u.full_name,u.title FROM staff_duties d JOIN users u ON u.id=d.user_id WHERE d.duty_date>=date('now') ORDER BY d.duty_date,d.start_time LIMIT 120"); staff=q("SELECT id,full_name,role,title,department,workspace_type FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System') ORDER BY full_name")
-    return render_template('staff_hub.html',settings=school_settings(),actor_name=user['full_name'],role=user['role'],meetings=meetings,duties=duties,staff=staff)
-
-@app.route("/staff-hub/meeting/create",methods=['POST'])
-@login_required
-@role_required('Admin','ICT')
-def staff_meeting_create():
-    title=request.form.get('title','').strip() or 'Staff meeting'; starts=request.form.get('starts_at','').strip(); ends=request.form.get('ends_at','').strip(); desc=request.form.get('description','').strip()
-    if not starts: flash('Meeting start time is required.','danger'); return redirect(url_for('staff_hub'))
-    room=f"staff-{uuid.uuid4().hex[:12]}"; provider=school_settings()['online_class_provider'] or 'https://meet.jit.si/'; provider=provider if provider.endswith('/') else provider+'/'
-    execute("INSERT INTO staff_meetings(title,description,starts_at,ends_at,room_name,provider_url,created_by) VALUES(?,?,?,?,?,?,?)",(title,desc,starts,ends,room,provider,current_user()['id']))
-    ids=[r['id'] for r in q("SELECT id FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System')")]; notify_users(ids,'Staff meeting scheduled',f'{title} starts {starts}.',url_for('staff_hub')); flash('Staff meeting created for the whole staff.','success'); return redirect(url_for('staff_hub'))
-
-@app.route("/staff-hub/duty/create",methods=['POST'])
-@login_required
-@role_required('Admin','ICT')
-def staff_duty_create():
-    uid=request.form.get('user_id',type=int); title=request.form.get('title','').strip(); date=request.form.get('duty_date','').strip(); start=request.form.get('start_time','').strip(); end=request.form.get('end_time','').strip(); location=request.form.get('location','').strip(); notes=request.form.get('notes','').strip()
-    if not uid or not title or not date: flash('Staff member, duty title and date are required.','danger'); return redirect(url_for('staff_hub'))
-    execute("INSERT INTO staff_duties(user_id,title,duty_date,start_time,end_time,location,notes,assigned_by) VALUES(?,?,?,?,?,?,?,?)",(uid,title,date,start,end,location,notes,current_user()['id'])); notify_user(uid,'Duty assigned',f'{title} on {date}'+(f' at {start}' if start else ''),url_for('staff_hub')); flash('Duty assigned.','success'); return redirect(url_for('staff_hub'))
-
 @app.route("/online-classes")
 @login_required
 def online_classes():
@@ -3298,9 +3192,6 @@ def profile():
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
         password = request.form.get("password", "")
-        accent = request.form.get("ui_accent_color", "").strip()
-        bg = request.form.get("ui_background_color", "").strip()
-        font = request.form.get("ui_font_family", "").strip() or "Inter"
         if not full_name:
             flash("Full name is required.", "danger")
         else:
@@ -3308,14 +3199,14 @@ def profile():
                 if len(password) < 4:
                     flash("Password must be at least 4 characters.", "danger")
                     return redirect(url_for("profile"))
-                execute("UPDATE users SET full_name = ?, password_hash = ?, ui_accent_color=?, ui_background_color=?, ui_font_family=? WHERE id = ?", (full_name, generate_password_hash(password), accent, bg, font, user["id"]))
+                execute("UPDATE users SET full_name = ?, password_hash = ? WHERE id = ?", (full_name, generate_password_hash(password), user["id"]))
             else:
-                execute("UPDATE users SET full_name = ?, ui_accent_color=?, ui_background_color=?, ui_font_family=? WHERE id = ?", (full_name, accent, bg, font, user["id"]))
+                execute("UPDATE users SET full_name = ? WHERE id = ?", (full_name, user["id"]))
             session["user_id"] = user["id"]
             audit(user["id"], full_name, "Profile Update", "Profile details updated.")
             flash("Profile updated successfully.", "success")
             return redirect(url_for("profile"))
-    profile_user = q("SELECT id, full_name, username, role, created_at, ui_accent_color, ui_background_color, ui_font_family FROM users WHERE id = ?", (user["id"],), one=True)
+    profile_user = q("SELECT id, full_name, username, role, created_at FROM users WHERE id = ?", (user["id"],), one=True)
     return render_template("profile.html", profile_user=profile_user, workspace=workspace_for(profile_user["role"]))
 
 
