@@ -27,17 +27,43 @@
   renderClock();
   setInterval(renderClock, 1000);
 
+  function isPhoneLayout() { return window.matchMedia && window.matchMedia("(max-width: 820px)").matches; }
+
   function openSidebar() {
-    document.body.classList.remove("sidebar-collapsed");
+    if (isPhoneLayout()) {
+      document.body.classList.add("mobile-nav-open");
+      document.body.classList.remove("sidebar-collapsed");
+    } else {
+      document.body.classList.remove("sidebar-collapsed");
+    }
   }
 
   function closeSidebar() {
-    document.body.classList.add("sidebar-collapsed");
+    if (isPhoneLayout()) {
+      document.body.classList.remove("mobile-nav-open");
+    } else {
+      document.body.classList.add("sidebar-collapsed");
+    }
   }
 
   function toggleSidebar() {
-    document.body.classList.toggle("sidebar-collapsed");
+    if (isPhoneLayout()) {
+      document.body.classList.toggle("mobile-nav-open");
+      document.body.classList.remove("sidebar-collapsed");
+    } else {
+      document.body.classList.toggle("sidebar-collapsed");
+    }
   }
+
+  document.addEventListener("click", (event) => {
+    if (!isPhoneLayout()) return;
+    if (!document.body.classList.contains("mobile-nav-open")) return;
+    if (event.target.closest(".sidebar") || event.target.closest(".sidebar-toggle") || event.target.closest("#prime-mobile-nav")) return;
+    document.body.classList.remove("mobile-nav-open");
+  });
+  window.addEventListener("resize", () => {
+    if (!isPhoneLayout()) document.body.classList.remove("mobile-nav-open");
+  });
 
   function getScrollMetrics() {
     const doc = document.documentElement;
