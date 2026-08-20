@@ -818,6 +818,35 @@ def init_db() -> None:
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_scheme_teacher ON scheme_of_work(teacher_user_id,class_name,subject,term,week_no)")
         conn.execute("CREATE TABLE IF NOT EXISTS compulsory_subjects (id INTEGER PRIMARY KEY AUTOINCREMENT, class_name TEXT NOT NULL, subject TEXT NOT NULL, unit_name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(class_name,subject), FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS subjects_catalog (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, subject TEXT NOT NULL UNIQUE, department TEXT NOT NULL DEFAULT '',
+            level_scope TEXT NOT NULL DEFAULT 'All', description TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1,
+            created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS student_subjects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, student_id INTEGER NOT NULL, subject_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Approved' CHECK(status IN ('Approved','Pending','Dropped')), selected_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(student_id,subject_id), FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY(subject_id) REFERENCES subjects_catalog(id) ON DELETE CASCADE, FOREIGN KEY(selected_by) REFERENCES users(id) ON DELETE SET NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_student_subjects_student ON student_subjects(student_id,status)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS student_departments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, student_id INTEGER NOT NULL, department_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Approved' CHECK(status IN ('Approved','Pending','Dropped')), selected_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(student_id,department_id), FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY(department_id) REFERENCES departments(id) ON DELETE CASCADE, FOREIGN KEY(selected_by) REFERENCES users(id) ON DELETE SET NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_student_departments_student ON student_departments(student_id,status)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS student_face_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, student_id INTEGER UNIQUE, user_id INTEGER UNIQUE, image_path TEXT NOT NULL DEFAULT '',
+            descriptor_json TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, enrolled_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )""")
+        ensure_column(conn, "reception_visits", "id_number TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "reception_visits", "visit_reason_code TEXT NOT NULL DEFAULT ''")
         conn.execute("CREATE TABLE IF NOT EXISTS demo_seed_meta (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL DEFAULT 0, seeded_at TEXT)")
         ensure_column(conn, "assignments", "allowed_types TEXT NOT NULL DEFAULT 'pdf,doc,docx,xls,xlsx,ppt,pptx,csv,txt,png,jpg,jpeg,webp,zip'")
         ensure_column(conn, "assignments", "max_submissions INTEGER NOT NULL DEFAULT 2")
@@ -976,7 +1005,7 @@ def init_db() -> None:
         # Optional coherent demonstration institution. Set SEED_DEMO_DATA=0 in production to disable.
         if os.environ.get("SEED_DEMO_DATA", "1") != "0":
             meta = conn.execute("SELECT version FROM demo_seed_meta WHERE id=1").fetchone()
-            if not meta or int(meta["version"] or 0) < 1:
+            if not meta or int(meta["version"] or 0) < 2:
                 demo_teacher_pw = generate_password_hash(os.environ.get("DEMO_TEACHER_PASSWORD", "DemoTeacher@123"))
                 demo_student_pw = generate_password_hash(os.environ.get("DEMO_STUDENT_PASSWORD", "DemoStudent@123"))
                 demo_admin_pw = generate_password_hash(os.environ.get("DEMO_ADMIN_PASSWORD", "DemoAdmin@123"))
@@ -1026,6 +1055,17 @@ def init_db() -> None:
                 conn.execute("INSERT INTO class_teacher_assignments(class_name,teacher_user_id,assigned_by) VALUES('Grade 4',?,?) ON CONFLICT(class_name) DO UPDATE SET teacher_user_id=excluded.teacher_user_id,assigned_by=excluded.assigned_by",(teacher_id,admin_id))
                 conn.execute("INSERT OR IGNORE INTO compulsory_subjects(class_name,subject,unit_name,created_by) VALUES('Grade 4','Mathematics','Core Mathematics',?)",(admin_id,))
                 conn.execute("INSERT OR IGNORE INTO compulsory_subjects(class_name,subject,unit_name,created_by) VALUES('Grade 5','Mathematics','Core Mathematics',?)",(admin_id,))
+                for dept_name,dept_cat in [('Sciences','Academic'),('Languages','Academic'),('Humanities','Academic'),('ICT','Academic'),('Arts','Academic')]:
+                    conn.execute("INSERT OR IGNORE INTO departments(name,category) VALUES(?,?)",(dept_name,dept_cat))
+                demo_subjects=[('Mathematics','Sciences'),('English','Languages'),('Integrated Science','Sciences'),('Social Studies','Humanities'),('Computer Studies','ICT'),('Creative Arts','Arts')]
+                for subj,dept in demo_subjects:
+                    conn.execute("INSERT OR IGNORE INTO subjects_catalog(subject,department,level_scope,created_by) VALUES(?,?,?,?)",(subj,dept,'All',admin_id))
+                cat={r['subject']:r['id'] for r in conn.execute("SELECT id,subject FROM subjects_catalog WHERE subject IN (?,?,?,?,?,?)",tuple(x[0] for x in demo_subjects))}
+                for adm,name,grade,guardian,phone,balance,status in demo_students:
+                    sid=student_rows[adm]['id']
+                    subs=['Mathematics','English','Integrated Science','Social Studies','Computer Studies','Creative Arts'] if grade=='Grade 4' else ['Mathematics','English','Integrated Science','Social Studies']
+                    for subj in subs:
+                        conn.execute("INSERT OR IGNORE INTO student_subjects(student_id,subject_id,status,selected_by) VALUES(?,?,'Approved',?)",(sid,cat[subj],admin_id))
                 # Sample weighted marks for visible ordering.
                 for idx,r in enumerate(conn.execute("SELECT id FROM students WHERE grade='Grade 4' AND active=1 ORDER BY full_name"),1):
                     for assessment,mark,max_mark,weight in [("CAT 1",55+((idx*7)%36),100,20),("CAT 2",48+((idx*9)%46),100,20),("Term Exam",50+((idx*11)%48),100,60)]:
@@ -1050,7 +1090,7 @@ def init_db() -> None:
                     ids=[r["id"] for r in conn.execute("SELECT u.id FROM users u JOIN students s ON s.id=u.student_id WHERE u.role='Student' AND u.active=1 AND lower(s.grade)=lower('Grade 4')")]
                     for uid in ids:
                         conn.execute("INSERT INTO notifications(user_id,title,body,link,priority) VALUES(?,?,?,?,?)",(uid,"Upcoming live Mathematics class",f"Grade 4 Live Mathematics Clinic starts {start.strftime('%A, %d %b at %H:%M')}. Join from your Student Dashboard.",f"/online-class/{sess_id}","High"))
-                conn.execute("INSERT OR REPLACE INTO demo_seed_meta(id,version,seeded_at) VALUES(1,1,CURRENT_TIMESTAMP)")
+                conn.execute("INSERT OR REPLACE INTO demo_seed_meta(id,version,seeded_at) VALUES(1,2,CURRENT_TIMESTAMP)")
                 conn.execute("UPDATE school_settings SET school_name=COALESCE(NULLIF(school_name,''),'Prime Demonstration Institution'), school_fee=CASE WHEN school_fee=0 THEN 20000 ELSE school_fee END WHERE id=1")
                 conn.execute("UPDATE school_settings SET auth_initialized=1, auth_required=1 WHERE id=1")
         # Force SQLite to materialize/validate the final schema after migration cleanup.
@@ -1152,8 +1192,6 @@ def _portal_context_id(token: str):
 
 @app.before_request
 def load_current_user() -> None:
-    if request.path == '/reception' or request.path.startswith('/reception/'):
-        abort(404)
     g.user = None
     context_token = request.args.get("portal_context") or request.form.get("portal_context")
     if context_token:
@@ -1337,9 +1375,9 @@ def workspace_type_for_user(user) -> str:
     return wt or ("Teaching" if user["role"]=="Teacher" else user["role"])
 
 def is_reception_user(user) -> bool:
-    # Reception is intentionally disabled in this release. The attendance QR workflow
-    # remains available separately at /attendance and /admin/attendance.
-    return False
+    if not user:
+        return False
+    return bool(user["reception_enabled"]) or user["role"] in {"Admin", "ICT"}
 
 def staff_code_for(user_role: str, workspace_type: str) -> str:
     prefix={"Teacher":"TCH","Driver":"DRV","Reception":"REC","Guard":"SEC","Cook":"CAT","Finance":"FIN","ICT":"ICT","Librarian":"LIB","Admin":"ADM"}.get(workspace_type if workspace_type in {"Driver","Reception","Guard","Cook"} else user_role,"STF")
@@ -1357,7 +1395,7 @@ def resolve_staff_token(raw_token: str):
 def reception_admin_ids():
     return [r['id'] for r in q("SELECT id FROM users WHERE active=1 AND role='Admin'")]
 
-def record_reception_scan(action, token='', device_token='', full_name='', phone='', gender='', reason='', source='online', method='QR', latitude=None, longitude=None, accuracy=None, event_at=None, school_unit='', school_location=''):
+def record_reception_scan(action, token='', device_token='', full_name='', phone='', gender='', reason='', source='online', method='QR', latitude=None, longitude=None, accuracy=None, event_at=None, school_unit='', school_location='', id_number=''):
     action=str(action or '').upper()
     if action not in {'IN','OUT'}: raise ValueError('Action must be IN or OUT')
     user=resolve_staff_token(token) if token else None
@@ -1366,11 +1404,11 @@ def record_reception_scan(action, token='', device_token='', full_name='', phone
         name=user['full_name']; phone=user['phone'] or ''; gender=user['gender'] or ''; position=user['title'] or user['role']; code=user['position_code'] or user['staff_code'] or ''; unit=user['school_unit'] or school_settings()['school_name']; loc=user['school_location'] or school_settings()['institution_affiliations'] or ''
         open_visit=q("SELECT * FROM reception_visits WHERE user_id=? AND check_out IS NULL ORDER BY id DESC LIMIT 1",(user['id'],),one=True)
         if action=='IN':
-            vid=execute("INSERT INTO reception_visits(user_id,person_type,full_name,phone,gender,reason,position,staff_code,school_unit,school_location,device_token,check_in,source,method,latitude,longitude,accuracy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(user['id'],'Staff',name,phone,gender,reason,position,code,unit,loc,device_token,now,source,method,latitude,longitude,accuracy))
+            vid=execute("INSERT INTO reception_visits(user_id,person_type,full_name,phone,gender,reason,position,staff_code,school_unit,school_location,device_token,check_in,source,method,latitude,longitude,accuracy,id_number) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(user['id'],'Staff',name,phone,gender,reason,position,code,unit,loc,device_token,now,source,method,latitude,longitude,accuracy,id_number))
         elif open_visit:
             vid=open_visit['id']; execute("UPDATE reception_visits SET check_out=?,source=?,method=?,latitude=?,longitude=?,accuracy=? WHERE id=?",(now,source,method,latitude,longitude,accuracy,vid))
         else:
-            vid=execute("INSERT INTO reception_visits(user_id,person_type,full_name,phone,gender,reason,position,staff_code,school_unit,school_location,device_token,check_out,source,method,latitude,longitude,accuracy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(user['id'],'Staff',name,phone,gender,reason,position,code,unit,loc,device_token,now,source,method,latitude,longitude,accuracy))
+            vid=execute("INSERT INTO reception_visits(user_id,person_type,full_name,phone,gender,reason,position,staff_code,school_unit,school_location,device_token,check_out,source,method,latitude,longitude,accuracy,id_number) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(user['id'],'Staff',name,phone,gender,reason,position,code,unit,loc,device_token,now,source,method,latitude,longitude,accuracy,id_number))
         execute("INSERT INTO attendance_events(user_id,action,method,event_at,source,latitude,longitude,device_note) VALUES(?,?,?,?,?,?,?,?)",(user['id'],action,method,now,source,latitude,longitude,(device_token or '')[:120]))
         notify_users(reception_admin_ids(),f'Reception: {name} checked {"IN" if action=="IN" else "OUT"}',f'{name} ({position}) {"arrived at" if action=="IN" else "left"} reception at {now}.',url_for('reception_dashboard'))
         return {'ok':True,'visit_id':vid,'name':name,'position':position,'staff_code':code,'message':f'{name} checked {"in" if action=="IN" else "out"} at {now}.','registered':True}
@@ -1382,9 +1420,9 @@ def record_reception_scan(action, token='', device_token='', full_name='', phone
         notify_users(reception_admin_ids(),'Reception: unregistered person checked OUT',f'{existing["full_name"]} left reception at {now}.',url_for('reception_dashboard'))
         return {'ok':True,'visit_id':existing['id'],'name':existing['full_name'],'message':f'{existing["full_name"]} checked out at {now}.','registered':False}
     if action=='OUT' and not existing:
-        vid=execute("INSERT INTO reception_visits(person_type,full_name,phone,gender,reason,school_unit,school_location,device_token,check_out,source,method,latitude,longitude,accuracy) VALUES('Anonymous',?,?,?,?,?,?,?,?,?,?,?,?,?)",(full_name or 'Unregistered person',phone,gender,reason,unit,loc,device_token,now,source,method,latitude,longitude,accuracy))
+        vid=execute("INSERT INTO reception_visits(person_type,full_name,phone,gender,reason,school_unit,school_location,device_token,check_out,source,method,latitude,longitude,accuracy,id_number) VALUES('Anonymous',?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(full_name or 'Unregistered person',phone,gender,reason,unit,loc,device_token,now,source,method,latitude,longitude,accuracy,id_number))
         return {'ok':True,'visit_id':vid,'name':full_name or 'Unregistered person','message':f'Unregistered checkout captured at {now}.','registered':False}
-    vid=execute("INSERT INTO reception_visits(person_type,full_name,phone,gender,reason,school_unit,school_location,device_token,check_in,source,method,latitude,longitude,accuracy) VALUES('Anonymous',?,?,?,?,?,?,?,?,?,?,?,?,?)",(full_name or 'Unregistered person',phone,gender,reason,unit,loc,device_token,now,source,method,latitude,longitude,accuracy))
+    vid=execute("INSERT INTO reception_visits(person_type,full_name,phone,gender,reason,school_unit,school_location,device_token,check_in,source,method,latitude,longitude,accuracy,id_number) VALUES('Anonymous',?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(full_name or 'Unregistered person',phone,gender,reason,unit,loc,device_token,now,source,method,latitude,longitude,accuracy,id_number))
     notify_users(reception_admin_ids(),'Reception: unregistered person checked IN',f'{full_name or "Unregistered visitor"} arrived at reception at {now}.',url_for('reception_dashboard'))
     return {'ok':True,'visit_id':vid,'name':full_name or 'Unregistered person','message':f'{full_name or "Unregistered person"} checked in at {now}.','registered':False}
 
@@ -2109,22 +2147,73 @@ def finance_match_external(event_id:int):
     if not event or not student: flash('Payment event or student was not found.','danger'); return redirect(url_for('finance_dashboard'))
     poster=current_user()['id']; pid=execute("INSERT INTO payments(student_id,amount,method,reference_no,recorded_by,status) VALUES(?,?,?,?,?,'Posted')",(sid,event['amount'],event['provider'],event['external_reference'],poster)); new_balance=max(0,float(student['balance'] or 0)-float(event['amount'])); execute("UPDATE students SET balance=?,payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(new_balance,'Paid' if new_balance==0 else 'Pending',sid)); execute("UPDATE external_payment_events SET status='Matched',matched_student_id=?,processed_at=CURRENT_TIMESTAMP WHERE id=?",(sid,event_id)); audit(current_user()['id'],current_user()['full_name'],'Match External Payment',f'External payment {event["external_reference"]} matched to {student["admission_no"]}.'); flash('External payment matched and posted.','success'); return redirect(url_for('finance_dashboard'))
 
+@app.route("/admin/subjects", methods=["GET","POST"])
+@login_required
+@role_required("Admin","ICT")
+def admin_subjects():
+    if request.method=='POST':
+        subject=request.form.get('subject','').strip(); dept=request.form.get('department','').strip(); scope=request.form.get('level_scope','All').strip() or 'All'
+        if not subject:
+            flash('Subject name is required.','danger')
+        else:
+            try:
+                execute("INSERT INTO subjects_catalog(subject,department,level_scope,description,created_by) VALUES(?,?,?,?,?)",(subject,dept,scope,request.form.get('description','').strip(),current_user()['id']))
+                flash('Subject published for registration and teaching assignments.','success')
+            except sqlite3.IntegrityError:
+                flash('That subject already exists.','warning')
+        return redirect(url_for('admin_subjects'))
+    rows=q("SELECT s.*,COUNT(ss.id) AS learner_count FROM subjects_catalog s LEFT JOIN student_subjects ss ON ss.subject_id=s.id AND ss.status!='Dropped' GROUP BY s.id ORDER BY s.department,s.subject")
+    return render_template('admin_subjects.html',settings=school_settings(),rows=rows,actor_name=current_user()['full_name'],role=current_user()['role'])
+
+@app.route("/teacher/roster")
+@login_required
+@role_required("Teacher","Admin","ICT")
+def teacher_roster():
+    user=current_user(); assignments=q("SELECT * FROM teacher_assignments WHERE active=1" + (" AND teacher_user_id=?" if user['role']=='Teacher' else "") + " ORDER BY class_name,subject",(user['id'],) if user['role']=='Teacher' else ())
+    selected_class=request.args.get('class_name','').strip(); selected_subject=request.args.get('subject','').strip()
+    if user['role']=='Teacher' and selected_class and not q("SELECT 1 FROM teacher_assignments WHERE teacher_user_id=? AND class_name=? AND subject=? AND active=1",(user['id'],selected_class,selected_subject),one=True): abort(403)
+    students=[]
+    if selected_class and selected_subject:
+        students=q("SELECT s.id,s.full_name,s.admission_no,s.grade,ss.status FROM students s JOIN student_subjects ss ON ss.student_id=s.id JOIN subjects_catalog sc ON sc.id=ss.subject_id WHERE s.active=1 AND lower(s.grade)=lower(?) AND lower(sc.subject)=lower(?) AND ss.status='Approved' ORDER BY s.full_name",(selected_class,selected_subject))
+    return render_template('teacher_roster.html',settings=school_settings(),assignments=assignments,students=students,selected_class=selected_class,selected_subject=selected_subject,actor_name=user['full_name'],role=user['role'])
+
+@app.route("/performance")
+@login_required
+def performance_view():
+    user=current_user(); leadership=(user['leadership_role'] or '').lower()
+    if user['role'] not in {'Admin','ICT','Teacher'} and leadership not in {'dean','hod','deputy','deputy principal','deputy head','principal'}: abort(403)
+    classes=sorted({r['grade'] for r in q("SELECT DISTINCT grade FROM students WHERE active=1")})
+    selected=request.args.get('class_name','').strip() or (classes[0] if classes else '')
+    selected_subject=request.args.get('subject','').strip()
+    senior = user['role'] in {'Admin','ICT'} or leadership in {'dean','hod','deputy','deputy principal','deputy head','principal'}
+    if user['role']=='Teacher' and not senior:
+        assigned_classes=[r['class_name'] for r in q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=?",(user['id'],))]
+        is_class_teacher=selected in assigned_classes
+        if not is_class_teacher:
+            allowed=[r['subject'] for r in q("SELECT subject FROM teacher_assignments WHERE teacher_user_id=? AND class_name=? AND active=1 ORDER BY subject",(user['id'],selected))]
+            if selected_subject not in allowed:
+                selected_subject=allowed[0] if allowed else ''
+            if not allowed: abort(403)
+        else:
+            selected_subject=selected_subject if selected_subject else ''
+    subjects=q("SELECT DISTINCT subject FROM markbook_entries WHERE class_name=? ORDER BY subject",(selected,)) if selected else []
+    if user['role']=='Teacher' and not senior and selected not in assigned_classes:
+        subjects=[{'subject':x['subject']} for x in q("SELECT DISTINCT subject FROM teacher_assignments WHERE teacher_user_id=? AND class_name=? AND active=1 ORDER BY subject",(user['id'],selected))]
+    rows=markbook_class_summary(selected,selected_subject) if selected else []
+    return render_template('performance.html',settings=school_settings(),classes=classes,selected=selected,selected_subject=selected_subject,rows=rows,subjects=subjects,actor_name=user['full_name'],role=user['role'],leadership=user['leadership_role'],senior=senior)
+
 @app.route("/reception")
 @app.route("/reception/")
 @login_required
 def reception_dashboard():
-    abort(404)
-
-# Reception module is intentionally disabled for this release.
-
     if not is_reception_user(current_user()): abort(403)
-    settings=school_settings(); open_visits=q("SELECT * FROM reception_visits WHERE check_in IS NOT NULL AND check_out IS NULL ORDER BY check_in ASC,id ASC"); recent=q("SELECT * FROM reception_visits ORDER BY id DESC LIMIT 120"); staff=q("SELECT * FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System','Admin') ORDER BY full_name")
+    settings=school_settings(); open_visits=q("SELECT * FROM reception_visits WHERE check_in IS NOT NULL AND check_out IS NULL ORDER BY check_in ASC,id ASC"); recent=q("SELECT * FROM reception_visits ORDER BY id DESC LIMIT 120"); staff=q("SELECT * FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System','Admin') ORDER BY full_name"); students=q("SELECT id,full_name,admission_no,grade FROM students WHERE active=1 ORDER BY grade,full_name LIMIT 500"); subjects=q("SELECT * FROM subjects_catalog WHERE active=1 ORDER BY department,subject")
     me=current_user(); token=me['qr_access_token'] or uuid.uuid4().hex
     if not me['qr_access_token']:
         execute("UPDATE users SET qr_access_token=? WHERE id=?",(token,me['id']))
-    payload='STAFF|'+token+'|'+(me['full_name'] or '')+'|'+(me['title'] or me['role'])+'|'+(me['position_code'] or me['staff_code'] or '')
+    office=q("SELECT token FROM attendance_qr_settings WHERE id=1",one=True); payload='ATTEND:'+office['token'] if office else ''
     code=qrcode.QRCode(version=3,box_size=9,border=3); code.add_data(payload); code.make(fit=True); buf=io.BytesIO(); code.make_image().save(buf,format='PNG'); self_qr_data='data:image/png;base64,'+base64.b64encode(buf.getvalue()).decode('ascii')
-    return render_template('reception_dashboard.html',settings=settings,actor_name=me['full_name'],role=me['role'],open_visits=open_visits,recent=recent,staff=staff,school_unit=settings['school_name'],school_location=settings['institution_affiliations'] or '',self_qr_data=self_qr_data,self_qr_code=me['position_code'] or me['staff_code'] or '')
+    return render_template('reception_dashboard.html',settings=settings,actor_name=me['full_name'],role=me['role'],open_visits=open_visits,recent=recent,staff=staff,school_unit=settings['school_name'],school_location=settings['institution_affiliations'] or '',self_qr_data=self_qr_data,self_qr_code=me['position_code'] or me['staff_code'] or '',students=students,subjects=subjects,settings_departments=q("SELECT id,name,category FROM departments WHERE active=1 ORDER BY name"))
 
 @app.route("/reception/scan",methods=["POST"])
 @login_required
@@ -2153,10 +2242,21 @@ def reception_sync():
 @login_required
 def reception_register_visitor():
     if not is_reception_user(current_user()): abort(403)
-    name=request.form.get('full_name','').strip(); reason=request.form.get('reason','').strip()
+    name=request.form.get('full_name','').strip(); reason=request.form.get('reason','').strip(); id_number=request.form.get('id_number','').strip()
     if not name or not reason: flash('Visitor name and reason for visit are required.','danger'); return redirect(url_for('reception_dashboard'))
-    r=record_reception_scan('IN',device_token=request.form.get('device_token','').strip() or uuid.uuid4().hex,full_name=name,phone=request.form.get('phone','').strip(),gender=request.form.get('gender','').strip(),reason=reason,method='Reception desk',school_unit=request.form.get('school_unit',''),school_location=request.form.get('school_location',''))
+    r=record_reception_scan('IN',device_token=request.form.get('device_token','').strip() or uuid.uuid4().hex,full_name=name,phone=request.form.get('phone','').strip(),gender=request.form.get('gender','').strip(),reason=reason,method='Reception desk',school_unit=request.form.get('school_unit',''),school_location=request.form.get('school_location',''),id_number=id_number)
+    if r.get('ok') and r.get('visit_id'):
+        execute("UPDATE reception_visits SET person_type='Visitor',id_number=? WHERE id=?",(id_number,r['visit_id']))
     flash(r['message'],'success'); return redirect(url_for('reception_dashboard'))
+
+@app.route("/reception/visitors/search")
+@login_required
+def reception_visitor_search():
+    if not is_reception_user(current_user()): abort(403)
+    term=request.args.get('q','').strip()
+    if not term: return jsonify([])
+    rows=q("SELECT full_name,id_number,phone,MAX(check_in) AS last_visit,COUNT(*) AS visits FROM reception_visits WHERE person_type='Visitor' AND (full_name LIKE ? OR id_number LIKE ? OR phone LIKE ?) GROUP BY full_name,id_number,phone ORDER BY last_visit DESC LIMIT 20",(f'%{term}%',f'%{term}%',f'%{term}%'))
+    return jsonify([dict(r) for r in rows])
 
 @app.route("/reception/visit/<int:visit_id>/checkout",methods=["POST"])
 @login_required
@@ -2169,6 +2269,28 @@ def reception_checkout_visit(visit_id):
     notify_users(reception_admin_ids(),'Reception: person checked OUT',f"{visit['full_name']} left reception at {now}.",url_for('reception_dashboard'))
     flash(f"{visit['full_name']} checked out.",'success'); return redirect(url_for('reception_dashboard'))
 
+@app.route("/reception/student/register",methods=["POST"])
+@login_required
+def reception_register_student():
+    actor=current_user()
+    if not is_reception_user(actor): abort(403)
+    name=request.form.get('full_name','').strip(); grade=request.form.get('grade','').strip(); adm=request.form.get('admission_no','').strip() or next_admission_no()
+    if not name or not grade: flash('Student name and class/grade are required.','danger'); return redirect(url_for('reception_dashboard'))
+    try:
+        sid=execute("INSERT INTO students(admission_no,full_name,grade,student_phone,student_email,guardian_name,guardian_phone,balance,payment_status,active) VALUES(?,?,?,?,?,?,?,?,?,1)",(adm,name,grade,request.form.get('student_phone','').strip(),request.form.get('student_email','').strip(),request.form.get('guardian_name','').strip(),request.form.get('guardian_phone','').strip(),0,'Paid'))
+        for value in request.form.getlist('department_ids'):
+            try: execute("INSERT OR IGNORE INTO student_departments(student_id,department_id,status,selected_by) VALUES(?,?,?,?)",(sid,int(value),'Approved',actor['id']))
+            except Exception: pass
+        for value in request.form.getlist('subject_ids'):
+            try:
+                execute("INSERT OR IGNORE INTO student_subjects(student_id,subject_id,status,selected_by) VALUES(?,?,?,?)",(sid,int(value),'Approved',actor['id']))
+            except Exception: pass
+        audit(actor['id'],actor['full_name'],'Reception Student Registration',f'{name} registered as {adm} for {grade}.')
+        flash(f'{name} registered successfully. Admission: {adm}','success')
+    except sqlite3.IntegrityError:
+        flash('Admission number already exists.','danger')
+    return redirect(url_for('reception_dashboard'))
+
 @app.route("/reception/staff/register",methods=["POST"])
 @login_required
 def reception_register_staff():
@@ -2179,6 +2301,52 @@ def reception_register_staff():
     if not name or not username or len(password)<4: flash('Staff name, username and a temporary password are required.','danger'); return redirect(url_for('reception_dashboard'))
     if q("SELECT id FROM users WHERE lower(username)=?",(username,),one=True): flash('That username is already in use.','danger'); return redirect(url_for('reception_dashboard'))
     code=staff_code_for(role,workspace); unit=request.form.get('school_unit','').strip() or school_settings()['school_name']; loc=request.form.get('school_location','').strip(); uid=execute("INSERT INTO users(full_name,username,password_hash,role,active,title,department,phone,gender,workspace_type,school_unit,school_location,reception_enabled,position_code,staff_code) VALUES(?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)",(name,username,generate_password_hash(password),role,request.form.get('title','').strip(),request.form.get('department','').strip(),request.form.get('phone','').strip(),request.form.get('gender','').strip(),workspace,unit,loc,1 if workspace=='Reception' else 0,code,code)); execute("UPDATE users SET qr_access_token=? WHERE id=?",(uuid.uuid4().hex,uid)); audit(actor['id'],actor['full_name'],'Reception staff registration',f'{name} registered with staff code {code}.'); flash(f'{name} registered. Staff code: {code}.','success'); return redirect(url_for('reception_dashboard'))
+
+@app.route("/reception/face/enrol",methods=["POST"])
+@login_required
+def reception_face_enrol():
+    if not is_reception_user(current_user()): abort(403)
+    student_id=request.form.get('student_id',type=int); user_id=request.form.get('user_id',type=int); descriptor=request.form.get('descriptor_json','').strip()
+    if not descriptor or (not student_id and not user_id): return jsonify({'ok':False,'message':'A person and a face descriptor are required.'}),400
+    if student_id and not q("SELECT id FROM students WHERE id=?",(student_id,),one=True): return jsonify({'ok':False,'message':'Student not found.'}),404
+    if user_id and not q("SELECT id FROM users WHERE id=? AND active=1",(user_id,),one=True): return jsonify({'ok':False,'message':'User not found.'}),404
+    if student_id:
+        execute("INSERT INTO student_face_profiles(student_id,user_id,image_path,descriptor_json,active) VALUES(?,?,?,?,1) ON CONFLICT(student_id) DO UPDATE SET user_id=excluded.user_id,descriptor_json=excluded.descriptor_json,active=1,enrolled_at=CURRENT_TIMESTAMP",(student_id,user_id or None,'',descriptor))
+    else:
+        execute("INSERT INTO student_face_profiles(user_id,image_path,descriptor_json,active) VALUES(?,?,?,1) ON CONFLICT(user_id) DO UPDATE SET descriptor_json=excluded.descriptor_json,active=1,enrolled_at=CURRENT_TIMESTAMP",(user_id,'',descriptor))
+    return jsonify({'ok':True,'message':'Face profile enrolled.'})
+
+@app.route("/reception/face/verify",methods=["POST"])
+@login_required
+def reception_face_verify():
+    if not is_reception_user(current_user()): abort(403)
+    raw=request.form.get('descriptor_json','').strip(); action=(request.form.get('action') or 'IN').upper()
+    if not raw or action not in {'IN','OUT'}: return jsonify({'ok':False,'message':'Face data and IN/OUT action are required.'}),400
+    try: probe=[float(x) for x in __import__('json').loads(raw)]
+    except Exception: return jsonify({'ok':False,'message':'Invalid face descriptor.'}),400
+    profiles=q("SELECT fp.*,s.full_name AS student_name,s.id AS sid,u.id AS uid,u.full_name AS user_name,u.role FROM student_face_profiles fp LEFT JOIN students s ON s.id=fp.student_id LEFT JOIN users u ON u.id=fp.user_id WHERE fp.active=1")
+    best=None; best_dist=999.0
+    for row in profiles:
+        try: base=[float(x) for x in __import__('json').loads(row['descriptor_json'] or '[]')]
+        except Exception: continue
+        if len(base)!=len(probe): continue
+        dist=(sum((a-b)*(a-b) for a,b in zip(base,probe))/len(probe))**0.5
+        if dist<best_dist: best_dist=dist; best=row
+    if not best or best_dist>0.58: return jsonify({'ok':False,'message':'Face not recognized. Use the institution QR or try again.','distance':round(best_dist,4) if best else None}),403
+    matched_user=q("SELECT * FROM users WHERE id=? AND active=1",(best['uid'],),one=True) if best['uid'] else None
+    if not matched_user and best['sid']:
+        matched_user=q("SELECT * FROM users WHERE student_id=? AND active=1 AND role='Student' ORDER BY id LIMIT 1",(best['sid'],),one=True)
+    if not matched_user: return jsonify({'ok':False,'message':'The recognized person has no active system account.'}),403
+    now=datetime.utcnow().isoformat(timespec='seconds')
+    execute("INSERT INTO attendance_events(user_id,action,method,event_at,source,device_note) VALUES(?,?,?,?,?,?)",(matched_user['id'],action, 'Face recognition', now,'online',f'face-distance={best_dist:.4f}'))
+    return jsonify({'ok':True,'name':matched_user['full_name'],'action':action,'event_at':now,'message':f'{matched_user["full_name"]} checked {"in" if action=="IN" else "out"} successfully.'})
+
+@app.route("/reception/face/profiles")
+@login_required
+def reception_face_profiles():
+    if not is_reception_user(current_user()): abort(403)
+    rows=q("SELECT fp.id,fp.student_id,fp.user_id,fp.descriptor_json,s.full_name AS student_name,u.full_name AS user_name,u.role FROM student_face_profiles fp LEFT JOIN students s ON s.id=fp.student_id LEFT JOIN users u ON u.id=fp.user_id WHERE fp.active=1 ORDER BY COALESCE(s.full_name,u.full_name)")
+    return jsonify([dict(r) for r in rows])
 
 @app.route("/reception/export")
 @login_required
@@ -2198,8 +2366,8 @@ def attendance_center():
 
 @app.route("/attendance/office-qr")
 @login_required
-@role_required("Admin","ICT")
 def attendance_office_qr():
+    if not is_reception_user(current_user()): abort(403)
     office=q("SELECT * FROM attendance_qr_settings WHERE id=1",one=True)
     if not office: abort(404)
     img=qrcode.make(f"ATTEND:{office['token']}"); buf=io.BytesIO(); img.save(buf,format='PNG'); buf.seek(0)
@@ -2753,6 +2921,7 @@ def admin_dashboard():
         election_candidates=election_candidates,
         library_items=library_items,
         departments=q("SELECT id, name, category, active FROM departments WHERE active=1 ORDER BY name"),
+        subjects_catalog=q("SELECT id, subject, department, level_scope FROM subjects_catalog WHERE active=1 ORDER BY department,subject"),
         guardian_links=q("""SELECT gl.*, gu.full_name AS guardian_name, gu.username AS guardian_username, st.full_name AS student_name, st.admission_no
                             FROM guardian_links gl JOIN users gu ON gu.id=gl.guardian_user_id
                             JOIN students st ON st.id=gl.student_id ORDER BY gl.created_at DESC"""),
@@ -2770,12 +2939,18 @@ def teacher_dashboard():
     classes=sorted({r["class_name"] for r in assignments})
     assigned_class_rows=q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=? ORDER BY class_name",(user['id'],)) if user['role']=='Teacher' else q("SELECT class_name FROM class_teacher_assignments ORDER BY class_name")
     class_teacher_classes=[r['class_name'] for r in assigned_class_rows]
-    students=q("SELECT id,full_name,admission_no,grade FROM students WHERE active=1 AND grade IN ({}) ORDER BY grade,full_name".format(','.join('?'*len(classes))),tuple(classes)) if classes else []
+    students=q("SELECT s.id,s.full_name,s.admission_no,s.grade,COUNT(ss.id) AS subject_count FROM students s LEFT JOIN student_subjects ss ON ss.student_id=s.id AND ss.status='Approved' WHERE s.active=1 AND s.grade IN ({}) GROUP BY s.id ORDER BY s.grade,s.full_name".format(','.join('?'*len(classes))),tuple(classes)) if classes else []
     latest_marks=q("SELECT m.*,s.full_name FROM markbook_entries m JOIN students s ON s.id=m.student_id WHERE m.teacher_user_id=? ORDER BY m.created_at DESC LIMIT 80",(user['id'],))
     events=q("SELECT * FROM attendance_events WHERE user_id=? ORDER BY event_at DESC,id DESC LIMIT 20",(user["id"],)) if user["role"]=="Teacher" else []
     upcoming=q("SELECT * FROM class_sessions WHERE teacher_user_id=? AND active=1 AND (starts_at>=datetime('now') OR ends_at>=datetime('now')) ORDER BY starts_at LIMIT 8",(user['id'],)) if user['role']=='Teacher' else []
     schemes=q("SELECT * FROM scheme_of_work WHERE teacher_user_id=? ORDER BY updated_at DESC,id DESC LIMIT 8",(user['id'],)) if user['role']=='Teacher' else []
-    summaries={cls:markbook_class_summary(cls) for cls in classes[:12]}
+    summaries={}
+    for cls in classes[:12]:
+        if cls in class_teacher_classes:
+            summaries[cls]=markbook_class_summary(cls)
+        else:
+            teacher_subject=q("SELECT subject FROM teacher_assignments WHERE teacher_user_id=? AND class_name=? AND active=1 ORDER BY subject LIMIT 1",(user['id'],cls),one=True) if user['role']=='Teacher' else None
+            summaries[cls]=markbook_class_summary(cls,teacher_subject['subject']) if teacher_subject else []
     return render_template("teacher_dashboard_pro.html",settings=settings,school_settings=settings,actor_name=user["full_name"],role=user["role"],assignments=assignments,classes=classes,students=students,latest_marks=latest_marks,events=events,workspace_type=workspace_type_for_user(user),upcoming=upcoming,schemes=schemes,class_teacher_classes=class_teacher_classes,mark_summaries=summaries,nav_items=navigation_items("Teacher",settings))
 
 @app.route("/student-dashboard")
@@ -2793,11 +2968,12 @@ def student_dashboard():
     elections=q("SELECT * FROM elections WHERE visible=1 ORDER BY created_at DESC") if school_settings()["elections_enabled"] else []
     election_candidates={e["id"]:q("SELECT * FROM election_candidates WHERE election_id=? AND active=1 ORDER BY position,name",(e["id"],)) for e in elections}; voted_positions={(r["election_id"], r["position"]) for r in q("SELECT election_id, position FROM election_votes WHERE voter_user_id=?",(current_user()["id"],))}
     library_items=q("SELECT * FROM library_items WHERE active=1 ORDER BY category,title LIMIT 80") if school_settings()["library_enabled"] else []
+    student_subjects=q("SELECT sc.id,sc.subject,sc.department,ss.status FROM student_subjects ss JOIN subjects_catalog sc ON sc.id=ss.subject_id WHERE ss.student_id=? AND ss.status!='Dropped' ORDER BY sc.department,sc.subject",(student['id'],))
     online_classes=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.active=1 AND lower(cs.class_name)=lower(?) AND (cs.starts_at>=datetime('now','-1 day') OR cs.ends_at>=datetime('now','-1 day') OR cs.ends_at IS NULL) ORDER BY cs.starts_at",(student["grade"],))
     mark_rows=markbook_class_summary(student['grade'])
     my_rank=next((r for r in mark_rows if r['student_id']==student['id']),None)
     settings=school_settings(); nav_items=navigation_items("Student",settings)
-    return render_template("student_dashboard.html",school_settings=settings,settings=settings,role="Student",workspace=workspace_for("Student"),student=student,assignments=assignments,submissions=submissions,results=results,result_releases=result_releases,messages=messages,elections=elections,election_candidates=election_candidates,voted_positions=voted_positions,library_items=library_items,online_classes=online_classes,actor_name=student["full_name"],nav_items=nav_items,my_rank=my_rank,mark_rows=mark_rows)
+    return render_template("student_dashboard.html",school_settings=settings,settings=settings,role="Student",workspace=workspace_for("Student"),student=student,assignments=assignments,submissions=submissions,results=results,result_releases=result_releases,messages=messages,elections=elections,election_candidates=election_candidates,voted_positions=voted_positions,library_items=library_items,online_classes=online_classes,student_subjects=student_subjects,actor_name=student["full_name"],nav_items=nav_items,my_rank=my_rank,mark_rows=mark_rows)
 
 @app.route("/parent-dashboard")
 @login_required
@@ -3538,6 +3714,56 @@ def add_student():
     return redirect(request.referrer or url_for("dashboard"))
 
 
+@app.route("/students/<int:student_id>/subjects", methods=["GET","POST"])
+@login_required
+def student_subjects_manage(student_id:int):
+    student=q("SELECT * FROM students WHERE id=?",(student_id,),one=True)
+    if not student: abort(404)
+    user=current_user(); role=user["role"]
+    allowed_editor=role in {"Admin","ICT"} or is_reception_user(user)
+    is_self=(role=="Student" and user["student_id"]==student_id)
+    if not allowed_editor and not is_self: abort(403)
+    subjects=q("SELECT * FROM subjects_catalog WHERE active=1 ORDER BY department,subject")
+    departments=q("SELECT id,name,category FROM departments WHERE active=1 ORDER BY name")
+    current_departments=q("SELECT department_id,status FROM student_departments WHERE student_id=? AND status!='Dropped'",(student_id,))
+    current_department_ids={r['department_id'] for r in current_departments}
+    current=q("SELECT ss.id,ss.subject_id,ss.status,sc.subject,sc.department FROM student_subjects ss JOIN subjects_catalog sc ON sc.id=ss.subject_id WHERE ss.student_id=? AND ss.status!='Dropped' ORDER BY sc.subject",(student_id,))
+    current_ids={r['subject_id'] for r in current}
+    if request.method=='POST':
+        status='Approved' if allowed_editor else 'Pending'
+        selected_departments=[]
+        for value in request.form.getlist('department_ids'):
+            try: selected_departments.append(int(value))
+            except Exception: pass
+        selected_departments=set(selected_departments)
+        for did in selected_departments:
+            if did in {x['id'] for x in departments}:
+                execute("INSERT INTO student_departments(student_id,department_id,status,selected_by) VALUES(?,?,?,?) ON CONFLICT(student_id,department_id) DO UPDATE SET status=excluded.status,selected_by=excluded.selected_by,updated_at=CURRENT_TIMESTAMP",(student_id,did,status,user['id']))
+        if selected_departments:
+            placeholders=','.join('?'*len(selected_departments)); execute(f"UPDATE student_departments SET status='Dropped',updated_at=CURRENT_TIMESTAMP WHERE student_id=? AND department_id NOT IN ({placeholders})",(student_id,*selected_departments))
+        else:
+            execute("UPDATE student_departments SET status='Dropped',updated_at=CURRENT_TIMESTAMP WHERE student_id=?",(student_id,))
+        selected=[]
+        for value in request.form.getlist('subject_ids'):
+            try: selected.append(int(value))
+            except Exception: pass
+        selected=set(selected)
+        for sid in selected:
+            if sid in {x['id'] for x in subjects}:
+                execute("INSERT INTO student_subjects(student_id,subject_id,status,selected_by) VALUES(?,?,?,?) ON CONFLICT(student_id,subject_id) DO UPDATE SET status=excluded.status,selected_by=excluded.selected_by,updated_at=CURRENT_TIMESTAMP",(student_id,sid,status,user['id']))
+        if selected:
+            placeholders=','.join('?'*len(selected))
+            params=(student_id,*selected)
+            execute(f"UPDATE student_subjects SET status='Dropped',updated_at=CURRENT_TIMESTAMP WHERE student_id=? AND subject_id NOT IN ({placeholders})",params)
+        else:
+            execute("UPDATE student_subjects SET status='Dropped',updated_at=CURRENT_TIMESTAMP WHERE student_id=?",(student_id,))
+        if is_self:
+            flash("Subject selection submitted for approval.","success")
+        else:
+            flash("Student subject enrolment updated.","success")
+        return redirect(url_for('student_subjects_manage',student_id=student_id))
+    return render_template('student_subjects.html',settings=school_settings(),student=student,subjects=subjects,current=current,current_ids=current_ids,departments=departments,current_department_ids=current_department_ids,role=role,actor_name=user['full_name'],self_registration=is_self)
+
 @app.route("/students/<int:student_id>")
 @login_required
 def student_profile(student_id:int):
@@ -3550,8 +3776,10 @@ def student_profile(student_id:int):
     payments=q("SELECT p.*,u.full_name AS recorder FROM payments p LEFT JOIN users u ON u.id=p.recorded_by WHERE p.student_id=? ORDER BY p.created_at DESC,p.id DESC",(student_id,))
     records=q("SELECT r.*,u.full_name AS author,u.role AS author_role FROM student_records r JOIN users u ON u.id=r.author_user_id WHERE r.student_id=? AND (r.visible_to_parent=1 OR ? IN ('Admin','Teacher','ICT') OR r.author_user_id=?) ORDER BY r.created_at DESC,r.id DESC",(student_id,role,user["id"]))
     results=q("SELECT * FROM exam_results WHERE student_id=? ORDER BY term DESC,subject",(student_id,))
+    student_departments=q("SELECT d.name,d.category,sd.status FROM student_departments sd JOIN departments d ON d.id=sd.department_id WHERE sd.student_id=? AND sd.status!='Dropped' ORDER BY d.name",(student_id,))
+    subjects=q("SELECT sc.subject,sc.department,ss.status FROM student_subjects ss JOIN subjects_catalog sc ON sc.id=ss.subject_id WHERE ss.student_id=? AND ss.status!='Dropped' ORDER BY sc.department,sc.subject",(student_id,))
     awards=[r for r in records if r['category']=='Award']; discipline=[r for r in records if r['category']=='Indiscipline']
-    return render_template('student_profile.html',student=student,guardians=guardians,payments=payments,records=records,results=results,awards=awards,discipline=discipline,settings=school_settings(),actor_name=user['full_name'],role=role,can_edit=role in {'Admin','ICT'},can_write_record=role in {'Admin','Teacher'},parent_visible_count=sum(1 for r in records if r['visible_to_parent']))
+    return render_template('student_profile.html',student=student,guardians=guardians,payments=payments,records=records,results=results,awards=awards,discipline=discipline,settings=school_settings(),actor_name=user['full_name'],role=role,can_edit=role in {'Admin','ICT'},can_write_record=role in {'Admin','Teacher'},parent_visible_count=sum(1 for r in records if r['visible_to_parent']),subjects=subjects,student_departments=student_departments)
 
 @app.route("/students/<int:student_id>/record", methods=["POST"])
 @login_required
@@ -4013,6 +4241,14 @@ def add_user():
             admission_no = request.form.get("admission_no", "").strip() or next_admission_no()
             fee = float(school_settings()["school_fee"] or 0)
             student_id = execute("INSERT INTO students(admission_no,full_name,grade,student_phone,student_email,medical_condition,notes,payment_status,balance,active) VALUES(?,?,?,?,?,?,?,'Pending',?,1)", (admission_no, full_name, grade, request.form.get("phone", "").strip(), request.form.get("email", "").strip(), request.form.get("medical_notes", "").strip(), request.form.get("accountability_notes", "").strip(), fee))
+            for dept_value in request.form.getlist('department_ids'):
+                try: execute("INSERT OR IGNORE INTO student_departments(student_id,department_id,status,selected_by) VALUES(?,?,?,?)",(student_id,int(dept_value),'Approved',actor['id']))
+                except Exception: pass
+            for subject_value in request.form.getlist('subject_ids'):
+                try:
+                    execute("INSERT OR IGNORE INTO student_subjects(student_id,subject_id,status,selected_by) VALUES(?,?,?,?)",(student_id,int(subject_value),'Approved',actor['id']))
+                except Exception:
+                    pass
         school_unit=(request.form.get("school_unit","").strip() or school_settings()["school_name"])
         school_location=request.form.get("school_location","").strip()
         position_code=staff_code_for(role, workspace_type) if role not in {"Student","Parent","System"} else ""
