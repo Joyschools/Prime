@@ -49,3 +49,15 @@ The available execution environment for this packaging pass does not have Flask 
 - On phones, the desktop QR card is hidden and the reception workspace remains scanner-first for check-in/out.
 - Reception scanning accepts the same staff QR generated from the user profile/attendance QR endpoint, including Admin.
 - Registered staff continue to be resolved from the QR record rather than treated as generic Admin/anonymous users.
+
+## V17 teacher / student teaching upgrade
+- Rebuilt the Teacher Dashboard into a teaching cockpit with clearer hierarchy and faster access to classes, live lessons, attendance, markbook, Scheme of Work and communication.
+- Added weighted markbook computation: each assessment can carry a percentage weight; marks are normalized, combined, graded and ordered automatically.
+- Added class performance summary / print view at `/teacher/markbook/summary`.
+- Added Scheme of Work planning at `/teacher/scheme-of-work` with week, topic, objectives, activities, resources, assessment and status.
+- Added Admin / ICT class-teacher assignment page at `/admin/class-teachers`. Only the assigned class teacher can access the complete class register.
+- Reworked class attendance so subject teachers do not receive the full register unless Admin assigns them as class teacher.
+- Added full-page live classrooms at `/online-class/<id>` using Jitsi, with a broad stage, teacher/student role handling, class roster, full-screen room, screen sharing and moderation controls available inside the live room.
+- Rebuilt Student Dashboard with live-class access, performance position, assignments, results, digital resources, school communication and shortcuts.
+- Attendance QR now stores a human-readable location label when the phone can reverse-geocode its high-accuracy coordinates, while retaining raw latitude/longitude and offering a map link to Admin.
+- Disabled the Reception module completely for this release; `/reception*` now returns 404 and active navigation no longer exposes it.

@@ -800,6 +800,23 @@ def init_db() -> None:
         INSERT OR IGNORE INTO payment_integrations(id,provider) VALUES(1,'Manual');
         """)
         ensure_column(conn, "teacher_assignments", "online_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "markbook_entries", "weight REAL NOT NULL DEFAULT 100")
+        ensure_column(conn, "attendance_events", "location_label TEXT NOT NULL DEFAULT ''")
+        conn.execute("""CREATE TABLE IF NOT EXISTS class_teacher_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, class_name TEXT NOT NULL UNIQUE, teacher_user_id INTEGER NOT NULL,
+            assigned_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(assigned_by) REFERENCES users(id) ON DELETE SET NULL
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS scheme_of_work (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, teacher_user_id INTEGER NOT NULL, class_name TEXT NOT NULL,
+            subject TEXT NOT NULL, term TEXT NOT NULL DEFAULT 'Current Term', week_no INTEGER NOT NULL DEFAULT 1,
+            topic TEXT NOT NULL DEFAULT '', objectives TEXT NOT NULL DEFAULT '', activities TEXT NOT NULL DEFAULT '',
+            resources TEXT NOT NULL DEFAULT '', assessment TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'Planned',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_scheme_teacher ON scheme_of_work(teacher_user_id,class_name,subject,term,week_no)")
         ensure_column(conn, "users", "workspace_type TEXT NOT NULL DEFAULT 'Teaching'")
         ensure_column(conn, "school_settings", "offline_enabled INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "school_settings", "backup_reminder_time TEXT NOT NULL DEFAULT '16:00'")
@@ -1048,6 +1065,8 @@ def _portal_context_id(token: str):
 
 @app.before_request
 def load_current_user() -> None:
+    if request.path == '/reception' or request.path.startswith('/reception/'):
+        abort(404)
     g.user = None
     context_token = request.args.get("portal_context") or request.form.get("portal_context")
     if context_token:
@@ -1231,13 +1250,9 @@ def workspace_type_for_user(user) -> str:
     return wt or ("Teaching" if user["role"]=="Teacher" else user["role"])
 
 def is_reception_user(user) -> bool:
-    if not user:
-        return False
-    if user["role"] in {"Admin", "ICT"}:
-        return True
-    wt=workspace_type_for_user(user)
-    row=q("SELECT reception_enabled FROM users WHERE id=?",(user["id"],),one=True)
-    return wt==RECEPTION_WORKSPACE or bool(row and row["reception_enabled"])
+    # Reception is intentionally disabled in this release. The attendance QR workflow
+    # remains available separately at /attendance and /admin/attendance.
+    return False
 
 def staff_code_for(user_role: str, workspace_type: str) -> str:
     prefix={"Teacher":"TCH","Driver":"DRV","Reception":"REC","Guard":"SEC","Cook":"CAT","Finance":"FIN","ICT":"ICT","Librarian":"LIB","Admin":"ADM"}.get(workspace_type if workspace_type in {"Driver","Reception","Guard","Cook"} else user_role,"STF")
@@ -1289,7 +1304,6 @@ def record_reception_scan(action, token='', device_token='', full_name='', phone
 def specialized_dashboard_for(user) -> str:
     wt=workspace_type_for_user(user)
     if wt=="Driver": return url_for("driver_dashboard")
-    if wt==RECEPTION_WORKSPACE or is_reception_user(user): return url_for("reception_dashboard")
     if wt in {"Guard","Cook","Other Staff"}: return url_for("workforce_dashboard", kind=wt)
     return role_target(user["role"])
 
@@ -1979,16 +1993,26 @@ def communication_read(message_id:int):
 @login_required
 @role_required('Teacher')
 def teacher_class_attendance():
-    cls=request.values.get('class_name','').strip(); subject=request.values.get('subject','').strip(); date=request.values.get('attendance_date','').strip() or datetime.utcnow().strftime('%Y-%m-%d'); classes=[r['grade'] for r in q('SELECT DISTINCT grade FROM students WHERE active=1 ORDER BY grade')]; students=q('SELECT id,full_name,admission_no FROM students WHERE active=1 AND grade=? ORDER BY full_name',(cls,)) if cls else []
+    user=current_user()
+    assigned=[r['class_name'] for r in q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=? ORDER BY class_name",(user['id'],))]
+    cls=request.values.get('class_name','').strip()
+    if cls and cls not in assigned:
+        flash('Only the Admin-assigned class teacher can access the full class register for that class.','danger')
+        return redirect(url_for('teacher_dashboard'))
+    subject=request.values.get('subject','').strip() or 'General'
+    date=request.values.get('attendance_date','').strip() or datetime.utcnow().strftime('%Y-%m-%d')
+    students=q('SELECT id,full_name,admission_no FROM students WHERE active=1 AND grade=? ORDER BY full_name',(cls,)) if cls else []
+    existing={r['student_id']:r for r in q('SELECT * FROM class_attendance WHERE teacher_user_id=? AND class_name=? AND subject=? AND attendance_date=?',(user['id'],cls,subject,date))} if cls else {}
     if request.method=='POST':
         saved=0
         for st in students:
             status=request.form.get(f"attendance_{st['id']}",'Absent')
             if status not in {'Present','Absent','Late','Excused'}: status='Absent'
             note=request.form.get(f"note_{st['id']}",'').strip()
-            execute("INSERT INTO class_attendance(teacher_user_id,student_id,class_name,subject,attendance_date,status,note) VALUES(?,?,?,?,?,?,?) ON CONFLICT(teacher_user_id,student_id,class_name,subject,attendance_date) DO UPDATE SET status=excluded.status,note=excluded.note",(current_user()['id'],st['id'],cls,subject or 'General',date,status,note)); saved+=1
-        flash(f'{saved} class attendance records saved.','success'); return redirect(url_for('teacher_class_attendance',class_name=cls,subject=subject,attendance_date=date))
-    return render_template('teacher_class_attendance.html',settings=school_settings(),actor_name=current_user()['full_name'],classes=classes,students=students,selected_class=cls,subject=subject,attendance_date=date,role=current_user()['role'])
+            execute("INSERT INTO class_attendance(teacher_user_id,student_id,class_name,subject,attendance_date,status,note) VALUES(?,?,?,?,?,?,?) ON CONFLICT(teacher_user_id,student_id,class_name,subject,attendance_date) DO UPDATE SET status=excluded.status,note=excluded.note",(user['id'],st['id'],cls,subject,date,status,note)); saved+=1
+        flash(f'{saved} class attendance records saved.','success')
+        return redirect(url_for('teacher_class_attendance',class_name=cls,subject=subject,attendance_date=date))
+    return render_template('teacher_class_attendance.html',settings=school_settings(),actor_name=user['full_name'],assigned_classes=assigned,classes=assigned,students=students,selected_class=cls,subject=subject,attendance_date=date,existing=existing,role=user['role'])
 
 @app.route("/finance/external/<int:event_id>/match",methods=['POST'])
 @login_required
@@ -1999,9 +2023,13 @@ def finance_match_external(event_id:int):
     poster=current_user()['id']; pid=execute("INSERT INTO payments(student_id,amount,method,reference_no,recorded_by,status) VALUES(?,?,?,?,?,'Posted')",(sid,event['amount'],event['provider'],event['external_reference'],poster)); new_balance=max(0,float(student['balance'] or 0)-float(event['amount'])); execute("UPDATE students SET balance=?,payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(new_balance,'Paid' if new_balance==0 else 'Pending',sid)); execute("UPDATE external_payment_events SET status='Matched',matched_student_id=?,processed_at=CURRENT_TIMESTAMP WHERE id=?",(sid,event_id)); audit(current_user()['id'],current_user()['full_name'],'Match External Payment',f'External payment {event["external_reference"]} matched to {student["admission_no"]}.'); flash('External payment matched and posted.','success'); return redirect(url_for('finance_dashboard'))
 
 @app.route("/reception")
-@app.route("/reception/")  # Accept both direct URL forms so deployment/linking never depends on a trailing slash.
+@app.route("/reception/")
 @login_required
 def reception_dashboard():
+    abort(404)
+
+# Reception module is intentionally disabled for this release.
+
     if not is_reception_user(current_user()): abort(403)
     settings=school_settings(); open_visits=q("SELECT * FROM reception_visits WHERE check_in IS NOT NULL AND check_out IS NULL ORDER BY check_in ASC,id ASC"); recent=q("SELECT * FROM reception_visits ORDER BY id DESC LIMIT 120"); staff=q("SELECT * FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System','Admin') ORDER BY full_name")
     me=current_user(); token=me['qr_access_token'] or uuid.uuid4().hex
@@ -2101,7 +2129,7 @@ def attendance_rotate():
 def attendance_record():
     token=(request.form.get('token') or '').strip(); action=(request.form.get('action') or '').upper(); event_at=(request.form.get('event_at') or '').strip() or None; office=q("SELECT token FROM attendance_qr_settings WHERE id=1",one=True)
     if action not in {'IN','OUT'} or not office or token!=office['token']: return jsonify({'ok':False,'message':'Invalid institution attendance QR.'}),400
-    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note) VALUES(?,?,?,?,COALESCE(?,CURRENT_TIMESTAMP),?,?,?,?,?)",(current_user()['id'],action,'QR',token,event_at,request.form.get('source','online'),request.form.get('latitude',type=float),request.form.get('longitude',type=float),request.form.get('speed_kph',type=float),request.form.get('device_note','')))
+    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note,location_label) VALUES(?,?,?,?,COALESCE(?,CURRENT_TIMESTAMP),?,?,?,?,?,?)",(current_user()['id'],action,'QR',token,event_at,request.form.get('source','online'),request.form.get('latitude',type=float),request.form.get('longitude',type=float),request.form.get('speed_kph',type=float),request.form.get('device_note',''),request.form.get('location_label','').strip()))
     return jsonify({'ok':True,'message':f'Checked {"in" if action=="IN" else "out"}.','event_at':event_at or datetime.utcnow().isoformat()+'Z'})
 
 @app.route("/attendance/sync",methods=['POST'])
@@ -2112,7 +2140,7 @@ def attendance_sync():
     saved=0
     for item in events[:100]:
         if item.get('token')!=office['token'] or str(item.get('action','')).upper() not in {'IN','OUT'}: continue
-        execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note) VALUES(?,?,?,?,?,?,?,?,?,?)",(current_user()['id'],str(item['action']).upper(),'QR',office['token'],item.get('event_at') or None,'offline-sync',item.get('latitude'),item.get('longitude'),item.get('speed_kph'),item.get('device_note',''))); saved+=1
+        execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(current_user()['id'],str(item['action']).upper(),'QR',office['token'],item.get('event_at') or None,'offline-sync',item.get('latitude'),item.get('longitude'),item.get('speed_kph'),item.get('device_note',''),item.get('location_label',''))); saved+=1
     return jsonify({'ok':True,'saved':saved})
 
 @app.route("/admin/attendance")
@@ -2139,14 +2167,90 @@ def teacher_markbook_save():
     cls=request.form.get('class_name','').strip(); subject=request.form.get('subject','').strip(); assessment=request.form.get('assessment','').strip() or 'Assessment'
     try: max_mark=float(request.form.get('max_mark','100') or 100)
     except ValueError: max_mark=100
+    try: weight=float(request.form.get('weight','100') or 100)
+    except ValueError: weight=100
+    weight=max(0.1,min(100,weight))
+    if not cls or not subject: flash('Class and subject are required.','danger'); return redirect(url_for('teacher_dashboard'))
+    assigned_classes=[r['class_name'] for r in q("SELECT class_name FROM teacher_assignments WHERE teacher_user_id=? AND active=1",(current_user()['id'],))]
+    if cls not in assigned_classes and current_user()['role']=='Teacher':
+        flash('You can only enter marks for a class assigned to you.','danger'); return redirect(url_for('teacher_dashboard'))
     students=q("SELECT id FROM students WHERE active=1 AND grade=? ORDER BY full_name",(cls,)); saved=0
     for st in students:
         raw=request.form.get(f"mark_{st['id']}", "")
         if raw=='': continue
         try: mark=max(0,min(max_mark,float(raw)))
         except ValueError: continue
-        execute("INSERT INTO markbook_entries(teacher_user_id,class_name,subject,student_id,assessment,mark,max_mark,status) VALUES(?,?,?,?,?,?,?,'Submitted')",(current_user()['id'],cls,subject,st['id'],assessment,mark,max_mark)); saved+=1
-    audit(current_user()['id'],current_user()['full_name'],'Teacher Markbook',f'{saved} {subject} marks submitted for {cls}.'); flash(f'{saved} marks submitted and organized for Admin review.','success'); return redirect(url_for('teacher_dashboard'))
+        execute("DELETE FROM markbook_entries WHERE teacher_user_id=? AND class_name=? AND subject=? AND student_id=? AND assessment=?",(current_user()['id'],cls,subject,st['id'],assessment))
+        execute("INSERT INTO markbook_entries(teacher_user_id,class_name,subject,student_id,assessment,mark,max_mark,weight,status) VALUES(?,?,?,?,?,?,?,?,?,'Submitted')",(current_user()['id'],cls,subject,st['id'],assessment,mark,max_mark,weight)); saved+=1
+    audit(current_user()['id'],current_user()['full_name'],'Teacher Markbook',f'{saved} {subject} marks submitted for {cls}; assessment={assessment}; weight={weight}%.')
+    flash(f'{saved} marks submitted. The system recalculates weighted totals, grades and class positions automatically.','success'); return redirect(url_for('teacher_dashboard'))
+
+def markbook_class_summary(class_name, subject=''):
+    clause='AND lower(m.subject)=lower(?)' if subject else ''
+    params=[class_name]
+    if subject: params.append(subject)
+    rows=q(f"SELECT m.student_id,s.full_name,s.admission_no,m.subject,m.assessment,m.mark,m.max_mark,m.weight FROM markbook_entries m JOIN students s ON s.id=m.student_id WHERE m.class_name=? AND s.active=1 {clause} ORDER BY s.full_name,m.created_at",tuple(params))
+    by={}
+    for r in rows:
+        sid=r['student_id']; by.setdefault(sid,{'student_id':sid,'full_name':r['full_name'],'admission_no':r['admission_no'],'weighted':0.0,'weight_total':0.0,'assessments':[]})
+        try: pct=(float(r['mark'])/float(r['max_mark']))*100 if float(r['max_mark']) else 0
+        except Exception: pct=0
+        w=float(r['weight'] or 100)
+        by[sid]['weighted'] += pct*w
+        by[sid]['weight_total'] += w
+        by[sid]['assessments'].append(r)
+    result=[]
+    for v in by.values():
+        v['score']=round(v['weighted']/v['weight_total'],2) if v['weight_total'] else 0
+        sc=v['score']
+        v['grade']='A' if sc>=80 else 'B' if sc>=70 else 'C' if sc>=60 else 'D' if sc>=50 else 'E'
+        result.append(v)
+    result.sort(key=lambda x:(-x['score'],x['full_name'].lower()))
+    for i,v in enumerate(result,1): v['position']=i
+    return result
+
+@app.route("/teacher/markbook/summary")
+@login_required
+@role_required('Teacher','Admin')
+def teacher_markbook_summary():
+    cls=request.args.get('class_name','').strip(); subject=request.args.get('subject','').strip()
+    if not cls: return redirect(url_for('teacher_dashboard'))
+    if current_user()['role']=='Teacher' and not q("SELECT 1 FROM teacher_assignments WHERE teacher_user_id=? AND class_name=? AND active=1 LIMIT 1",(current_user()['id'],cls),one=True): abort(403)
+    return render_template('teacher_markbook_summary.html',settings=school_settings(),actor_name=current_user()['full_name'],role=current_user()['role'],class_name=cls,subject=subject,rows=markbook_class_summary(cls,subject))
+
+@app.route("/teacher/scheme-of-work",methods=['GET','POST'])
+@login_required
+@role_required('Teacher','Admin')
+def teacher_scheme_of_work():
+    user=current_user()
+    if request.method=='POST':
+        cls=request.form.get('class_name','').strip(); subject=request.form.get('subject','').strip(); term=request.form.get('term','').strip() or 'Current Term'
+        try: week=max(1,int(request.form.get('week_no','1') or 1))
+        except ValueError: week=1
+        if not cls or not subject or not request.form.get('topic','').strip(): flash('Class, subject and topic are required.','danger'); return redirect(url_for('teacher_scheme_of_work'))
+        execute("INSERT INTO scheme_of_work(teacher_user_id,class_name,subject,term,week_no,topic,objectives,activities,resources,assessment,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(user['id'],cls,subject,term,week,request.form.get('topic','').strip(),request.form.get('objectives','').strip(),request.form.get('activities','').strip(),request.form.get('resources','').strip(),request.form.get('assessment','').strip(),request.form.get('status','Planned').strip() or 'Planned'))
+        flash('Scheme of Work entry saved.','success')
+        return redirect(url_for('teacher_scheme_of_work',class_name=cls,subject=subject))
+    cls=request.args.get('class_name','').strip(); subject=request.args.get('subject','').strip()
+    assignments=q("SELECT * FROM teacher_assignments WHERE teacher_user_id=? AND active=1 ORDER BY class_name,subject",(user['id'],)) if user['role']=='Teacher' else q("SELECT * FROM teacher_assignments WHERE active=1 ORDER BY class_name,subject")
+    rows=q("SELECT * FROM scheme_of_work WHERE teacher_user_id=? AND (?='' OR lower(class_name)=lower(?)) AND (?='' OR lower(subject)=lower(?)) ORDER BY term,week_no,id",(user['id'],cls,cls,subject,subject)) if user['role']=='Teacher' else q("SELECT sw.*,u.full_name AS teacher_name FROM scheme_of_work sw JOIN users u ON u.id=sw.teacher_user_id WHERE (?='' OR lower(sw.class_name)=lower(?)) AND (?='' OR lower(sw.subject)=lower(?)) ORDER BY sw.class_name,sw.subject,sw.term,sw.week_no",(cls,cls,subject,subject))
+    return render_template('scheme_of_work.html',settings=school_settings(),actor_name=user['full_name'],role=user['role'],assignments=assignments,rows=rows,selected_class=cls,selected_subject=subject)
+
+@app.route("/admin/class-teachers",methods=['GET','POST'])
+@login_required
+@role_required('Admin','ICT')
+def admin_class_teachers():
+    if request.method=='POST':
+        cls=request.form.get('class_name','').strip(); tid=request.form.get('teacher_user_id',type=int)
+        teacher=q("SELECT id,full_name FROM users WHERE id=? AND role='Teacher' AND active=1",(tid,),one=True) if tid else None
+        if not cls or not teacher: flash('Choose a class and an active Teacher.','danger'); return redirect(url_for('admin_class_teachers'))
+        execute("INSERT INTO class_teacher_assignments(class_name,teacher_user_id,assigned_by) VALUES(?,?,?) ON CONFLICT(class_name) DO UPDATE SET teacher_user_id=excluded.teacher_user_id,assigned_by=excluded.assigned_by,created_at=CURRENT_TIMESTAMP",(cls,tid,current_user()['id']))
+        flash(f'{teacher["full_name"]} is now the class teacher for {cls}.','success')
+        return redirect(url_for('admin_class_teachers'))
+    classes=q("SELECT DISTINCT grade AS class_name FROM students WHERE active=1 AND TRIM(COALESCE(grade,''))!='' ORDER BY grade")
+    teachers=q("SELECT id,full_name,department,title FROM users WHERE role='Teacher' AND active=1 ORDER BY full_name")
+    assignments=q("SELECT cta.*,u.full_name AS teacher_name,u.department,u.title FROM class_teacher_assignments cta JOIN users u ON u.id=cta.teacher_user_id ORDER BY cta.class_name")
+    return render_template('admin_class_teachers.html',settings=school_settings(),actor_name=current_user()['full_name'],role=current_user()['role'],classes=classes,teachers=teachers,assignments=assignments)
 
 @app.route("/workforce/<kind>")
 @login_required
@@ -2554,39 +2658,37 @@ def admin_dashboard():
 def teacher_dashboard():
     settings=school_settings(); user=current_user()
     assignments=q("SELECT * FROM teacher_assignments WHERE teacher_user_id=? AND active=1 ORDER BY class_name,subject",(user["id"],)) if user["role"]=="Teacher" else q("SELECT a.*,u.full_name AS teacher_name FROM teacher_assignments a JOIN users u ON u.id=a.teacher_user_id WHERE a.active=1 ORDER BY a.class_name,a.subject")
-    classes=[r["grade"] for r in q("SELECT DISTINCT grade FROM students WHERE active=1 ORDER BY grade")]
-    students=q("SELECT * FROM students WHERE active=1 ORDER BY grade,full_name LIMIT 300")
-    latest_marks=q("SELECT m.*,s.full_name,s.admission_no FROM markbook_entries m JOIN students s ON s.id=m.student_id WHERE m.teacher_user_id=? ORDER BY m.created_at DESC LIMIT 80",(user["id"],)) if user["role"]=="Teacher" else q("SELECT m.*,s.full_name,s.admission_no,u.full_name AS teacher_name FROM markbook_entries m JOIN students s ON s.id=m.student_id JOIN users u ON u.id=m.teacher_user_id ORDER BY m.created_at DESC LIMIT 80")
+    classes=sorted({r["class_name"] for r in assignments})
+    assigned_class_rows=q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=? ORDER BY class_name",(user['id'],)) if user['role']=='Teacher' else q("SELECT class_name FROM class_teacher_assignments ORDER BY class_name")
+    class_teacher_classes=[r['class_name'] for r in assigned_class_rows]
+    students=q("SELECT id,full_name,admission_no,grade FROM students WHERE active=1 AND grade IN ({}) ORDER BY grade,full_name".format(','.join('?'*len(classes))),tuple(classes)) if classes else []
+    latest_marks=q("SELECT m.*,s.full_name FROM markbook_entries m JOIN students s ON s.id=m.student_id WHERE m.teacher_user_id=? ORDER BY m.created_at DESC LIMIT 80",(user['id'],))
     events=q("SELECT * FROM attendance_events WHERE user_id=? ORDER BY event_at DESC,id DESC LIMIT 20",(user["id"],)) if user["role"]=="Teacher" else []
-    return render_template("teacher_dashboard_pro.html",settings=settings,actor_name=user["full_name"],role=user["role"],assignments=assignments,classes=classes,students=students,latest_marks=latest_marks,events=events,workspace_type=workspace_type_for_user(user),teacher_online_url=(assignments[0]["online_url"] if assignments and "online_url" in assignments[0].keys() and assignments[0]["online_url"] else "https://meet.google.com/"),nav_items=navigation_items("Teacher",settings))
+    upcoming=q("SELECT * FROM class_sessions WHERE teacher_user_id=? AND active=1 AND (starts_at>=datetime('now') OR ends_at>=datetime('now')) ORDER BY starts_at LIMIT 8",(user['id'],)) if user['role']=='Teacher' else []
+    schemes=q("SELECT * FROM scheme_of_work WHERE teacher_user_id=? ORDER BY updated_at DESC,id DESC LIMIT 8",(user['id'],)) if user['role']=='Teacher' else []
+    summaries={cls:markbook_class_summary(cls) for cls in classes[:12]}
+    return render_template("teacher_dashboard_pro.html",settings=settings,school_settings=settings,actor_name=user["full_name"],role=user["role"],assignments=assignments,classes=classes,students=students,latest_marks=latest_marks,events=events,workspace_type=workspace_type_for_user(user),upcoming=upcoming,schemes=schemes,class_teacher_classes=class_teacher_classes,mark_summaries=summaries,nav_items=navigation_items("Teacher",settings))
 
 @app.route("/student-dashboard")
 @login_required
 def student_dashboard():
     user=current_user()
-    if user["role"] != "Student" and not DEMO_AUTH_BYPASS:
-        abort(403)
+    if user["role"] != "Student" and not DEMO_AUTH_BYPASS: abort(403)
     student=portal_student(request.args.get("student_id", type=int))
-    if not student and user["student_id"]:
-        student=q("SELECT * FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
-    if not student and user["full_name"]:
-        student=q("SELECT * FROM students WHERE lower(full_name)=lower(?) AND active=1 ORDER BY id DESC LIMIT 1", (user["full_name"],), one=True)
-    if not student and DEMO_AUTH_BYPASS:
-        student=q("SELECT * FROM students WHERE active=1 ORDER BY grade,full_name LIMIT 1", one=True)
+    if not student and user["student_id"]: student=q("SELECT * FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
+    if not student and user["full_name"]: student=q("SELECT * FROM students WHERE lower(full_name)=lower(?) AND active=1 ORDER BY id DESC LIMIT 1", (user["full_name"],), one=True)
+    if not student and DEMO_AUTH_BYPASS: student=q("SELECT * FROM students WHERE active=1 ORDER BY grade,full_name LIMIT 1", one=True)
     if not student: abort(404)
-    assignments=assignment_rows(student["grade"])
-    submissions=q("SELECT * FROM submissions WHERE student_id=? ORDER BY submitted_at DESC", (student["id"],))
-    results=q("SELECT subject, term, mark, max_mark FROM exam_results WHERE student_id=? ORDER BY term DESC, subject", (student["id"],))
-    result_releases=result_release_info(student["id"])
+    assignments=assignment_rows(student["grade"]); submissions=q("SELECT * FROM submissions WHERE student_id=? ORDER BY submitted_at DESC", (student["id"],)); results=q("SELECT subject, term, mark, max_mark FROM exam_results WHERE student_id=? ORDER BY term DESC, subject", (student["id"],)); result_releases=result_release_info(student["id"])
     messages=q("SELECT * FROM portal_messages WHERE recipient_student_id=? OR (recipient_role='Student' AND recipient_student_id IS NULL) ORDER BY created_at DESC LIMIT 30", (student["id"],))
     elections=q("SELECT * FROM elections WHERE visible=1 ORDER BY created_at DESC") if school_settings()["elections_enabled"] else []
-    election_candidates={e["id"]:q("SELECT * FROM election_candidates WHERE election_id=? AND active=1 ORDER BY position,name",(e["id"],)) for e in elections}
-    voted_positions={(r["election_id"], r["position"]) for r in q("SELECT election_id, position FROM election_votes WHERE voter_user_id=?",(current_user()["id"],))}
+    election_candidates={e["id"]:q("SELECT * FROM election_candidates WHERE election_id=? AND active=1 ORDER BY position,name",(e["id"],)) for e in elections}; voted_positions={(r["election_id"], r["position"]) for r in q("SELECT election_id, position FROM election_votes WHERE voter_user_id=?",(current_user()["id"],))}
     library_items=q("SELECT * FROM library_items WHERE active=1 ORDER BY category,title LIMIT 80") if school_settings()["library_enabled"] else []
-    online_classes=q("SELECT a.*,u.full_name AS teacher_name FROM teacher_assignments a JOIN users u ON u.id=a.teacher_user_id WHERE a.active=1 AND lower(a.class_name)=lower(?) ORDER BY a.subject,u.full_name", (student["grade"],))
-    settings=school_settings(); nav_items=navigation_items("Student", settings)
-    return render_template("student_dashboard.html", role="Student", workspace=workspace_for("Student"), student=student, assignments=assignments, submissions=submissions, results=results, result_releases=result_releases, messages=messages, elections=elections, election_candidates=election_candidates, voted_positions=voted_positions, library_items=library_items, online_classes=online_classes, actor_name=student["full_name"], nav_items=nav_items)
-
+    online_classes=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.active=1 AND lower(cs.class_name)=lower(?) AND (cs.starts_at>=datetime('now','-1 day') OR cs.ends_at>=datetime('now','-1 day') OR cs.ends_at IS NULL) ORDER BY cs.starts_at",(student["grade"],))
+    mark_rows=markbook_class_summary(student['grade'])
+    my_rank=next((r for r in mark_rows if r['student_id']==student['id']),None)
+    settings=school_settings(); nav_items=navigation_items("Student",settings)
+    return render_template("student_dashboard.html",school_settings=settings,settings=settings,role="Student",workspace=workspace_for("Student"),student=student,assignments=assignments,submissions=submissions,results=results,result_releases=result_releases,messages=messages,elections=elections,election_candidates=election_candidates,voted_positions=voted_positions,library_items=library_items,online_classes=online_classes,actor_name=student["full_name"],nav_items=nav_items,my_rank=my_rank,mark_rows=mark_rows)
 
 @app.route("/parent-dashboard")
 @login_required
@@ -2884,6 +2986,24 @@ def online_classes():
         st=q("SELECT grade FROM students WHERE id=?",(user["student_id"],),one=True); grade=st["grade"] if st else ""; sessions=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.active=1 AND lower(cs.class_name)=lower(?) ORDER BY cs.starts_at",(grade,))
     return render_template("online_classes.html",settings=school_settings(),sessions=sessions,actor_name=user["full_name"],role=user["role"],today=datetime.now().strftime('%Y-%m-%d'))
 
+@app.route("/online-class/<int:session_id>")
+@login_required
+def live_classroom(session_id:int):
+    user=current_user(); sess=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.id=? AND cs.active=1",(session_id,),one=True)
+    if not sess: abort(404)
+    allowed=False; mode='student'
+    if user['role']=='Teacher' and user['id']==sess['teacher_user_id']:
+        allowed=True; mode='teacher'
+    elif user['role']=='Admin': allowed=True; mode='moderator'
+    elif user['role']=='Student':
+        st=q("SELECT grade FROM students WHERE id=? AND active=1",(user['student_id'],),one=True) if user['student_id'] else None
+        allowed=bool(st and str(st['grade']).lower()==str(sess['class_name']).lower())
+    if not allowed: abort(403)
+    roster=q("SELECT s.id,s.full_name,s.admission_no FROM students s WHERE s.active=1 AND lower(s.grade)=lower(?) ORDER BY s.full_name",(sess['class_name'],))
+    provider=sess['provider_url'] or 'https://meet.jit.si/'
+    provider=provider if provider.endswith('/') else provider+'/'
+    return render_template('live_classroom.html',settings=school_settings(),session=sess,roster=roster,actor_name=user['full_name'],role=user['role'],mode=mode,jitsi_domain=urllib.parse.urlparse(provider).netloc or 'meet.jit.si')
+
 @app.route("/teacher/online-class/create", methods=["POST"])
 @login_required
 @role_required("Teacher")
@@ -2891,8 +3011,7 @@ def create_online_class():
     title=request.form.get("title","").strip() or "Live Class"; cls=request.form.get("class_name","").strip(); subject=request.form.get("subject","").strip(); starts=request.form.get("starts_at","").strip(); ends=request.form.get("ends_at","").strip(); desc=request.form.get("description","").strip()
     if not cls or not subject or not starts: flash("Class, subject and start time are required.","danger"); return redirect(url_for("online_classes"))
     room=f"{school_settings()['school_name'].replace(' ','-')}-{cls.replace(' ','-')}-{uuid.uuid4().hex[:8]}"
-    provider=school_settings()["online_class_provider"] or "https://meet.jit.si/"
-    if not provider.endswith('/'): provider+='/'
+    provider="https://meet.jit.si/"
     url=provider+urllib.parse.quote(room)
     execute("INSERT INTO class_sessions(teacher_user_id,class_name,subject,title,starts_at,ends_at,room_name,provider_url,description) VALUES(?,?,?,?,?,?,?,?,?)",(current_user()["id"],cls,subject,title,starts,ends,room,provider,desc))
     ids=[r["id"] for r in q("SELECT u.id FROM users u JOIN students s ON s.id=u.student_id WHERE u.active=1 AND u.role='Student' AND lower(s.grade)=lower(?)",(cls,))]
