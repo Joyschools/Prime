@@ -1,1 +1,41 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{settings.school_name}} | AI Assistant</title><link rel="stylesheet" href="{{url_for('static',filename='css/style.css')}}"><style>{{theme_style|safe}} .ai-answer{white-space:pre-wrap;line-height:1.7}.ai-shell{max-width:920px;margin:0 auto;width:100%}</style></head><body class="app-body sidebar-style-{{ school_settings.sidebar_style|default("drawer", true) }}">{% include "_notification_bell.html" %}<aside class="sidebar glass"><div><div class="brand-line"><span class="brand-dot"></span><div><div class="brand-name">{{settings.school_name}}</div><div class="brand-subtitle">AI Assistant</div></div></div><nav class="side-nav"><a class="nav-link" href="/dashboard">Portal</a><a class="nav-link" href="/system-help">System Help</a></nav></div><a class="btn btn-ghost btn-block" href="/logout">Logout</a></aside><main class="content"><div class="ai-shell"><header class="topbar glass"><div><div class="eyebrow">Institution AI</div><h1>AI Assistant</h1><div class="topbar-subtitle">Configured by your Administrator · {{settings.ai_model or 'Not configured'}}</div></div></header><section class="panel glass"><div class="eyebrow">Ask</div><h3>What do you need?</h3><form id="aiForm" class="stack-form"><textarea id="aiPrompt" rows="6" placeholder="Explain a topic, create revision questions, help with a document, or ask a system-use question..."></textarea><button class="btn btn-primary" type="submit">Ask AI</button></form></section><section id="aiResult" class="panel glass hidden"><div class="eyebrow">Response</div><div id="aiText" class="ai-answer"></div></section></div><script>document.getElementById('aiForm').addEventListener('submit',async e=>{e.preventDefault();const prompt=document.getElementById('aiPrompt').value.trim();if(!prompt)return;const box=document.getElementById('aiResult'),out=document.getElementById('aiText');box.classList.remove('hidden');out.textContent='Thinking…';try{const r=await fetch('/ai/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})});const d=await r.json();out.textContent=d.answer||d.error||'No response.'}catch(err){out.textContent='AI request failed: '+err}});</script></main>{% include '_footer.html' %}</body></html>
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{settings.school_name}} | Institutional AI</title>
+<link rel="stylesheet" href="{{url_for('static',filename='css/style.css')}}">
+<style>{{theme_style|safe}}</style></head>
+<body class="app-body sidebar-style-{{ school_settings.sidebar_style|default('drawer', true) }}">
+{% include "_notification_bell.html" %}
+<main class="content">
+<div class="ai-app-shell">
+  <aside class="ai-side">
+    <section class="mini-card glass"><strong>Institutional AI</strong><span class="muted">Guidance for your {{role|lower}} workspace.</span></section>
+    <button class="ai-chip" data-prompt="How do I use this dashboard?">How do I use this dashboard?</button>
+    <button class="ai-chip" data-prompt="Show me the important things I can do here.">What can I do here?</button>
+    <button class="ai-chip" data-prompt="Where can I find my assignments, results and learning resources?">Find my learning tools</button>
+    <button class="ai-chip" data-prompt="How do I find messages, notifications and important dates?">Messages & important dates</button>
+    <button class="ai-chip" data-prompt="How do live online classes work in this system?">Online classes</button>
+    <button class="ai-chip" data-prompt="Where is the Library and how do I use it for revision?">Library & revision</button>
+    {% if role in ['Admin','ICT'] %}<button class="ai-chip" data-prompt="Explain the administration and technical areas I can access without revealing passwords or secrets.">Administration / technical guidance</button>{% endif %}
+    <a class="btn btn-ghost" href="/system-help">Open System Help</a>
+    <a class="btn btn-ghost" href="/dashboard">Return to portal</a>
+  </aside>
+  <section class="ai-main">
+    <header class="topbar glass"><div><div class="eyebrow">{{settings.school_name}}</div><h1>How can I help?</h1><div class="topbar-subtitle">Institutional guidance · {{role}} workspace</div></div><a class="btn btn-ghost mini" href="/logout">Logout</a></header>
+    <section class="panel glass ai-chat">
+      <div id="aiMessages" class="ai-messages" aria-live="polite"></div>
+      <div id="aiQuickLinks" class="ai-links"></div>
+      <form id="aiForm" class="ai-composer"><textarea id="aiPrompt" rows="2" maxlength="8000" placeholder="Ask about using the system…"></textarea><button class="btn btn-primary icon-btn" type="submit"><span>Send</span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-5 14-3-6z"/><path d="m11 13 8-8"/></svg></button></form>
+      <div class="ai-disclaimer">This assistant explains this institution's system and helps you find features. It does not expose passwords, private security controls, or hidden administrator/ICT contact paths.</div>
+    </section>
+  </section>
+</div>
+<script>
+const messagesEl=document.getElementById('aiMessages'),form=document.getElementById('aiForm'),input=document.getElementById('aiPrompt'),linksEl=document.getElementById('aiQuickLinks');
+const history=[];
+function addMessage(role,text,instant=false){const wrap=document.createElement('div');wrap.className='ai-msg '+role;const meta=document.createElement('div');meta.className='ai-msg-meta';meta.textContent=role==='user'?'You':'Institutional AI';const body=document.createElement('div');wrap.append(meta,body);messagesEl.appendChild(wrap);if(instant){body.textContent=text}else{let i=0;const tick=()=>{body.textContent=text.slice(0,i);i+=Math.max(1,Math.ceil(text.length/140));messagesEl.scrollTop=messagesEl.scrollHeight;if(i<text.length)setTimeout(tick,14)};tick()}messagesEl.scrollTop=messagesEl.scrollHeight;return body}
+function typing(){const wrap=document.createElement('div');wrap.className='ai-msg assistant';wrap.innerHTML='<div class="ai-msg-meta">Institutional AI</div><div class="ai-typing"><span></span><span></span><span></span></div>';messagesEl.appendChild(wrap);messagesEl.scrollTop=messagesEl.scrollHeight;return wrap}
+function renderLinks(items){linksEl.innerHTML='';(items||[]).forEach(x=>{const a=document.createElement('a');a.className='btn btn-ghost mini';a.href=x.url;a.textContent=x.label;linksEl.appendChild(a)})}
+async function ask(text){text=(text||'').trim();if(!text)return;input.value='';addMessage('user',text,true);history.push({role:'user',content:text});const t=typing();try{const r=await fetch('/ai/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:text,history:history.slice(0,-1)})});const d=await r.json();t.remove();if(d.answer){addMessage('assistant',d.answer);history.push({role:'assistant',content:d.answer});renderLinks(d.links)}else{addMessage('assistant',d.error||'I could not answer that right now.');}}catch(e){t.remove();addMessage('assistant','I cannot reach the guidance service right now. Please try again, or use System Help.')}}
+form.addEventListener('submit',e=>{e.preventDefault();ask(input.value)});document.querySelectorAll('.ai-chip').forEach(b=>b.addEventListener('click',()=>ask(b.dataset.prompt)));
+addMessage('assistant','Hello {{actor_name|e}}. I’m here to help you understand and use the institution’s system. Ask me what a page does, where to find a feature, or how to complete a task.',false);
+</script></main>{% include '_footer.html' %}</body></html>

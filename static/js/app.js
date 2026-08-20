@@ -123,6 +123,26 @@
   sidebarToggle?.addEventListener("click", toggleSidebar);
   sidebarClose?.addEventListener("click", closeSidebar);
 
+  // Full-width top navigation intelligently hides after downward scrolling,
+  // then reappears when the user scrolls up or returns to the top.
+  if (document.body.classList.contains("sidebar-style-top") || isPhoneLayout()) {
+    let lastScrollY = window.scrollY || 0;
+    let navTick = false;
+    const syncTopNav = () => {
+      const y = window.scrollY || 0;
+      if (y <= 18) document.body.classList.remove("nav-hidden");
+      else if (y > lastScrollY + 6) document.body.classList.add("nav-hidden");
+      else if (y < lastScrollY - 6) document.body.classList.remove("nav-hidden");
+      lastScrollY = y;
+      navTick = false;
+    };
+    window.addEventListener("scroll", () => {
+      if (navTick) return;
+      navTick = true;
+      window.requestAnimationFrame(syncTopNav);
+    }, {passive:true});
+  }
+
   if (scrollRail && scrollThumb) {
     const onPointerMove = (event) => {
       if (!scrollDrag) return;

@@ -4546,15 +4546,40 @@ def ai_ask():
     provider=settings["ai_provider"] or "openai_responses"; model=settings["ai_model"] or "gpt-5.6"
     api_key=os.environ.get("OPENAI_API_KEY","").strip()
     if not api_key: return jsonify({"error":"OpenAI API is not configured on this server yet. Set OPENAI_API_KEY in the deployment environment."}),503
-    system_prompt=f"You are the institutional AI assistant for {settings['school_name']}. User role: {user['role']}. Be practical, concise, safe, and never invent private institutional data. If data is not supplied in the conversation, say so."
+    raw_history=(request.get_json(silent=True) or {}).get("history") if request.is_json else None
+    history=[]
+    if isinstance(raw_history,list):
+        for item in raw_history[-14:]:
+            if not isinstance(item,dict): continue
+            role=str(item.get("role","")); content=str(item.get("content","" )).strip()
+            if role in {"user","assistant"} and content: history.append({"role":role,"content":content[:3000]})
+    role_guides={
+        "Admin": settings.get("institution_admin_guide", ""),
+        "ICT": settings.get("institution_ict_guide", ""),
+        "Finance": settings.get("institution_finance_guide", ""),
+        "Teacher": settings.get("institution_portal_guide", ""),
+        "Student": settings.get("institution_portal_guide", ""),
+        "Parent": settings.get("institution_portal_guide", ""),
+        "Librarian": settings.get("institution_portal_guide", ""),
+        "Driver": settings.get("institution_portal_guide", ""),
+    }
+    scope=(role_guides.get(user['role']) or '')[:5000]
+    system_prompt=f"""You are the institutional guidance assistant inside {settings['school_name']}.
+User role: {user['role']}.
+Your only job is to teach the user how to use this institution's software: dashboards, attendance, assignments, results, finance, library, messages, notifications, calendar, online classes, live-class recordings, administration, branding, backups, reports, profiles, and role-specific workflows. Use the user's role to decide what is appropriate.
+Never reveal passwords, API keys, database details, hidden security controls, private internal records, or direct admin/ICT contact routes. Never provide secrets or help bypass permissions. Do not mention model/provider names, OpenAI, GPT, or implementation details.
+Do not invent a feature. When a requested capability is outside the system's known scope, say that it is outside your guidance range and tell the user to contact tororinnovations@gmail.com for more information.
+Be warm, natural and varied. Avoid repeating the exact same wording when the user asks the same thing again. Use short steps when useful. Answer greetings naturally. You may point users to visible system pages, but do not expose hidden or role-restricted routes.
+Role guidance: {scope}"""
+
     try:
         if provider=="openai_chat_completions":
-            payload=json.dumps({"model":model,"messages":[{"role":"system","content":system_prompt},{"role":"user","content":prompt}],"temperature":0.2}).encode()
+            payload=json.dumps({"model":model,"messages":[{"role":"system","content":system_prompt}]+history+[ {"role":"user","content":prompt} ],"temperature":0.7}).encode()
             req=urllib.request.Request("https://api.openai.com/v1/chat/completions",data=payload,headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"},method="POST")
             with urllib.request.urlopen(req,timeout=45) as resp: data=json.loads(resp.read().decode())
             answer=data.get("choices",[{}])[0].get("message",{}).get("content","")
         else:
-            payload=json.dumps({"model":model,"input":[{"role":"system","content":system_prompt},{"role":"user","content":prompt}]}).encode()
+            payload=json.dumps({"model":model,"input":[{"role":"system","content":system_prompt}]+history+[ {"role":"user","content":prompt} ]}).encode()
             req=urllib.request.Request("https://api.openai.com/v1/responses",data=payload,headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"},method="POST")
             with urllib.request.urlopen(req,timeout=45) as resp: data=json.loads(resp.read().decode())
             answer=(data.get("output_text") or "").strip()
@@ -4566,7 +4591,21 @@ def ai_ask():
                 answer="\n".join(chunks).strip()
         if not answer: raise RuntimeError("AI returned an empty response.")
         execute("INSERT INTO ai_usage_log(user_id,role,provider,model,prompt_preview,response_preview,status) VALUES(?,?,?,?,?,?,?)",(user["id"],user["role"],provider,model,prompt[:300],answer[:500],"Success"))
-        return jsonify({"answer":answer,"provider":provider,"model":model})
+        lower=prompt.lower()
+        link_map=[]
+        visible_links=[
+            ("dashboard","/dashboard","Portal"),("help","/system-help","System Help"),("ai","/ai-assistant","AI Assistant"),
+            ("library","/library","Library"),("live","/online-classes","Online classes"),("class","/online-classes","Online classes"),
+            ("message","/communication","Messages"),("calendar","/calendar","Calendar"),("profile","/profile","My profile")
+        ]
+        seen=set()
+        for key,url,label in visible_links:
+            if key in lower and url not in seen:
+                link_map.append({"url":url,"label":label}); seen.add(url)
+        # Keep direct contact details out of the normal UI response; the fallback address is only used when the feature is out of scope.
+        if "tororinnovations@gmail.com" in answer and any(x in answer.lower() for x in ["admin","ict","password","security"]):
+            answer=answer.replace("tororinnovations@gmail.com","the institution's support contact")
+        return jsonify({"answer":answer,"links":link_map})
     except Exception as exc:
         execute("INSERT INTO ai_usage_log(user_id,role,provider,model,prompt_preview,response_preview,status) VALUES(?,?,?,?,?,?,?)",(user["id"],user["role"],provider,model,prompt[:300],str(exc)[:500],"Failed"))
         return jsonify({"error":f"AI request failed: {exc}"}),502
