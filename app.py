@@ -817,6 +817,13 @@ def init_db() -> None:
             FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_scheme_teacher ON scheme_of_work(teacher_user_id,class_name,subject,term,week_no)")
+        conn.execute("CREATE TABLE IF NOT EXISTS compulsory_subjects (id INTEGER PRIMARY KEY AUTOINCREMENT, class_name TEXT NOT NULL, subject TEXT NOT NULL, unit_name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(class_name,subject), FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS demo_seed_meta (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL DEFAULT 0, seeded_at TEXT)")
+        ensure_column(conn, "assignments", "allowed_types TEXT NOT NULL DEFAULT 'pdf,doc,docx,xls,xlsx,ppt,pptx,csv,txt,png,jpg,jpeg,webp,zip'")
+        ensure_column(conn, "assignments", "max_submissions INTEGER NOT NULL DEFAULT 2")
+        ensure_column(conn, "assignments", "allow_any_file INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "class_sessions", "audience_mode TEXT NOT NULL DEFAULT 'Class'")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_compulsory_subjects_class ON compulsory_subjects(class_name,active)")
         ensure_column(conn, "users", "workspace_type TEXT NOT NULL DEFAULT 'Teaching'")
         ensure_column(conn, "school_settings", "offline_enabled INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "school_settings", "backup_reminder_time TEXT NOT NULL DEFAULT '16:00'")
@@ -966,6 +973,86 @@ def init_db() -> None:
                 )
             conn.execute("UPDATE school_settings SET auth_initialized=1, auth_required=1 WHERE id=1")
 
+        # Optional coherent demonstration institution. Set SEED_DEMO_DATA=0 in production to disable.
+        if os.environ.get("SEED_DEMO_DATA", "1") != "0":
+            meta = conn.execute("SELECT version FROM demo_seed_meta WHERE id=1").fetchone()
+            if not meta or int(meta["version"] or 0) < 1:
+                demo_teacher_pw = generate_password_hash(os.environ.get("DEMO_TEACHER_PASSWORD", "DemoTeacher@123"))
+                demo_student_pw = generate_password_hash(os.environ.get("DEMO_STUDENT_PASSWORD", "DemoStudent@123"))
+                demo_admin_pw = generate_password_hash(os.environ.get("DEMO_ADMIN_PASSWORD", "DemoAdmin@123"))
+                # Ensure an administrator exists for the demo controls. Existing admin credentials are never overwritten.
+                admin = conn.execute("SELECT id FROM users WHERE role='Admin' AND active=1 LIMIT 1").fetchone()
+                if not admin:
+                    conn.execute("INSERT INTO users(full_name,username,password_hash,role,active) VALUES(?,?,?,?,1)",("Demo Administrator","demo.admin",demo_admin_pw,"Admin"))
+                    admin = conn.execute("SELECT id FROM users WHERE username='demo.admin'").fetchone()
+                admin_id=admin["id"]
+                def ensure_user(full_name, username, pw, role, student_id=None, title='', dept='', workspace='Teaching'):
+                    row=conn.execute("SELECT id FROM users WHERE username=? LIMIT 1",(username,)).fetchone()
+                    if row:
+                        return row["id"]
+                    conn.execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active,title,department,workspace_type,school_unit,school_location,position_code,staff_code,reception_enabled) VALUES(?,?,?,?,?,1,?,?,?,?,?,?,?,0)",(full_name,username,pw,role,student_id,title,dept,workspace,"Demo Institution","Juja, Kiambu, Kenya",role[:3].upper(),role[:3].upper()))
+                    return conn.execute("SELECT id FROM users WHERE username=?",(username,)).fetchone()["id"]
+                # Learners by level/class, deliberately realistic enough for a presentation.
+                demo_students=[
+                    ("PP1-001","Amara Wanjiku","PP1","Peter Wanjiku","0711000001",18000,"Pending"),
+                    ("PP1-002","Brian Mwangi","PP1","Mary Mwangi","0711000002",0,"Paid"),
+                    ("G4-001","Amani Kariuki","Grade 4","Jane Kariuki","0711000003",8500,"Pending"),
+                    ("G4-002","Brian Otieno","Grade 4","Otieno Family","0711000004",0,"Paid"),
+                    ("G4-003","Cynthia Njeri","Grade 4","Njeri Family","0711000005",4200,"Pending"),
+                    ("G4-004","David Kamau","Grade 4","Kamau Family","0711000006",0,"Paid"),
+                    ("G4-005","Elijah Maina","Grade 4","Maina Family","0711000007",12600,"Pending"),
+                    ("G4-006","Faith Atieno","Grade 4","Atieno Family","0711000008",0,"Paid"),
+                    ("G4-007","Grace Wambui","Grade 4","Wambui Family","0711000009",3500,"Pending"),
+                    ("G5-001","Hassan Ali","Grade 5","Ali Family","0711000010",0,"Paid"),
+                    ("G5-002","Ivy Chebet","Grade 5","Chebet Family","0711000011",6000,"Pending"),
+                    ("G5-003","Joel Kiptoo","Grade 5","Kiptoo Family","0711000012",0,"Paid"),
+                    ("G5-004","Lydia Akinyi","Grade 5","Akinyi Family","0711000013",20000,"Pending"),
+                ]
+                for adm,name,grade,guardian,phone,balance,status in demo_students:
+                    conn.execute("INSERT OR IGNORE INTO students(admission_no,full_name,grade,guardian_name,guardian_phone,balance,payment_status,active) VALUES(?,?,?,?,?,?,?,1)",(adm,name,grade,guardian,phone,balance,status))
+                student_rows={r["admission_no"]:r for r in conn.execute("SELECT * FROM students WHERE admission_no IN (%s)" % ','.join('?'*len(demo_students)),[x[0] for x in demo_students])}
+                teacher_id=ensure_user("James Mwangi","demo.teacher",demo_teacher_pw,"Teacher",None,"Mathematics & ICT Teacher","Academics","Teaching")
+                student_id=student_rows["G4-001"]["id"]
+                ensure_user("Amani Kariuki","demo.student",demo_student_pw,"Student",student_id,"","","Student")
+                conn.execute("UPDATE users SET workspace_type='Teaching', school_unit='Demo Institution', school_location='Juja, Kiambu, Kenya' WHERE id=?",(teacher_id,))
+                for adm,name,grade,guardian,phone,balance,status in demo_students[1:]:
+                    sid=student_rows[adm]["id"]
+                    uname='demo.'+adm.lower().replace('-','')
+                    if not conn.execute("SELECT 1 FROM users WHERE username=?",(uname,)).fetchone():
+                        ensure_user(name,uname,demo_student_pw,"Student",sid,'','','Student')
+                # Teaching load and class-teacher authority.
+                for cls,subj,unit in [("Grade 4","Mathematics","MAT-G4"),("Grade 4","Integrated Science","SCI-G4"),("Grade 5","Mathematics","MAT-G5")]:
+                    conn.execute("INSERT OR IGNORE INTO teacher_assignments(teacher_user_id,class_name,subject,unit_code,active) VALUES(?,?,?,?,1)",(teacher_id,cls,subj,unit))
+                conn.execute("INSERT INTO class_teacher_assignments(class_name,teacher_user_id,assigned_by) VALUES('Grade 4',?,?) ON CONFLICT(class_name) DO UPDATE SET teacher_user_id=excluded.teacher_user_id,assigned_by=excluded.assigned_by",(teacher_id,admin_id))
+                conn.execute("INSERT OR IGNORE INTO compulsory_subjects(class_name,subject,unit_name,created_by) VALUES('Grade 4','Mathematics','Core Mathematics',?)",(admin_id,))
+                conn.execute("INSERT OR IGNORE INTO compulsory_subjects(class_name,subject,unit_name,created_by) VALUES('Grade 5','Mathematics','Core Mathematics',?)",(admin_id,))
+                # Sample weighted marks for visible ordering.
+                for idx,r in enumerate(conn.execute("SELECT id FROM students WHERE grade='Grade 4' AND active=1 ORDER BY full_name"),1):
+                    for assessment,mark,max_mark,weight in [("CAT 1",55+((idx*7)%36),100,20),("CAT 2",48+((idx*9)%46),100,20),("Term Exam",50+((idx*11)%48),100,60)]:
+                        exists=conn.execute("SELECT 1 FROM markbook_entries WHERE teacher_user_id=? AND student_id=? AND subject='Mathematics' AND assessment=?",(teacher_id,r["id"],assessment)).fetchone()
+                        if not exists: conn.execute("INSERT INTO markbook_entries(teacher_user_id,class_name,subject,student_id,assessment,mark,max_mark,status,weight) VALUES(?,?,?,?,?,?,?,?,?)",(teacher_id,"Grade 4","Mathematics",r["id"],assessment,mark,max_mark,"Submitted",weight))
+                # One real assignment, submission history and a scheduled lesson.
+                assignment=conn.execute("SELECT id FROM assignments WHERE title='Fractions Practice & Reflection' AND grade='Grade 4' LIMIT 1").fetchone()
+                if not assignment:
+                    aid=conn.execute("INSERT INTO assignments(title,subject,grade,description,deadline,posted_by,allowed_types,max_submissions,allow_any_file) VALUES(?,?,?,?,?,?,?,?,0)",("Fractions Practice & Reflection","Mathematics","Grade 4","Complete the worked examples, then submit your reflection. Two attempts are permitted before the deadline.",(datetime.now()+timedelta(days=3)).strftime('%Y-%m-%dT%H:%M'),teacher_id,"pdf,doc,docx,xls,xlsx,ppt,pptx,csv,txt,png,jpg,jpeg,webp",2)).lastrowid
+                    for n,note in [(1,"First attempt: worked answers attached."),(2,"Second attempt: corrected question 6 and 8.")]:
+                        if n==1:
+                            conn.execute("INSERT INTO submissions(assignment_id,student_id,attachment_path,note) VALUES(?,?,?,?)",(aid,student_id,"uploads/demo-fractions-attempt1.pdf",note))
+                        else:
+                            conn.execute("INSERT INTO submissions(assignment_id,student_id,attachment_path,note,score,feedback) VALUES(?,?,?,?,?,?)",(aid,student_id,"uploads/demo-fractions-attempt2.pdf",note,92,"Excellent correction and clear working."))
+                session=conn.execute("SELECT id FROM class_sessions WHERE title='Grade 4 Live Mathematics Clinic' LIMIT 1").fetchone()
+                if not session:
+                    start=(datetime.now()+timedelta(hours=3)).replace(second=0,microsecond=0)
+                    end=start+timedelta(minutes=50)
+                    room=f"Demo-Institution-Grade-4-{uuid.uuid4().hex[:8]}"
+                    conn.execute("INSERT INTO class_sessions(teacher_user_id,class_name,subject,title,starts_at,ends_at,room_name,provider_url,description,audience_mode) VALUES(?,?,?,?,?,?,?,?,?,?)",(teacher_id,"Grade 4","Mathematics","Grade 4 Live Mathematics Clinic",start.strftime('%Y-%m-%d %H:%M'),end.strftime('%Y-%m-%d %H:%M'),room,"https://meet.jit.si/","Live worked examples, Q&A and revision clinic.","Compulsory"))
+                    sess_id=conn.execute("SELECT id FROM class_sessions WHERE room_name=?",(room,)).fetchone()["id"]
+                    ids=[r["id"] for r in conn.execute("SELECT u.id FROM users u JOIN students s ON s.id=u.student_id WHERE u.role='Student' AND u.active=1 AND lower(s.grade)=lower('Grade 4')")]
+                    for uid in ids:
+                        conn.execute("INSERT INTO notifications(user_id,title,body,link,priority) VALUES(?,?,?,?,?)",(uid,"Upcoming live Mathematics class",f"Grade 4 Live Mathematics Clinic starts {start.strftime('%A, %d %b at %H:%M')}. Join from your Student Dashboard.",f"/online-class/{sess_id}","High"))
+                conn.execute("INSERT OR REPLACE INTO demo_seed_meta(id,version,seeded_at) VALUES(1,1,CURRENT_TIMESTAMP)")
+                conn.execute("UPDATE school_settings SET school_name=COALESCE(NULLIF(school_name,''),'Prime Demonstration Institution'), school_fee=CASE WHEN school_fee=0 THEN 20000 ELSE school_fee END WHERE id=1")
+                conn.execute("UPDATE school_settings SET auth_initialized=1, auth_required=1 WHERE id=1")
         # Force SQLite to materialize/validate the final schema after migration cleanup.
         conn.execute("PRAGMA foreign_key_check")
         conn.commit()
@@ -1346,14 +1433,14 @@ def important_dates(limit=20, landing=False):
         return q("SELECT * FROM important_dates WHERE visible=1 AND landing_visible=1 ORDER BY event_date,event_time,id LIMIT ?", (limit,))
     return q("SELECT * FROM important_dates WHERE visible=1 ORDER BY event_date,event_time,id LIMIT ?", (limit,))
 
-def notify_user(user_id, title, body, link=''):
+def notify_user(user_id, title, body, link='', priority='Normal'):
     if not user_id:
         return
-    execute("INSERT INTO notifications(user_id,title,body,link) VALUES(?,?,?,?)", (int(user_id), title[:160], body[:5000], link[:500] if link else None))
+    execute("INSERT INTO notifications(user_id,title,body,link,priority) VALUES(?,?,?,?,?)", (int(user_id), title[:160], body[:5000], link[:500] if link else None, priority[:20]))
 
-def notify_users(user_ids, title, body, link=''):
+def notify_users(user_ids, title, body, link='', priority='Normal'):
     for uid in set(int(x) for x in user_ids if x):
-        notify_user(uid,title,body,link)
+        notify_user(uid,title,body,link,priority)
 
 def notification_count(user_id):
     row=q("SELECT COUNT(*) AS n FROM notifications WHERE user_id=? AND read_at IS NULL",(user_id,),one=True) if user_id else None
@@ -2236,6 +2323,20 @@ def teacher_scheme_of_work():
     rows=q("SELECT * FROM scheme_of_work WHERE teacher_user_id=? AND (?='' OR lower(class_name)=lower(?)) AND (?='' OR lower(subject)=lower(?)) ORDER BY term,week_no,id",(user['id'],cls,cls,subject,subject)) if user['role']=='Teacher' else q("SELECT sw.*,u.full_name AS teacher_name FROM scheme_of_work sw JOIN users u ON u.id=sw.teacher_user_id WHERE (?='' OR lower(sw.class_name)=lower(?)) AND (?='' OR lower(sw.subject)=lower(?)) ORDER BY sw.class_name,sw.subject,sw.term,sw.week_no",(cls,cls,subject,subject))
     return render_template('scheme_of_work.html',settings=school_settings(),actor_name=user['full_name'],role=user['role'],assignments=assignments,rows=rows,selected_class=cls,selected_subject=subject)
 
+@app.route("/admin/compulsory-subjects",methods=['GET','POST'])
+@login_required
+@role_required('Admin','ICT')
+def admin_compulsory_subjects():
+    if request.method=='POST':
+        cls=request.form.get('class_name','').strip(); subject=request.form.get('subject','').strip(); unit=request.form.get('unit_name','').strip()
+        if not cls or not subject: flash('Class and subject are required.','danger')
+        else:
+            execute("INSERT INTO compulsory_subjects(class_name,subject,unit_name,created_by) VALUES(?,?,?,?) ON CONFLICT(class_name,subject) DO UPDATE SET unit_name=excluded.unit_name,active=1,created_by=excluded.created_by",(cls,subject,unit,current_user()['id']))
+            flash(f'{subject} is now compulsory for {cls}. Students in that class will receive scheduled-class notifications.','success')
+        return redirect(url_for('admin_compulsory_subjects'))
+    rows=q("SELECT c.*,u.full_name AS set_by FROM compulsory_subjects c LEFT JOIN users u ON u.id=c.created_by WHERE c.active=1 ORDER BY c.class_name,c.subject")
+    classes=q("SELECT DISTINCT grade AS class_name FROM students WHERE active=1 ORDER BY grade"); return render_template('admin_compulsory_subjects.html',settings=school_settings(),rows=rows,classes=classes,actor_name=current_user()['full_name'],role=current_user()['role'])
+
 @app.route("/admin/class-teachers",methods=['GET','POST'])
 @login_required
 @role_required('Admin','ICT')
@@ -2546,6 +2647,13 @@ def admin_dashboard():
     active_students = q("SELECT COUNT(*) AS c FROM students WHERE active = 1", one=True)["c"]
     paid_students = q("SELECT COUNT(*) AS c FROM students WHERE payment_status = 'Paid'", one=True)["c"]
     pending_students = q("SELECT COUNT(*) AS c FROM students WHERE payment_status = 'Pending'", one=True)["c"]
+    partial_students = q("SELECT COUNT(*) AS c FROM students WHERE active=1 AND balance > 0 AND payment_status='Pending' AND balance < COALESCE((SELECT school_fee FROM school_settings WHERE id=1),0)", one=True)["c"]
+    unpaid_students = q("SELECT COUNT(*) AS c FROM students WHERE active=1 AND balance > 0 AND (COALESCE((SELECT school_fee FROM school_settings WHERE id=1),0)=0 OR balance >= COALESCE((SELECT school_fee FROM school_settings WHERE id=1),0))", one=True)["c"]
+    payment_paid_rows=q("SELECT admission_no,full_name,grade,balance,payment_status FROM students WHERE active=1 AND balance=0 ORDER BY grade,full_name")
+    payment_partial_rows=q("SELECT admission_no,full_name,grade,balance,payment_status FROM students WHERE active=1 AND balance>0 AND COALESCE((SELECT school_fee FROM school_settings WHERE id=1),0)>0 AND balance < (SELECT school_fee FROM school_settings WHERE id=1) ORDER BY grade,full_name")
+    payment_unpaid_rows=q("SELECT admission_no,full_name,grade,balance,payment_status FROM students WHERE active=1 AND balance>0 AND (COALESCE((SELECT school_fee FROM school_settings WHERE id=1),0)=0 OR balance >= (SELECT school_fee FROM school_settings WHERE id=1)) ORDER BY grade,full_name")
+    grade_people=q("SELECT grade,COUNT(*) AS c,SUM(CASE WHEN balance=0 THEN 1 ELSE 0 END) AS paid,SUM(CASE WHEN balance>0 THEN 1 ELSE 0 END) AS owing FROM students WHERE active=1 GROUP BY grade ORDER BY grade")
+    staff_breakdown=q("SELECT role,COUNT(*) AS c FROM users WHERE active=1 AND role!='System' GROUP BY role ORDER BY role")
     total_income = q("SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'Posted'", one=True)["total"]
     total_balance = q("SELECT COALESCE(SUM(balance), 0) AS total FROM students", one=True)["total"]
     avg_balance = q("SELECT COALESCE(AVG(balance), 0) AS total FROM students", one=True)["total"]
@@ -2623,6 +2731,7 @@ def admin_dashboard():
         settings=settings,
         students=students,
         payments=payments,
+        partial_students=partial_students, unpaid_students=unpaid_students, payment_paid_rows=payment_paid_rows, payment_partial_rows=payment_partial_rows, payment_unpaid_rows=payment_unpaid_rows, grade_people=grade_people, staff_breakdown=staff_breakdown,
         users=users,
         audits=audits,
         summary={
@@ -2984,7 +3093,7 @@ def online_classes():
     if user["role"]=="Teacher": sessions=[r for r in sessions if r["teacher_user_id"]==user["id"]] + [r for r in sessions if r["teacher_user_id"]!=user["id"]]
     elif user["role"]=="Student" and user["student_id"]:
         st=q("SELECT grade FROM students WHERE id=?",(user["student_id"],),one=True); grade=st["grade"] if st else ""; sessions=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.active=1 AND lower(cs.class_name)=lower(?) ORDER BY cs.starts_at",(grade,))
-    return render_template("online_classes.html",settings=school_settings(),sessions=sessions,actor_name=user["full_name"],role=user["role"],today=datetime.now().strftime('%Y-%m-%d'))
+    return render_template("online_classes.html",settings=school_settings(),sessions=sessions,assignments=(q("SELECT * FROM teacher_assignments WHERE teacher_user_id=? AND active=1 ORDER BY class_name,subject",(user["id"],)) if user["role"]=="Teacher" else []),actor_name=user["full_name"],role=user["role"],today=datetime.now().strftime('%Y-%m-%d'))
 
 @app.route("/online-class/<int:session_id>")
 @login_required
@@ -3008,15 +3117,19 @@ def live_classroom(session_id:int):
 @login_required
 @role_required("Teacher")
 def create_online_class():
-    title=request.form.get("title","").strip() or "Live Class"; cls=request.form.get("class_name","").strip(); subject=request.form.get("subject","").strip(); starts=request.form.get("starts_at","").strip(); ends=request.form.get("ends_at","").strip(); desc=request.form.get("description","").strip()
+    user=current_user(); title=request.form.get("title","").strip() or "Live Class"; cls=request.form.get("class_name","").strip(); subject=request.form.get("subject","").strip(); starts=request.form.get("starts_at","").strip(); ends=request.form.get("ends_at","").strip(); desc=request.form.get("description","").strip(); audience=request.form.get("audience_mode","Class").strip() or "Class"
     if not cls or not subject or not starts: flash("Class, subject and start time are required.","danger"); return redirect(url_for("online_classes"))
+    assigned=q("SELECT 1 FROM teacher_assignments WHERE teacher_user_id=? AND active=1 AND lower(class_name)=lower(?) AND lower(subject)=lower(?)",(user['id'],cls,subject),one=True)
+    if not assigned: flash("You can only schedule a live lesson for a class/subject assigned to you.","danger"); return redirect(url_for("online_classes"))
+    compulsory=q("SELECT id FROM compulsory_subjects WHERE active=1 AND lower(class_name)=lower(?) AND lower(subject)=lower(?)",(cls,subject),one=True)
+    if compulsory: audience="Compulsory"
     room=f"{school_settings()['school_name'].replace(' ','-')}-{cls.replace(' ','-')}-{uuid.uuid4().hex[:8]}"
-    provider="https://meet.jit.si/"
-    url=provider+urllib.parse.quote(room)
-    execute("INSERT INTO class_sessions(teacher_user_id,class_name,subject,title,starts_at,ends_at,room_name,provider_url,description) VALUES(?,?,?,?,?,?,?,?,?)",(current_user()["id"],cls,subject,title,starts,ends,room,provider,desc))
+    provider="https://meet.jit.si/"; url=provider+urllib.parse.quote(room)
+    sid=execute("INSERT INTO class_sessions(teacher_user_id,class_name,subject,title,starts_at,ends_at,room_name,provider_url,description,audience_mode) VALUES(?,?,?,?,?,?,?,?,?,?)",(user['id'],cls,subject,title,starts,ends,room,provider,desc,audience))
     ids=[r["id"] for r in q("SELECT u.id FROM users u JOIN students s ON s.id=u.student_id WHERE u.active=1 AND u.role='Student' AND lower(s.grade)=lower(?)",(cls,))]
-    notify_users(ids,"Online class scheduled",f"{title} — {subject} at {starts}",url_for("online_classes"))
-    flash("Live class scheduled. The room can be opened immediately for a real deployment-day test.","success"); return redirect(url_for("online_classes"))
+    when=starts.replace('T',' ')
+    notify_users(ids,"Class scheduled" if audience!='Compulsory' else "Compulsory class scheduled",f"{title} — {subject} at {when}. Open your Student Dashboard to join when it starts.",url_for("online_classroom",session_id=sid),"High" if audience=='Compulsory' else "Normal")
+    flash("Live class scheduled. Students have been notified, and the lesson is now on their classroom schedule.","success"); return redirect(url_for("online_classes"))
 
 @app.route("/groups")
 @login_required
@@ -3096,13 +3209,17 @@ def create_assignment():
         flash("Title, subject and grade are required.", "danger"); return redirect(url_for("teacher_dashboard"))
     attachment_path=""
     file=request.files.get("attachment")
+    allowed_types=request.form.get("allowed_types","pdf,doc,docx,xls,xlsx,ppt,pptx,csv,txt,png,jpg,jpeg,webp,zip").strip()
+    max_submissions=max(1,min(5,request.form.get("max_submissions",2,type=int) or 2))
+    allow_any=1 if request.form.get("allow_any_file") else 0
     if file and file.filename:
         ext=file.filename.rsplit('.',1)[-1].lower() if '.' in file.filename else ''
-        if ext not in {"pdf","doc","docx","png","jpg","jpeg","webp"}:
-            flash("Assignment files must be Word, PDF or image files.", "danger"); return redirect(url_for("teacher_dashboard"))
+        allowed={x.strip().lower() for x in allowed_types.split(',') if x.strip()}
+        if not allow_any and ext not in allowed:
+            flash("This assignment's configured file types do not include that attachment.", "danger"); return redirect(url_for("teacher_dashboard"))
         filename=f"assignment-{datetime.now().strftime('%Y%m%d%H%M%S%f')}.{ext}"
         file.save(UPLOAD_DIR/filename); attachment_path="uploads/"+filename
-    assignment_id=execute("INSERT INTO assignments(title,subject,grade,description,deadline,attachment_path,posted_by) VALUES(?,?,?,?,?,?,?)", (title,subject,grade,request.form.get("description",""),request.form.get("deadline",""),attachment_path,current_user()["id"]))
+    assignment_id=execute("INSERT INTO assignments(title,subject,grade,description,deadline,attachment_path,posted_by,allowed_types,max_submissions,allow_any_file) VALUES(?,?,?,?,?,?,?,?,?,?)", (title,subject,grade,request.form.get("description",""),request.form.get("deadline",""),attachment_path,current_user()["id"],allowed_types,max_submissions,allow_any))
     student_users=q("SELECT u.id FROM users u JOIN students s ON s.id=u.student_id WHERE u.active=1 AND u.role='Student' AND lower(s.grade)=lower(?)",(grade,))
     notify_users([r["id"] for r in student_users],"New assignment",f"{title} — {subject}",url_for("student_dashboard"))
     audit(current_user()["id"], current_user()["full_name"], "Post Assignment", f"{title} posted to {grade}.")
@@ -3116,18 +3233,26 @@ def create_assignment():
 def submit_assignment(assignment_id):
     student=portal_student(request.form.get("student_id", type=int))
     assignment=q("SELECT * FROM assignments WHERE id=?", (assignment_id,), one=True)
-    if not student or not assignment or assignment["grade"] != student["grade"]: abort(404)
-    file=request.files.get("submission")
-    path=""
-    if file and file.filename:
-        ext=file.filename.rsplit('.',1)[-1].lower() if '.' in file.filename else ''
-        if ext not in {"pdf","doc","docx","png","jpg","jpeg","webp"}:
-            flash("Submission must be Word, PDF or image.", "danger"); return redirect(url_for("student_dashboard", student_id=student["id"]))
-        filename=f"submission-{student['id']}-{assignment_id}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}.{ext}"
-        file.save(UPLOAD_DIR/filename); path="uploads/"+filename
-    execute("INSERT INTO submissions(assignment_id,student_id,attachment_path,note) VALUES(?,?,?,?)", (assignment_id,student["id"],path,request.form.get("note","")))
-    flash("Assignment submitted successfully.", "success")
-    return redirect(url_for("student_dashboard", student_id=student["id"]))
+    if not student or not assignment or str(assignment["grade"]).lower() != str(student["grade"]).lower(): abort(404)
+    deadline=assignment["deadline"] or ""
+    if deadline and datetime.now().strftime('%Y-%m-%dT%H:%M') > deadline[:16]:
+        flash("The submission deadline has passed.","danger"); return redirect(url_for("student_dashboard", student_id=student["id"])+'#learning')
+    attempts=q("SELECT COUNT(*) AS n FROM submissions WHERE assignment_id=? AND student_id=?",(assignment_id,student["id"]),one=True)["n"]
+    limit=max(1,int(assignment["max_submissions"] or 2))
+    if attempts >= limit:
+        flash(f"This assignment allows {limit} submissions only.","danger"); return redirect(url_for("student_dashboard", student_id=student["id"])+'#learning')
+    file=request.files.get('submission'); path=""
+    if not file or not file.filename:
+        flash("Choose a file before submitting.","danger"); return redirect(url_for("student_dashboard", student_id=student["id"])+'#learning')
+    ext=file.filename.rsplit('.',1)[-1].lower() if '.' in file.filename else ''
+    allowed={x.strip().lower() for x in (assignment["allowed_types"] or '').split(',') if x.strip()}
+    if not assignment["allow_any_file"] and ext not in allowed:
+        flash("That file type is not accepted for this assignment.","danger"); return redirect(url_for("student_dashboard", student_id=student["id"])+'#learning')
+    filename=f"submission-{student['id']}-{assignment_id}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}.{ext}"
+    file.save(UPLOAD_DIR/filename); path="uploads/"+filename
+    execute("INSERT INTO submissions(assignment_id,student_id,attachment_path,note) VALUES(?,?,?,?)", (assignment_id,student["id"],path,request.form.get("note", "").strip()))
+    flash(f"Submission {attempts+1} of {limit} recorded successfully.", "success")
+    return redirect(url_for("student_dashboard", student_id=student["id"])+'#learning')
 
 
 # -------------------------------------------------------------------

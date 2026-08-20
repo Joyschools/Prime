@@ -13,3 +13,7 @@
 11. The application uses Flask's signed session cookie. For deployment, set a strong `SECRET_KEY` environment variable; the local build will otherwise generate and persist one in `instance/secret.key`.
 
 The package preserves the existing school data, finance features, result controls, exam cards, QR verification, assignments, ICT customization, and portal branding.
+
+
+## Demo workflow for presentations
+The V18.1 build can seed a coherent demonstration institution on first startup. Default demo accounts are `demo.admin` / `DemoAdmin@123`, `demo.teacher` / `DemoTeacher@123`, and `demo.student` / `DemoStudent@123`. Set `SEED_DEMO_DATA=0` when using a clean production database.

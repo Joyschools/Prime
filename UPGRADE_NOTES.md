@@ -61,3 +61,13 @@ The available execution environment for this packaging pass does not have Flask 
 - Rebuilt Student Dashboard with live-class access, performance position, assignments, results, digital resources, school communication and shortcuts.
 - Attendance QR now stores a human-readable location label when the phone can reverse-geocode its high-accuracy coordinates, while retaining raw latitude/longitude and offering a map link to Admin.
 - Disabled the Reception module completely for this release; `/reception*` now returns 404 and active navigation no longer exposes it.
+
+
+V18.1 presentation/data polish:
+- Teacher live-class scheduling now uses assigned class/subject data and creates student notifications.
+- Admin/ICT can define compulsory subjects; scheduled compulsory classes notify the whole class.
+- Scheme of Work is consolidated into one dedicated planner destination.
+- Student assignments expose accepted file types, deadlines, attempt counts and submission history; maximum attempts default to two.
+- Demo mode seeds coherent staff, learner, class-teacher, subject, markbook, live-class, notification and assignment/submission data.
+- Admin Command Centre gains drill-down finance and people summaries with paid / partial / unpaid zones.
+- Public landing-page colour controls now include an explicit operator guide.

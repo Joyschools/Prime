@@ -86,3 +86,13 @@ Heartbeat endpoints: `/pulse_receiver` and `/pulse`. They acknowledge incoming p
 
 ### V16 reception QR behavior
 Reception uses one institutional staff QR identity per person. On a computer, the logged-in reception workspace displays the signed-in person's QR for display or printing. On a phone, the QR card is hidden and the workspace remains scanner-first so the receptionist can scan another staff member's QR for check-in/check-out. The same QR generated for an Admin or other registered staff member is accepted by the reception scanner; Admin is no longer treated as an invalid staff QR target.
+
+
+### Demonstration accounts
+When `SEED_DEMO_DATA` is not set to `0`, the first application startup creates a coherent demo institution so the core workflows can be demonstrated end-to-end. Default credentials:
+
+- Administrator: `demo.admin` / `DemoAdmin@123`
+- Teacher: `demo.teacher` / `DemoTeacher@123`
+- Student: `demo.student` / `DemoStudent@123`
+
+Set `SEED_DEMO_DATA=0` for a production environment where you do not want demo accounts or records. Demo passwords can be overridden with `DEMO_ADMIN_PASSWORD`, `DEMO_TEACHER_PASSWORD` and `DEMO_STUDENT_PASSWORD`.
