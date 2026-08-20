@@ -485,6 +485,9 @@ def init_db() -> None:
         ensure_column(conn, "school_settings", "landing_role_columns INTEGER NOT NULL DEFAULT 3")
         ensure_column(conn, "school_settings", "online_class_provider TEXT NOT NULL DEFAULT 'https://meet.jit.si/'")
         ensure_column(conn, "school_settings", "parent_portal_enabled INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "school_settings", "welcome_animation_enabled INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "school_settings", "welcome_animation_name TEXT NOT NULL DEFAULT 'Toror Technology and Innovations Ltd.'")
+        ensure_column(conn, "school_settings", "welcome_animation_duration_ms INTEGER NOT NULL DEFAULT 2200")
 
         ensure_column(conn, "students", "guardian_name TEXT")
         ensure_column(conn, "students", "guardian_phone TEXT")
@@ -852,6 +855,10 @@ def init_db() -> None:
         ensure_column(conn, "assignments", "max_submissions INTEGER NOT NULL DEFAULT 2")
         ensure_column(conn, "assignments", "allow_any_file INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "class_sessions", "audience_mode TEXT NOT NULL DEFAULT 'Class'")
+        ensure_column(conn, "class_sessions", "recording_path TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "class_sessions", "recording_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "class_sessions", "saved_at TEXT")
+        ensure_column(conn, "class_sessions", "library_item_id INTEGER")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_compulsory_subjects_class ON compulsory_subjects(class_name,active)")
         ensure_column(conn, "users", "workspace_type TEXT NOT NULL DEFAULT 'Teaching'")
         ensure_column(conn, "school_settings", "offline_enabled INTEGER NOT NULL DEFAULT 1")
@@ -1592,6 +1599,7 @@ def auth_template_context():
     return {
         "current_user": current_user(), "school_settings": settings, "portal_title": settings["school_name"], "theme_color": settings["primary_color"], "all_roles": ALL_PORTAL_ROLES, "public_roles": PUBLIC_ROLES,
         "theme_style": theme_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(),
+        "welcome_animation": bool(settings["welcome_animation_enabled"]), "welcome_animation_name": settings["welcome_animation_name"], "welcome_animation_duration_ms": int(settings["welcome_animation_duration_ms"] or 2200),
         "important_dates": important_dates(12, landing=request.path == '/'),
         "notification_count": notification_count(current_user()['id']) if current_user() else 0,
         "role_shortcuts": role_shortcuts(current_user()),
@@ -3089,7 +3097,7 @@ def ict_dashboard():
 
 
 def _theme_snapshot_payload(settings):
-    keys=["school_name","portal_subtitle","primary_color","accent_color","background_color","panel_color","sidebar_color","header_color","text_color","muted_text_color","font_family","heading_font","radius_px","button_radius_px","theme_mode","sidebar_style","menu_order","home_label","assignments_label","results_label","messages_label","finance_label","branding_label","custom_css","footer_title","footer_text","footer_contact","footer_links","platform_credit_enabled","landing_background_color","landing_panel_color","landing_text_color","landing_accent_color","landing_font_family","landing_heading_font","landing_content_width","landing_hero_layout","landing_role_columns","landing_background_path","institution_image_path","institution_image_2_path","institution_image_3_path","institution_image_1_position","institution_image_2_position","institution_image_3_position"]
+    keys=["school_name","portal_subtitle","primary_color","accent_color","background_color","panel_color","sidebar_color","header_color","text_color","muted_text_color","font_family","heading_font","radius_px","button_radius_px","theme_mode","sidebar_style","menu_order","home_label","assignments_label","results_label","messages_label","finance_label","branding_label","custom_css","footer_title","footer_text","footer_contact","footer_links","platform_credit_enabled","landing_background_color","landing_panel_color","landing_text_color","landing_accent_color","landing_font_family","landing_heading_font","landing_content_width","landing_hero_layout","landing_role_columns","landing_background_path","institution_image_path","institution_image_2_path","institution_image_3_path","institution_image_1_position","institution_image_2_position","institution_image_3_position","welcome_animation_enabled","welcome_animation_name","welcome_animation_duration_ms"]
     return {k: settings[k] for k in keys if k in settings.keys()}
 
 def _save_theme_snapshot(snapshot_type, actor_id):
@@ -3156,6 +3164,9 @@ def ict_landing_branding():
         "landing_content_width": max(900,min(1600,int(request.form.get("landing_content_width", "1240") or 1240))),
         "landing_hero_layout": request.form.get("landing_hero_layout", "split").strip().lower() if request.form.get("landing_hero_layout") else "split",
         "landing_role_columns": max(1,min(3,int(request.form.get("landing_role_columns", "3") or 3))),
+        "welcome_animation_enabled": 1 if request.form.get("welcome_animation_enabled") in {"1","on","true","yes"} else 0,
+        "welcome_animation_name": request.form.get("welcome_animation_name", "Toror Technology and Innovations Ltd.").strip()[:120] or "Toror Technology and Innovations Ltd.",
+        "welcome_animation_duration_ms": max(1200,min(5000,int(request.form.get("welcome_animation_duration_ms", "2200") or 2200))),
     }
     if vals["landing_hero_layout"] not in {"split","stacked"}: vals["landing_hero_layout"]="split"
     positions=[request.form.get(f"institution_image_{i}_position","50% 50%").strip()[:40] for i in (1,2,3)]
@@ -3179,8 +3190,8 @@ def ict_landing_branding():
             folder=UPLOAD_DIR/"institution"; folder.mkdir(exist_ok=True)
             out=folder/f"history-{i}-{uuid.uuid4().hex[:10]}.{ext}"; file.save(out); path="uploads/institution/"+out.name
         paths.append(path)
-    execute("""UPDATE school_settings SET landing_background_color=?,landing_panel_color=?,landing_text_color=?,landing_accent_color=?,landing_font_family=?,landing_heading_font=?,landing_content_width=?,landing_hero_layout=?,landing_role_columns=?,landing_background_path=?,institution_image_path=?,institution_image_2_path=?,institution_image_3_path=?,institution_image_1_position=?,institution_image_2_position=?,institution_image_3_position=? WHERE id=1""",(vals["landing_background_color"],vals["landing_panel_color"],vals["landing_text_color"],vals["landing_accent_color"],vals["landing_font_family"],vals["landing_heading_font"],vals["landing_content_width"],vals["landing_hero_layout"],vals["landing_role_columns"],landing_path,paths[0],paths[1],paths[2],positions[0],positions[1],positions[2]))
-    audit(current_user()["id"],current_user()["full_name"],"Landing Page Branding Update","Public landing colors, history images and image positioning updated.")
+    execute("""UPDATE school_settings SET landing_background_color=?,landing_panel_color=?,landing_text_color=?,landing_accent_color=?,landing_font_family=?,landing_heading_font=?,landing_content_width=?,landing_hero_layout=?,landing_role_columns=?,landing_background_path=?,institution_image_path=?,institution_image_2_path=?,institution_image_3_path=?,institution_image_1_position=?,institution_image_2_position=?,institution_image_3_position=?,welcome_animation_enabled=?,welcome_animation_name=?,welcome_animation_duration_ms=? WHERE id=1""",(vals["landing_background_color"],vals["landing_panel_color"],vals["landing_text_color"],vals["landing_accent_color"],vals["landing_font_family"],vals["landing_heading_font"],vals["landing_content_width"],vals["landing_hero_layout"],vals["landing_role_columns"],landing_path,paths[0],paths[1],paths[2],positions[0],positions[1],positions[2],vals["welcome_animation_enabled"],vals["welcome_animation_name"],vals["welcome_animation_duration_ms"]))
+    audit(current_user()["id"],current_user()["full_name"],"Landing Page Branding Update","Public landing branding, history visuals and welcome animation updated.")
     flash("Landing-page branding and institution history visuals saved separately from the logged-in system theme.","success")
     return redirect(url_for("ict_dashboard")+"#branding")
 
@@ -3306,6 +3317,65 @@ def create_online_class():
     when=starts.replace('T',' ')
     notify_users(ids,"Class scheduled" if audience!='Compulsory' else "Compulsory class scheduled",f"{title} — {subject} at {when}. Open your Student Dashboard to join when it starts.",url_for("online_classroom",session_id=sid),"High" if audience=='Compulsory' else "Normal")
     flash("Live class scheduled. Students have been notified, and the lesson is now on their classroom schedule.","success"); return redirect(url_for("online_classes"))
+
+@app.route("/online-class/<int:session_id>/save", methods=["POST"])
+@login_required
+def save_online_class(session_id:int):
+    user=current_user(); sess=q("SELECT * FROM class_sessions WHERE id=? AND active=1",(session_id,),one=True)
+    if not sess: abort(404)
+    if user["role"] not in {"Admin","ICT"} and not (user["role"]=="Teacher" and user["id"]==sess["teacher_user_id"]): abort(403)
+    notes=request.form.get("archive_notes","").strip()[:4000]
+    recording_url=request.form.get("recording_url","").strip()[:1000]
+    uploaded=request.files.get("recording")
+    recording_path=sess["recording_path"] or ""
+    if uploaded and uploaded.filename:
+        ext=uploaded.filename.rsplit('.',1)[-1].lower() if '.' in uploaded.filename else ''
+        if ext not in {"mp4","webm","mov","m4v","mp3","m4a","wav","ogg"}:
+            flash("Recording must be MP4, WEBM, MOV, M4V, MP3, M4A, WAV or OGG.","danger"); return redirect(url_for("live_classroom",session_id=session_id))
+        folder=UPLOAD_DIR/"online_classes"; folder.mkdir(exist_ok=True)
+        out=folder/f"class-{session_id}-{uuid.uuid4().hex[:10]}.{ext}"; uploaded.save(out); recording_path="uploads/online_classes/"+out.name
+    title=f"{sess['title']} — {sess['subject']} ({sess['class_name']})"
+    description=(sess["description"] or "").strip()
+    combined=(description+(("\n\n"+notes) if notes else "")).strip()
+    library_id=None
+    if request.form.get("publish_library") in {"1","on","true","yes"}:
+        existing=q("SELECT id FROM library_items WHERE active=1 AND title=? LIMIT 1",(title,),one=True)
+        if existing:
+            library_id=existing["id"]
+            execute("UPDATE library_items SET description=?,class_level=?,subject=?,resource_type=?,file_path=?,external_url=? WHERE id=?",(combined,sess["class_name"],sess["subject"],"Digital",recording_path,recording_url,library_id))
+        else:
+            library_id=execute("INSERT INTO library_items(title,category,author,quantity,available_quantity,resource_type,file_path,external_url,description,created_by,class_level,subject) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(title,"Recorded Class",sess["teacher_name"] if "teacher_name" in sess.keys() else user["full_name"],1,1,"Digital",recording_path,recording_url,combined,user["id"],sess["class_name"],sess["subject"]))
+    execute("UPDATE class_sessions SET recording_path=?,recording_url=?,saved_at=CURRENT_TIMESTAMP,library_item_id=? WHERE id=?",(recording_path,recording_url,library_id,session_id))
+    student_ids=[r["id"] for r in q("SELECT u.id FROM users u JOIN students s ON s.id=u.student_id WHERE u.active=1 AND u.role='Student' AND lower(s.grade)=lower(?)",(sess["class_name"],))]
+    resource_link=url_for("online_classroom",session_id=session_id)
+    if recording_path or recording_url:
+        resource_link=url_for("download_online_class",session_id=session_id)
+    notify_users(student_ids,"Recorded class available",f"{sess['title']} — {sess['subject']} is now available for revision. Open the class resource from your notifications or Library.",resource_link,"Normal")
+    audit(user["id"],user["full_name"],"Online Class Archive",f"Saved learning resource for online class {sess['title']}.")
+    flash("Class saved as a reusable learning resource" + (" and added to the Library." if library_id else "." ) + " Students have been notified.","success")
+    return redirect(url_for("live_classroom",session_id=session_id))
+
+@app.route("/online-class/<int:session_id>/download")
+@login_required
+def download_online_class(session_id:int):
+    user=current_user()
+    sess=q("SELECT * FROM class_sessions WHERE id=? AND active=1",(session_id,),one=True)
+    if not sess: abort(404)
+    allowed=False
+    if user["role"] in {"Admin","ICT"}: allowed=True
+    elif user["role"]=="Teacher" and user["id"]==sess["teacher_user_id"]: allowed=True
+    elif user["role"]=="Student" and user["student_id"]:
+        st=q("SELECT grade FROM students WHERE id=? AND active=1",(user["student_id"],),one=True)
+        allowed=bool(st and str(st["grade"]).lower()==str(sess["class_name"]).lower())
+    if not allowed: abort(403)
+    if sess["recording_path"]:
+        target=(BASE_DIR / sess["recording_path"]).resolve()
+        root=UPLOAD_DIR.resolve()
+        if root not in target.parents or not target.exists() or not target.is_file(): abort(404)
+        return send_file(target,as_attachment=True,download_name=Path(target).name)
+    if sess["recording_url"]:
+        return redirect(sess["recording_url"])
+    abort(404)
 
 @app.route("/groups")
 @login_required
