@@ -499,3 +499,132 @@ body.app-body.scrolled .topbar{padding-top:14px;padding-bottom:14px;box-shadow:0
 @keyframes seasonDrift{0%,100%{transform:translate(0,0) scale(.8);opacity:.15}50%{transform:translate(24px,-20px) scale(1.15);opacity:.35}}
 @media(max-width:820px){.seasonal-layer .seasonal-motif{top:74px;right:12px;font-size:15px}.seasonal-layer .seasonal-dismiss{top:98px;right:10px}.seasonal-layer .seasonal-spark{display:none}}
 @media(prefers-reduced-motion:reduce){.seasonal-layer,.nav-group,.topbar{animation:none!important;transition:none!important}.hash-target-active{animation:none}}
+
+
+/* V26 phone-first refinement. Desktop intentionally remains on the V25 layout. */
+@media (max-width:820px){
+  html{font-size:17px;scroll-padding-top:86px}
+  body{font-size:17px;overflow-x:hidden;line-height:1.5}
+  body.app-body{display:block!important;width:100%;max-width:100vw;padding:0!important;margin:0;overflow-x:hidden}
+  body.app-body .content{display:grid;width:100%!important;max-width:100vw!important;min-width:0!important;padding:76px 12px 26px!important;gap:14px;overflow-x:hidden}
+  body.app-body .content>*{min-width:0!important;max-width:100%!important;width:100%!important}
+  body.app-body .topbar{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:56px 16px 16px!important;border-radius:0 0 16px 16px!important;margin:0!important;min-height:0}
+  body.app-body .topbar-left,body.app-body .topbar-right{display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+  body.app-body .topbar h1{font-size:clamp(26px,7vw,34px);line-height:1.08}
+  body.app-body .topbar-subtitle{font-size:16px;line-height:1.45}
+  body.app-body .top-actions{display:grid;grid-template-columns:1fr;gap:8px;width:100%}
+  body.app-body .top-actions .btn,body.app-body .topbar-right .btn{width:100%;min-height:46px;font-size:16px}
+  body.app-body .panel{padding:20px 16px!important;border-radius:16px!important;overflow:hidden}
+  body.app-body .panel h2,body.app-body .panel h3{font-size:clamp(21px,6vw,28px);line-height:1.15}
+  body.app-body .hero-title{font-size:clamp(28px,8vw,38px)!important}
+  body.app-body .hero-copy,.muted{font-size:16px;line-height:1.55}
+  body.app-body .eyebrow{font-size:12px}
+  body.app-body .btn{min-height:46px;padding:12px 15px;font-size:16px;white-space:normal}
+  body.app-body .btn.mini{min-height:42px;font-size:15px;padding:10px 12px}
+  body.app-body input,body.app-body select,body.app-body textarea{font-size:17px;min-height:48px;padding:12px 13px}
+  body.app-body label span{font-size:12px}
+  body.app-body .quick-actions{display:grid;grid-template-columns:1fr;gap:10px;width:100%}
+  body.app-body .quick-actions>*{width:100%;min-width:0}
+  body.app-body .stats-grid,body.app-body .summary-grid,body.app-body .detail-grid,body.app-body .feature-grid,body.app-body .resource-grid,body.app-body .candidate-grid{grid-template-columns:1fr!important}
+  body.app-body .people-hero{grid-template-columns:1fr!important}
+  body.app-body .people-filters{grid-template-columns:1fr!important}
+  body.app-body .people-filters>*{width:100%!important}
+  body.app-body .two-col,body.app-body .stack-form.two-col{grid-template-columns:1fr!important}
+  body.app-body .table-wrap{width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  body.app-body table{min-width:640px;font-size:15px}
+  body.app-body th,body.app-body td{padding:12px 10px;white-space:normal}
+  body.app-body .modal{max-width:calc(100vw - 20px)}
+  body.app-body .modal-card{width:100%;max-width:100%;max-height:84dvh;padding:18px;border-radius:16px}
+  body.app-body img,body.app-body video,body.app-body iframe{max-width:100%;height:auto}
+  body.app-body .sidebar{width:min(92vw,360px)!important}
+  body.app-body .sidebar .brand-line{align-items:flex-start}
+  body.app-body .sidebar .brand-name{font-size:18px}
+  body.app-body .sidebar .nav-link,body.app-body .sidebar .nav-group-toggle{font-size:17px;min-height:48px;padding:13px 14px}
+  body.app-body .sidebar .sidebar-foot .btn{min-height:48px}
+  body.app-body .nav-group-links{gap:7px}
+  body.app-body .nav-group.open .nav-group-links{max-height:900px}
+  body.app-body .portal-adverts{gap:10px}
+  body.app-body .advert-card{padding:16px}
+  body.app-body .advert-card p{font-size:16px}
+  body.app-body .status-pill,body.app-body .pill,body.app-body .account-state{font-size:13px}
+  body.app-body .table-actions{display:grid;grid-template-columns:1fr;gap:8px}
+  body.app-body .table-actions>*{width:100%}
+  body.app-body .date-strip{grid-template-columns:1fr!important}
+  body.app-body .institution-grid{grid-template-columns:1fr!important}
+  body.app-body .app-footer-minimal{padding:0 12px}
+  body.app-body .prime-mobile-nav{width:46px;height:46px;font-size:22px}
+}
+
+/* User-controlled mobile text sizing; defaults to Large on phones, untouched on desktop. */
+@media (max-width:820px){
+  html[data-prime-text="normal"]{font-size:16px}
+  html[data-prime-text="large"]{font-size:18px}
+  html[data-prime-text="xlarge"]{font-size:20px}
+  html[data-prime-text="normal"] body.app-body{font-size:16px}
+  html[data-prime-text="large"] body.app-body{font-size:18px}
+  html[data-prime-text="xlarge"] body.app-body{font-size:20px}
+  html[data-prime-text="large"] body.app-body .topbar h1{font-size:clamp(28px,8vw,36px)}
+  html[data-prime-text="xlarge"] body.app-body .topbar h1{font-size:clamp(30px,9vw,38px)}
+  html[data-prime-text="xlarge"] body.app-body .hero-copy,html[data-prime-text="xlarge"] body.app-body .muted{font-size:18px}
+  html[data-prime-text="xlarge"] body.app-body .btn{font-size:17px}
+  html[data-prime-text="xlarge"] body.app-body input,html[data-prime-text="xlarge"] body.app-body select,html[data-prime-text="xlarge"] body.app-body textarea{font-size:19px}
+}
+
+/* Landing page: larger, calmer type on phones for parents and other mobile users. */
+@media(max-width:820px){
+  body.auth-body{font-size:18px;overflow-x:hidden}
+  body.auth-body .landing-shell{width:100%!important;padding:0 10px 22px!important}
+  body.auth-body .landing-topbar{padding:18px 16px!important;border-radius:0 0 16px 16px!important}
+  body.auth-body .landing-topbar .brand-name{font-size:20px}
+  body.auth-body .landing-topbar .brand-subtitle{font-size:15px}
+  body.auth-body .landing-hero{padding:28px 18px!important;margin-top:12px;border-radius:18px!important}
+  body.auth-body .hero-copy h1{font-size:clamp(38px,11vw,52px)!important;line-height:1.05}
+  body.auth-body .landing-lead{font-size:18px!important;line-height:1.55}
+  body.auth-body .landing-important-dates,.auth-body .landing-gallery,.auth-body .role-grid{padding:16px!important}
+  body.auth-body .portal-section-title h2{font-size:28px!important}
+  body.auth-body .section-note{font-size:16px}
+  body.auth-body .role-card{min-height:170px;padding:20px!important}
+  body.auth-body .role-card strong{font-size:25px}
+  body.auth-body .role-card span{font-size:17px;line-height:1.5}
+  body.auth-body .btn{min-height:50px;font-size:17px}
+  body.auth-body .panel{padding:20px 16px!important}
+  body.auth-body input,body.auth-body select,body.auth-body textarea{font-size:18px;min-height:50px}
+  body.auth-body .qr-login-grid{grid-template-columns:1fr!important}
+}
+
+/* V27 mobile finish: phone content owns the viewport; desktop rules remain unchanged. */
+@media (max-width:820px){
+  html,body{width:100%;max-width:100%;overflow-x:hidden}
+  body.app-body{display:block!important;min-height:100dvh;width:100%!important;max-width:100vw!important}
+  body.app-body > .content,
+  body.app-body > main.content,
+  body.app-body main.content,
+  body.app-body > main:not(.content){width:100%!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important;margin:0!important}
+  body.app-body .content{padding-left:10px!important;padding-right:10px!important;padding-bottom:34px!important}
+  body.app-body .panel,.content .panel{box-sizing:border-box;width:100%!important;max-width:100%!important}
+  body.app-body .topbar{width:100%!important;box-sizing:border-box!important;margin-left:0!important;margin-right:0!important}
+  body.app-body .table-wrap{max-width:100%!important;width:100%!important;overflow-x:auto!important;overscroll-behavior-x:contain}
+  body.app-body .table-wrap table{min-width:620px!important}
+  body.app-body .panel-head{flex-direction:column;align-items:stretch!important}
+  body.app-body .panel-head > *{max-width:100%;min-width:0}
+  body.app-body .form-grid,.content .grid,.content .two-col,.content .three-col,.content .four-col{grid-template-columns:1fr!important}
+  body.app-body .ict-grid,.content .ict-grid,.content .ict-action-grid{grid-template-columns:1fr!important}
+  body.app-body .toolbar{flex-wrap:wrap!important}
+  body.app-body .toolbar > *{min-width:0!important;max-width:100%}
+  body.app-body .hero-main,.content .hero-main{padding:20px!important}
+  body.app-body .student-grid{display:grid!important;grid-template-columns:1fr!important}
+  body.app-body .student-grid > *,body.app-body .span-4,body.app-body .span-8,body.app-body .span-12{grid-column:1/-1!important}
+  body.app-body .action-grid{grid-template-columns:1fr!important}
+  body.app-body .notification-bell{width:46px!important;height:46px!important}
+  /* generous touch targets and readable labels for older eyes without looking oversized */
+  body.app-body .eyebrow{letter-spacing:.045em;font-size:13px}
+  body.app-body p,body.app-body li,body.app-body .muted{font-size:17px;line-height:1.6}
+  body.app-body .small{font-size:15px}
+  body.app-body h1{font-size:clamp(30px,8vw,40px)!important}
+  body.app-body h2{font-size:clamp(26px,7vw,34px)!important}
+  body.app-body h3{font-size:clamp(22px,6vw,29px)!important}
+  body.app-body .mini-card{padding:16px}
+  body.app-body .mini-card span{font-size:13px}
+  body.app-body .mini-card strong{font-size:20px}
+  body.app-body .sidebar{max-height:calc(100dvh - 16px);overflow-y:auto;-webkit-overflow-scrolling:touch}
+}

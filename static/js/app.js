@@ -58,7 +58,10 @@
   document.addEventListener("click", (event) => {
     if (!isPhoneLayout()) return;
     if (!document.body.classList.contains("mobile-nav-open")) return;
-    if (event.target.closest(".sidebar") || event.target.closest(".sidebar-toggle") || event.target.closest("#prime-mobile-nav")) return;
+    if (event.target.closest(".sidebar") || event.target.closest(".sidebar-toggle") || event.target.closest("#prime-mobile-nav")) {
+      if (event.target.closest(".sidebar a")) window.setTimeout(() => document.body.classList.remove("mobile-nav-open"), 80);
+      return;
+    }
     document.body.classList.remove("mobile-nav-open");
   });
   window.addEventListener("resize", () => {

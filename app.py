@@ -1405,7 +1405,7 @@ def persist_auth_cookie(response):
         try:
             body=response.get_data(as_text=True)
             if 'id="prime-global-tools"' not in body and "</body>" in body:
-                shell="""<button id="prime-mobile-nav" class="prime-mobile-nav" type="button" aria-label="Open navigation" aria-expanded="false" title="Open navigation">☰</button><div id="prime-mobile-menu" class="prime-mobile-menu"><a href="/dashboard">Dashboard</a><a href="/calendar">School calendar</a><a href="/notifications">Notifications</a><a href="/system-help">System help</a><a href="/logout">Logout</a></div><div id="prime-global-tools" class="prime-global-tools"><a class="prime-bell" href="/notifications" aria-label="Notifications" title="Notifications"><span aria-hidden="true">🔔</span><b id="prime-notification-count" class="prime-count hidden"></b></a><button type="button" class="prime-shortcuts-btn" aria-label="Open shortcuts" onclick="document.getElementById('prime-shortcuts').classList.toggle('open')">☰</button><div id="prime-shortcuts" class="prime-shortcuts"><strong>Quick access</strong><a href="/calendar">Calendar</a><a href="/notifications">Notifications</a><a href="/online-classes">Live classes</a><a href="/groups">Groups</a><a href="/leadership">Leadership</a></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-bell span{color:inherit;font-size:18px;line-height:1}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}.prime-mobile-nav{display:none}.prime-mobile-nav.open{display:grid}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav,body.auth-body .prime-mobile-menu{display:none}@media(max-width:820px){.prime-shortcuts-btn{display:none!important}.prime-mobile-nav{display:grid;place-items:center;position:fixed;left:12px;top:12px;width:44px;height:44px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:20px;cursor:pointer;z-index:5001}.prime-global-tools{right:12px;top:12px}}</style><script>(function(){var m=document.getElementById('prime-mobile-nav');if(m){if(document.getElementById('sidebarToggle')){m.remove();}else{m.addEventListener('click',function(){var hasSidebar=!!document.querySelector('.sidebar');document.body.classList.toggle(hasSidebar?'mobile-nav-open':'prime-smart-menu-open');});}}fetch('/api/notifications').then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});})();</script>"""
+                shell="""<button id="prime-mobile-nav" class="prime-mobile-nav" type="button" aria-label="Open navigation" aria-expanded="false" title="Open navigation">☰</button><div id="prime-mobile-menu" class="prime-mobile-menu"><a href="/dashboard">Dashboard</a><a href="/calendar">School calendar</a><a href="/notifications">Notifications</a><a href="/system-help">System help</a><a href="/logout">Logout</a></div><div id="prime-global-tools" class="prime-global-tools"><a class="prime-bell" href="/notifications" aria-label="Notifications" title="Notifications"><span aria-hidden="true">🔔</span><b id="prime-notification-count" class="prime-count hidden"></b></a><button type="button" class="prime-shortcuts-btn" aria-label="Open shortcuts" onclick="document.getElementById('prime-shortcuts').classList.toggle('open')">☰</button><div id="prime-shortcuts" class="prime-shortcuts"><strong>Quick access</strong><a href="/calendar">Calendar</a><a href="/notifications">Notifications</a><a href="/online-classes">Live classes</a><a href="/groups">Groups</a><a href="/leadership">Leadership</a></div></div><button id="prime-mobile-text" class="prime-mobile-text" type="button" aria-label="Adjust text size" title="Adjust text size">Aa</button><div id="prime-text-sheet" class="prime-text-sheet" role="dialog" aria-modal="true" aria-label="Text size settings"><div class="prime-text-sheet-card"><div><strong>Text size</strong><span class="muted">Adjust this device only.</span></div><div class="prime-text-choices"><button type="button" data-prime-text="normal">Normal</button><button type="button" data-prime-text="large">Large</button><button type="button" data-prime-text="xlarge">Extra large</button></div><button type="button" class="btn btn-ghost btn-block" id="prime-text-close">Done</button></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-bell span{color:inherit;font-size:18px;line-height:1}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}.prime-mobile-nav{display:none}.prime-mobile-nav.open{display:grid}.prime-mobile-text,.prime-text-sheet{display:none}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav,body.auth-body .prime-mobile-menu,body.auth-body .prime-mobile-text{display:none}@media(max-width:820px){.prime-shortcuts-btn{display:none!important}.prime-mobile-nav{display:grid;place-items:center;position:fixed;left:12px;top:12px;width:46px;height:46px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:22px;cursor:pointer;z-index:5001}.prime-global-tools{right:12px;top:12px}.prime-mobile-text{display:grid;place-items:center;position:fixed;right:64px;top:12px;width:46px;height:46px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:15px;font-weight:900;cursor:pointer;z-index:5001}.prime-text-sheet{position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:6000;align-items:flex-end;justify-content:center;padding:14px}.prime-text-sheet.open{display:flex}.prime-text-sheet-card{width:min(460px,100%);border:1px solid var(--text-border,var(--border));border-radius:20px 20px 14px 14px;background:var(--panel);box-shadow:0 -18px 50px rgba(0,0,0,.26);padding:18px;display:grid;gap:16px}.prime-text-sheet-card>div:first-child{display:grid;gap:4px}.prime-text-choices{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.prime-text-choices button{border:1px solid var(--text-border,var(--border));background:var(--panel-3);color:var(--primary-text);border-radius:12px;padding:12px 8px;font-weight:800;cursor:pointer}.prime-text-choices button.active{border-color:var(--primary-blue);box-shadow:0 0 0 3px rgba(16,163,127,.14)}}</style><script>(function(){var m=document.getElementById('prime-mobile-nav');if(m){if(document.getElementById('sidebarToggle')){m.remove();}else{m.addEventListener('click',function(){var hasSidebar=!!document.querySelector('.sidebar');document.body.classList.toggle(hasSidebar?'mobile-nav-open':'prime-smart-menu-open');});}}var tb=document.getElementById('prime-mobile-text'),sheet=document.getElementById('prime-text-sheet'),close=document.getElementById('prime-text-close'),choices=document.querySelectorAll('[data-prime-text]');var saved=localStorage.getItem('prime_text_size')||'large';if(saved==='normal'||saved==='large'||saved==='xlarge')document.documentElement.dataset.primeText=saved;if(tb&&sheet){tb.addEventListener('click',function(){sheet.classList.add('open');});sheet.addEventListener('click',function(e){if(e.target===sheet)sheet.classList.remove('open');});close&&close.addEventListener('click',function(){sheet.classList.remove('open');});choices.forEach(function(b){b.classList.toggle('active',b.dataset.primeText===saved);b.addEventListener('click',function(){saved=b.dataset.primeText;localStorage.setItem('prime_text_size',saved);document.documentElement.dataset.primeText=saved;choices.forEach(function(x){x.classList.toggle('active',x.dataset.primeText===saved);});});});}fetch('/api/notifications').then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});})();</script>"""
                 response.set_data(body.replace("</body>",shell+"</body>",1))
         except Exception:
             pass
@@ -1438,6 +1438,14 @@ def role_required(*roles: str):
             user = current_user()
             if not user or user["role"] not in roles:
                 abort(403)
+            # Admin and ICT are deliberately separate workspaces. A valid Admin
+            # account must never be treated as ICT (or vice-versa), even when a
+            # legacy workspace_type value is stale. Shared maintenance routes may
+            # explicitly name both roles, but role-specific dashboards remain exact.
+            if view.__name__ in {"admin_dashboard", "ict_dashboard", "admin_entry", "ict_entry"}:
+                expected = "Admin" if view.__name__.startswith("admin") else "ICT"
+                if user["role"] != expected:
+                    abort(403)
             if user["role"] == "Teacher" and "Teacher" in roles and workspace_type_for_user(user) != "Teaching":
                 abort(403)
             return view(*args, **kwargs)
@@ -2271,6 +2279,12 @@ def register_admin():
 def enter_role(role: str):
     if role not in ALL_PORTAL_ROLES:
         abort(404)
+    existing=current_user()
+    # Never silently switch a logged-in account into another workspace. Admin and
+    # ICT in particular are separate security domains; a user must explicitly
+    # log out and authenticate as the other role.
+    if existing and existing["role"] != role:
+        abort(403)
     return enter_role_without_login(role)
 
 
@@ -3334,7 +3348,7 @@ def finance_dashboard():
 
 @app.route("/ict-dashboard")
 @login_required
-@role_required("ICT", "Admin")
+@role_required("ICT")
 def ict_dashboard():
     settings=school_settings()
     nav_items=navigation_items("ICT", settings)
@@ -3360,7 +3374,7 @@ def _save_theme_snapshot(snapshot_type, actor_id):
 
 @app.route("/ict/settings", methods=["POST"])
 @login_required
-@role_required("ICT", "Admin")
+@role_required("ICT")
 def ict_settings():
     _save_theme_snapshot("workspace", current_user()["id"])
     school_name=request.form.get("school_name", "School").strip() or "School"
@@ -3400,7 +3414,7 @@ def ict_settings():
 
 @app.route("/ict/landing-branding", methods=["POST"])
 @login_required
-@role_required("ICT","Admin")
+@role_required("ICT")
 def ict_landing_branding():
     _save_theme_snapshot("landing", current_user()["id"])
     # Public landing page branding is intentionally separate from the in-system workspace theme.
@@ -3449,7 +3463,7 @@ def ict_landing_branding():
 
 @app.route("/ict/logo", methods=["POST"])
 @login_required
-@role_required("ICT", "Admin")
+@role_required("ICT")
 def ict_logo():
     file=request.files.get("logo")
     if not file or not file.filename: return redirect(url_for("ict_dashboard"))
@@ -3466,7 +3480,7 @@ def ict_logo():
 
 @app.route("/ict/background", methods=["POST"])
 @login_required
-@role_required("ICT", "Admin")
+@role_required("ICT")
 def ict_background():
     file=request.files.get("background")
     if not file or not file.filename: return redirect(url_for("ict_dashboard"))
@@ -3527,11 +3541,88 @@ def calendar_rule_delete(rule_id):
 def calendar_delete(event_id):
     execute("UPDATE important_dates SET visible=0, landing_visible=0 WHERE id=?",(event_id,)); flash("Calendar event removed.","success"); return redirect(url_for("calendar_view"))
 
+def _notification_recipients_for(actor, audience, selected_ids=None, class_name=""):
+    audience=(audience or "").strip().lower()
+    selected_ids=selected_ids or []
+    ids=[]
+    if audience == "all":
+        ids=[r["id"] for r in q("SELECT id FROM users WHERE active=1 AND role!='System'")]
+    elif audience == "staff":
+        ids=[r["id"] for r in q("SELECT id FROM users WHERE active=1 AND role IN ('Admin','ICT','Finance','Teacher','Librarian','Reception','Driver')")]
+    elif audience == "students":
+        ids=[r["id"] for r in q("SELECT id FROM users WHERE active=1 AND role='Student'")]
+    elif audience == "parents":
+        ids=[r["id"] for r in q("SELECT id FROM users WHERE active=1 AND role='Parent'")]
+    elif audience == "class":
+        if actor["role"] == "Teacher":
+            allowed=[r["class_name"] for r in q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=?",(actor["id"],))]
+            taught=[r["class_name"] for r in q("SELECT DISTINCT class_name FROM teacher_assignments WHERE teacher_user_id=? AND active=1",(actor["id"],))]
+            allowed=sorted(set(allowed+taught))
+            if class_name and class_name not in allowed:
+                abort(403)
+        rows=q("SELECT u.id FROM users u JOIN students s ON s.id=u.student_id WHERE u.active=1 AND u.role='Student' AND lower(s.grade)=lower(?)",(class_name,))
+        ids=[r["id"] for r in rows]
+    elif audience == "selected":
+        clean=[]
+        for raw in selected_ids:
+            try: clean.append(int(raw))
+            except Exception: pass
+        if clean:
+            marks=','.join('?' for _ in clean)
+            ids=[r["id"] for r in q(f"SELECT id FROM users WHERE active=1 AND role!='System' AND id IN ({marks})", clean)]
+    elif audience == "self":
+        ids=[actor["id"]]
+    else:
+        ids=[]
+    return sorted(set(ids))
+
+@app.route("/notifications/send", methods=["POST"])
+@login_required
+@role_required("Admin","ICT","Teacher")
+def notifications_send():
+    actor=current_user()
+    audience=request.form.get("audience","selected")
+    title=request.form.get("title","").strip()[:160]
+    body=request.form.get("body","").strip()[:5000]
+    link=request.form.get("link","").strip()[:500]
+    priority=request.form.get("priority","Normal").strip() or "Normal"
+    class_name=request.form.get("class_name","").strip()
+    selected=request.form.getlist("user_ids")
+    if not title or not body:
+        flash("Enter a notification title and message.","danger")
+        return redirect(url_for("notifications_view"))
+    ids=_notification_recipients_for(actor,audience,selected,class_name)
+    if not ids:
+        flash("No recipients matched that audience.","warning")
+        return redirect(url_for("notifications_view"))
+    # A Teacher can notify learners only through their assigned/taught class or a
+    # deliberate selected-user action. Direct selected users are constrained to Students.
+    if actor["role"]=="Teacher":
+        allowed_teacher_ids=set(_notification_recipients_for(actor,"students",[],""))
+        ids=[uid for uid in ids if uid in allowed_teacher_ids or uid==actor["id"]]
+        if audience not in {"class","selected","self"} and audience not in {"students"}:
+            abort(403)
+    notify_users(ids,title,body,link,priority)
+    audit(actor["id"],actor["full_name"],"Notification sent",f"{title} · {len(ids)} recipient(s) · {audience}")
+    flash(f"Notification sent to {len(ids)} recipient(s).","success")
+    return redirect(url_for("notifications_view"))
+
 @app.route("/notifications")
 @login_required
 def notifications_view():
-    rows=q("SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT 100",(current_user()["id"],))
-    return render_template("notifications.html",settings=school_settings(),notifications=rows,actor_name=current_user()["full_name"],role=current_user()["role"])
+    user=current_user()
+    rows=q("SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT 100",(user["id"],))
+    recipients=[]
+    if user["role"] in {"Admin","ICT","Teacher"}:
+        recipients=q("SELECT id,full_name,username,role,student_id FROM users WHERE active=1 AND id!=? AND role!='System' ORDER BY full_name",(user["id"],))
+    classes=[]
+    if user["role"]=="Teacher":
+        own=[r["class_name"] for r in q("SELECT class_name FROM teacher_assignments WHERE teacher_user_id=? AND active=1",(user["id"],))]
+        own+= [r["class_name"] for r in q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=?",(user["id"],))]
+        classes=sorted(set(own))
+    elif user["role"] in {"Admin","ICT"}:
+        classes=[r["grade"] for r in q("SELECT DISTINCT grade FROM students WHERE active=1 AND TRIM(COALESCE(grade,''))!='' ORDER BY grade")]
+    return render_template("notifications.html",settings=school_settings(),notifications=rows,actor_name=user["full_name"],role=user["role"],notification_recipients=recipients,notification_classes=classes)
 
 @app.route("/notifications/read", methods=["POST"])
 @login_required
