@@ -63,6 +63,8 @@ PULSE_ALLOWED_CALLBACK_HOSTS = {h.strip().lower() for h in os.environ.get("PULSE
 ALLOWED_RESTORE_EXT = {"db", "sqlite", "sqlite3"}
 PUBLIC_ROLES = ("Teacher", "Student", "Parent")
 HIDDEN_ROLES = ("Admin", "ICT", "Finance", "Librarian")
+QR_LOGIN_ROLES = {"Admin", "ICT", "Finance", "Teacher", "Librarian"}
+QR_LOGIN_WORKSPACES = {"Teaching", "Driver", "Reception", "Guard", "Cook", "Other Staff"}
 RECEPTION_WORKSPACE = "Reception"
 ALL_PORTAL_ROLES = HIDDEN_ROLES + PUBLIC_ROLES
 ADMIN_LOGIN_PATH = "/xtspolsjhulupjoppsup-lmkzcodup"
@@ -709,6 +711,10 @@ def _init_db_once() -> None:
         ensure_column(conn, "school_settings", "platform_credit_enabled INTEGER NOT NULL DEFAULT 1")
         conn.execute("UPDATE school_settings SET footer_title = school_name WHERE id=1 AND TRIM(COALESCE(footer_title,''))=''")
         ensure_column(conn, "users", "qr_access_token TEXT")
+        ensure_column(conn, "users", "qr_login_enabled INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "users", "last_password_login_at TEXT")
+        conn.execute("CREATE TABLE IF NOT EXISTS school_calendar (id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,start_date TEXT NOT NULL,end_date TEXT NOT NULL,kind TEXT NOT NULL DEFAULT 'School Day',school_day INTEGER NOT NULL DEFAULT 1,notes TEXT NOT NULL DEFAULT '',created_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_school_calendar_range ON school_calendar(start_date,end_date,school_day)")
         ensure_column(conn, "users", "position_code TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "school_unit TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "school_location TEXT NOT NULL DEFAULT ''")
@@ -917,6 +923,7 @@ def _init_db_once() -> None:
         conn.execute("""CREATE TABLE IF NOT EXISTS theme_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, snapshot_type TEXT NOT NULL, settings_json TEXT NOT NULL, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL)""")
         conn.execute("INSERT OR IGNORE INTO finance_accounts(id, account_name, opening_balance) VALUES(1, 'Institution Operating Account', 0)")
         conn.execute("UPDATE users SET qr_access_token=lower(hex(randomblob(16))) WHERE role!='System' AND (qr_access_token IS NULL OR qr_access_token='')")
+        conn.execute("UPDATE users SET qr_login_enabled=0 WHERE qr_login_enabled IS NULL")
         if conn.execute("SELECT COUNT(*) FROM system_help").fetchone()[0] == 0:
             help_rows=[
                 ('Getting started','Getting Started','Use the navigation to open your workspace. Administrators manage people, institution settings, security, backups and permissions.','All',10),
@@ -1367,7 +1374,7 @@ def persist_auth_cookie(response):
         try:
             body=response.get_data(as_text=True)
             if 'id="prime-global-tools"' not in body and "</body>" in body:
-                shell="""<button id=\"prime-mobile-nav\" class=\"prime-mobile-nav\" type=\"button\" aria-label=\"Open navigation\" aria-expanded=\"false\" title=\"Open navigation\">☰</button><div id=\"prime-global-tools\" class=\"prime-global-tools\"><a class=\"prime-bell\" href=\"/notifications\" aria-label=\"Notifications\" title=\"Notifications\"><span aria-hidden=\"true\">🔔</span><b id=\"prime-notification-count\" class=\"prime-count hidden\"></b></a><button type=\"button\" class=\"prime-shortcuts-btn\" aria-label=\"Open shortcuts\" onclick=\"document.getElementById('prime-shortcuts').classList.toggle('open')\">☰</button><div id=\"prime-shortcuts\" class=\"prime-shortcuts\"><strong>Quick access</strong><a href=\"/calendar\">📅 Calendar</a><a href=\"/notifications\">🔔 Notifications</a><a href=\"/online-classes\">🎥 Live classes</a><a href=\"/groups\">👥 Groups</a><a href=\"/leadership\">🏛 Leadership</a></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-bell span{color:inherit;font-size:18px;line-height:1}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}.prime-mobile-nav{display:none}.prime-mobile-nav.open{display:grid}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav{display:none}@media(max-width:820px){.prime-shortcuts-btn{display:none!important}.prime-mobile-nav{display:grid;place-items:center;position:fixed;left:12px;top:12px;width:44px;height:44px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:20px;cursor:pointer;z-index:5001}.prime-global-tools{right:12px;top:12px}}</style><script>(function(){var m=document.getElementById('prime-mobile-nav');if(m){if(document.getElementById('sidebarToggle')){m.remove();}else{m.addEventListener('click',function(){document.body.classList.toggle('mobile-nav-open');this.setAttribute('aria-expanded',String(document.body.classList.contains('mobile-nav-open')));});}}fetch('/api/notifications').then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});})();</script>"""
+                shell="""<button id="prime-mobile-nav" class="prime-mobile-nav" type="button" aria-label="Open navigation" aria-expanded="false" title="Open navigation">☰</button><div id="prime-mobile-menu" class="prime-mobile-menu"><a href="/dashboard">Dashboard</a><a href="/calendar">School calendar</a><a href="/notifications">Notifications</a><a href="/system-help">System help</a><a href="/logout">Logout</a></div><div id="prime-global-tools" class="prime-global-tools"><a class="prime-bell" href="/notifications" aria-label="Notifications" title="Notifications"><span aria-hidden="true">🔔</span><b id="prime-notification-count" class="prime-count hidden"></b></a><button type="button" class="prime-shortcuts-btn" aria-label="Open shortcuts" onclick="document.getElementById('prime-shortcuts').classList.toggle('open')">☰</button><div id="prime-shortcuts" class="prime-shortcuts"><strong>Quick access</strong><a href="/calendar">Calendar</a><a href="/notifications">Notifications</a><a href="/online-classes">Live classes</a><a href="/groups">Groups</a><a href="/leadership">Leadership</a></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-bell span{color:inherit;font-size:18px;line-height:1}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}.prime-mobile-nav{display:none}.prime-mobile-nav.open{display:grid}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav,body.auth-body .prime-mobile-menu{display:none}@media(max-width:820px){.prime-shortcuts-btn{display:none!important}.prime-mobile-nav{display:grid;place-items:center;position:fixed;left:12px;top:12px;width:44px;height:44px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:20px;cursor:pointer;z-index:5001}.prime-global-tools{right:12px;top:12px}}</style><script>(function(){var m=document.getElementById('prime-mobile-nav');if(m){if(document.getElementById('sidebarToggle')){m.remove();}else{m.addEventListener('click',function(){var hasSidebar=!!document.querySelector('.sidebar');document.body.classList.toggle(hasSidebar?'mobile-nav-open':'prime-smart-menu-open');});}}fetch('/api/notifications').then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});})();</script>"""
                 response.set_data(body.replace("</body>",shell+"</body>",1))
         except Exception:
             pass
@@ -1382,7 +1389,10 @@ def current_user():
 def login_required(view: Callable):
     @wraps(view)
     def wrapper(*args, **kwargs):
-        if not current_user() and not auth_required():
+        # Only an uninitialized presentation/demo installation may auto-seat a role.
+        # Once the school has initialized authentication, every protected route
+        # requires an actual authenticated account.
+        if not current_user() and not auth_initialized() and not auth_required():
             _ensure_demo_identity()
         if not current_user():
             return redirect(url_for("login", role=request.args.get("role", "")))
@@ -1409,17 +1419,15 @@ def auth_initialized() -> bool:
     return bool(row and row["auth_initialized"])
 
 
-# Demo/passwordless mode is OFF by default.
-# Set DEMO_AUTH_BYPASS=1 only for controlled presentation/local testing.
-DEMO_AUTH_BYPASS = os.environ.get("DEMO_AUTH_BYPASS", "0").strip().lower() in {
-    "1", "true", "yes", "on"
-}
+# DEMO_AUTH_BYPASS is intentionally enabled for presentation/local testing.
+# Set it to False before commercial deployment to restore the normal login gate.
+DEMO_AUTH_BYPASS = False
 
 def auth_required() -> bool:
     if DEMO_AUTH_BYPASS:
         return False
-    row = q("SELECT auth_required FROM school_settings WHERE id=1", one=True)
-    return bool(row and row["auth_required"])
+    row = q("SELECT auth_required, auth_initialized FROM school_settings WHERE id=1", one=True)
+    return bool(row and (row["auth_required"] or row["auth_initialized"]))
 
 def _demo_role_for_request() -> str:
     path = request.path.lower()
@@ -1577,6 +1585,33 @@ def important_dates(limit=20, landing=False):
         return q("SELECT * FROM important_dates WHERE visible=1 AND landing_visible=1 ORDER BY event_date,event_time,id LIMIT ?", (limit,))
     return q("SELECT * FROM important_dates WHERE visible=1 ORDER BY event_date,event_time,id LIMIT ?", (limit,))
 
+
+def school_day_status(day=None):
+    """Return the institution's operational day state without ever blocking login/attendance."""
+    day = day or datetime.now().date()
+    iso = day.isoformat()
+    if day.weekday() >= 5:
+        return {"is_school_day": False, "label": "Weekend", "kind": "Weekend"}
+    rows = q("SELECT * FROM school_calendar WHERE start_date<=? AND end_date>=? ORDER BY id DESC", (iso, iso))
+    if any(int(r["school_day"] or 0) == 0 for r in rows):
+        r = next((r for r in rows if int(r["school_day"] or 0) == 0), rows[0])
+        return {"is_school_day": False, "label": r["title"], "kind": r["kind"]}
+    openings = q("SELECT MIN(start_date) AS d FROM school_calendar WHERE kind='Opening Date'")
+    closings = q("SELECT MAX(end_date) AS d FROM school_calendar WHERE kind='Closing Date'")
+    opening = openings[0]["d"] if openings and openings[0]["d"] else None
+    closing = closings[0]["d"] if closings and closings[0]["d"] else None
+    if opening and iso < opening:
+        return {"is_school_day": False, "label": "Before school opening", "kind": "School Closure"}
+    if closing and iso > closing:
+        return {"is_school_day": False, "label": "After school closing", "kind": "School Closure"}
+    if rows:
+        r = next((r for r in rows if int(r["school_day"] or 0) == 1), rows[0])
+        return {"is_school_day": True, "label": r["title"], "kind": r["kind"]}
+    return {"is_school_day": True, "label": "Regular school day", "kind": "School Day"}
+
+def qr_login_allowed(user):
+    return bool(user and user["active"] and user["role"] != "System" and user["role"] in QR_LOGIN_ROLES and ((user["workspace_type"] or "") in QR_LOGIN_WORKSPACES or user["role"] in QR_LOGIN_ROLES) and int(user["qr_login_enabled"] or 0) == 1)
+
 def notify_user(user_id, title, body, link='', priority='Normal'):
     if not user_id:
         return
@@ -1700,6 +1735,7 @@ def auth_template_context():
         "theme_style": theme_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(),
         "welcome_animation": bool(settings["welcome_animation_enabled"]), "welcome_animation_name": settings["welcome_animation_name"], "welcome_animation_duration_ms": int(settings["welcome_animation_duration_ms"] or 2200),
         "important_dates": important_dates(12, landing=request.path == '/'),
+        "school_day": school_day_status(),
         "notification_count": notification_count(current_user()['id']) if current_user() else 0,
         "role_shortcuts": role_shortcuts(current_user()),
         "institution_type": settings['institution_type'], "learner_label": settings['learner_label'],
@@ -2141,10 +2177,14 @@ def login():
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
         role = selected_role_from_request().strip()
-        user = q("SELECT * FROM users WHERE lower(username)=? AND active=1 AND role=?", (username, role), one=True)
+        user = q("SELECT * FROM users WHERE lower(username)=? AND active=1 AND role=?", (username, role), one=True) if role else q("SELECT * FROM users WHERE lower(username)=? AND active=1", (username,), one=True)
         if not user or not check_password_hash(user["password_hash"], password):
             flash("Invalid username, password, or role.", "danger")
             return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username, password, or role.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
+        # The first successful password login activates the user's personal QR sign-in.
+        if user["role"] not in {"Student", "Parent", "System"} and "qr_login_enabled" in user.keys():
+            execute("UPDATE users SET qr_login_enabled=1,last_password_login_at=CURRENT_TIMESTAMP,qr_access_token=COALESCE(NULLIF(qr_access_token,''),lower(hex(randomblob(16)))) WHERE id=?", (user["id"],))
+            user = q("SELECT * FROM users WHERE id=?", (user["id"],), one=True)
         session.clear()
         session.permanent = True
         session["user_id"] = user["id"]
@@ -3331,19 +3371,42 @@ def ict_background():
 @app.route("/calendar")
 @login_required
 def calendar_view():
-    return render_template("calendar.html", settings=school_settings(), dates=important_dates(100), actor_name=current_user()["full_name"], role=current_user()["role"])
+    return render_template("calendar.html", settings=school_settings(), dates=important_dates(100), calendar_rules=q("SELECT * FROM school_calendar ORDER BY start_date,end_date,id"), day_status=school_day_status(), actor_name=current_user()["full_name"], role=current_user()["role"])
 
 @app.route("/calendar/create", methods=["POST"])
 @login_required
 @role_required("Admin","ICT")
 def calendar_create():
     title=request.form.get("title","").strip(); date=request.form.get("event_date","").strip()
+    kind=request.form.get("kind","Important Date").strip() or "Important Date"
     if not title or not date:
         flash("Event title and date are required.","danger"); return redirect(url_for("calendar_view"))
-    execute("INSERT INTO important_dates(title,event_date,event_time,location,description,visible,landing_visible,created_by) VALUES(?,?,?,?,?,?,?,?)",(title,date,request.form.get("event_time",""),request.form.get("location",""),request.form.get("description",""),1,1,current_user()["id"]))
+    execute("INSERT INTO important_dates(title,event_date,event_time,location,description,visible,landing_visible,created_by) VALUES(?,?,?,?,?,?,?,?)",(title,date,request.form.get("event_time",""),request.form.get("location",""),request.form.get("description","")+ (f" [{kind}]" if kind else ""),1,1,current_user()["id"]))
     ids=[r["id"] for r in q("SELECT id FROM users WHERE active=1 AND role!='System'")]
     notify_users(ids,"Important date added",f"{title} — {date}",url_for("calendar_view"))
     flash("Important date published to the calendar and landing page.","success"); return redirect(url_for("calendar_view"))
+
+@app.route("/calendar/rule/create", methods=["POST"])
+@login_required
+@role_required("Admin","ICT")
+def calendar_rule_create():
+    title=request.form.get("title","").strip(); start=request.form.get("start_date","").strip(); end=request.form.get("end_date","").strip() or start; kind=request.form.get("kind","School Day").strip() or "School Day"
+    try:
+        sd=datetime.strptime(start,"%Y-%m-%d").date(); ed=datetime.strptime(end,"%Y-%m-%d").date()
+    except ValueError:
+        flash("Enter valid calendar dates.","danger"); return redirect(url_for("calendar_view"))
+    if ed < sd or not title:
+        flash("The title and a valid date range are required.","danger"); return redirect(url_for("calendar_view"))
+    closed_kinds={"Mid-term Break","National Holiday","Public Holiday","School Holiday","School Closed"}
+    school_day=0 if kind in closed_kinds else 1
+    execute("INSERT INTO school_calendar(title,start_date,end_date,kind,school_day,notes,created_by) VALUES(?,?,?,?,?,?,?)",(title,sd.isoformat(),ed.isoformat(),kind,school_day,request.form.get("notes","").strip(),current_user()["id"]))
+    flash(f"{kind} calendar rule saved.","success"); return redirect(url_for("calendar_view"))
+
+@app.route("/calendar/rule/<int:rule_id>/delete", methods=["POST"])
+@login_required
+@role_required("Admin","ICT")
+def calendar_rule_delete(rule_id):
+    execute("DELETE FROM school_calendar WHERE id=?",(rule_id,)); flash("School calendar rule removed.","success"); return redirect(url_for("calendar_view"))
 
 @app.route("/calendar/<int:event_id>/delete", methods=["POST"])
 @login_required
@@ -4422,8 +4485,8 @@ def add_user():
         school_location=request.form.get("school_location","").strip()
         position_code=staff_code_for(role, workspace_type) if role not in {"Student","Parent","System"} else ""
         reception_enabled=1 if workspace_type==RECEPTION_WORKSPACE else 0
-        uid=execute("""INSERT INTO users(full_name, username, password_hash, role, student_id, active, title, department, phone, email, date_of_birth, gender, id_reference, address, emergency_contact, blood_group, medical_notes, accountability_notes, workspace_type, school_unit, school_location, reception_enabled, position_code, staff_code)
-                      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        uid=execute("""INSERT INTO users(full_name, username, password_hash, role, student_id, active, title, department, phone, email, date_of_birth, gender, id_reference, address, emergency_contact, blood_group, medical_notes, accountability_notes, workspace_type, school_unit, school_location, reception_enabled, position_code, staff_code, qr_access_token, qr_login_enabled)
+                      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, lower(hex(randomblob(16))), 0)""",
                    (full_name,username,generate_password_hash(password),role,student_id,title,department,request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),workspace_type,school_unit,school_location,reception_enabled,position_code,position_code))
         if role=="Parent" and student_id:
             execute("INSERT OR IGNORE INTO guardian_links(guardian_user_id, student_id, relationship, is_primary) VALUES(?,?,?,?)", (uid,student_id,request.form.get("relationship","Guardian").strip() or "Guardian",1))
@@ -4714,6 +4777,7 @@ def all_employees():
 def user_qr(user_id:int):
     user=q("SELECT * FROM users WHERE id=? AND role!='System'",(user_id,),one=True)
     if not user: abort(404)
+    if user["role"] in {"Student","Parent","System"}: abort(404)
     if current_user()["role"] not in {"Admin","ICT"} and current_user()["id"]!=user_id: abort(403)
     token=user["qr_access_token"]
     if not token:
@@ -4738,10 +4802,17 @@ def staff_attendance_qr(user_id:int):
 
 @app.route("/qr/<token>")
 def qr_landing(token:str):
-    user=q("SELECT id FROM users WHERE qr_access_token=? AND active=1 AND role!='System'",(token,),one=True)
-    if not user: return redirect(url_for("index"))
-    # QR code intentionally opens the institution portal rather than granting passwordless login.
-    return redirect(url_for("login", user=user["id"]))
+    user=q("SELECT * FROM users WHERE qr_access_token=? AND active=1 AND role NOT IN ('Student','Parent','System')",(token,),one=True)
+    if not user:
+        flash("That staff QR is invalid or no longer active.","warning")
+        return redirect(url_for("login"))
+    if not qr_login_allowed(user):
+        flash("This QR is not active yet. Complete one normal name-and-password login first.","warning")
+        return redirect(url_for("login", role=user["role"], qr_setup="1"))
+    session.clear(); session.permanent=True; session["user_id"]=user["id"]; session["active_portal_role"]=user["role"];
+    context=_portal_context_for(user["id"]); target=specialized_dashboard_for(user)
+    audit(user["id"], user["full_name"], "QR Login", f"{user['full_name']} signed in with personal staff QR.")
+    return redirect(target + "?" + urllib.parse.urlencode({"portal_context": context, "qr": "1"}))
 
 @app.route("/finance/ledger", methods=["POST"])
 @login_required
