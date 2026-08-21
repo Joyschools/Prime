@@ -1409,9 +1409,11 @@ def auth_initialized() -> bool:
     return bool(row and row["auth_initialized"])
 
 
-# DEMO_AUTH_BYPASS is intentionally enabled for presentation/local testing.
-# Set it to False before commercial deployment to restore the normal login gate.
-DEMO_AUTH_BYPASS = True
+# Demo/passwordless mode is OFF by default.
+# Set DEMO_AUTH_BYPASS=1 only for controlled presentation/local testing.
+DEMO_AUTH_BYPASS = os.environ.get("DEMO_AUTH_BYPASS", "0").strip().lower() in {
+    "1", "true", "yes", "on"
+}
 
 def auth_required() -> bool:
     if DEMO_AUTH_BYPASS:
