@@ -1436,16 +1436,20 @@ def role_required(*roles: str):
         @wraps(view)
         def wrapper(*args, **kwargs):
             user = current_user()
-            if not user or user["role"] not in roles:
-                abort(403)
-            # Admin and ICT are deliberately separate workspaces. A valid Admin
-            # account must never be treated as ICT (or vice-versa), even when a
-            # legacy workspace_type value is stale. Shared maintenance routes may
-            # explicitly name both roles, but role-specific dashboards remain exact.
+            if not user:
+                return redirect(url_for("login", role=(roles[0] if roles else "")))
+            # Admin and ICT are deliberately separate workspaces. A role-specific
+            # dashboard URL can never switch identities. When an authenticated user
+            # reaches the other dashboard URL, send them back to their own dashboard
+            # instead of producing a dead-end Access denied page.
             if view.__name__ in {"admin_dashboard", "ict_dashboard", "admin_entry", "ict_entry"}:
                 expected = "Admin" if view.__name__.startswith("admin") else "ICT"
                 if user["role"] != expected:
+                    if user["role"] in ALL_PORTAL_ROLES:
+                        return redirect(role_target(user["role"]))
                     abort(403)
+            elif user["role"] not in roles:
+                abort(403)
             if user["role"] == "Teacher" and "Teacher" in roles and workspace_type_for_user(user) != "Teaching":
                 abort(403)
             return view(*args, **kwargs)
@@ -2238,10 +2242,17 @@ def login():
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
         role = selected_role_from_request().strip()
-        user = q("SELECT * FROM users WHERE lower(username)=? AND active=1 AND role=?", (username, role), one=True) if role else q("SELECT * FROM users WHERE lower(username)=? AND active=1", (username,), one=True)
+        # Identity is established by username + password. The role selected on the
+        # login screen is only a convenience hint and must never lock out a valid
+        # account when its stored role is authoritative. After credentials are
+        # verified, the account's own role determines the dashboard and permissions.
+        user = q("SELECT * FROM users WHERE lower(username)=? AND active=1", (username,), one=True)
         if not user or not check_password_hash(user["password_hash"], password):
-            flash("Invalid username, password, or role.", "danger")
-            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username, password, or role.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
+            flash("Invalid username or password.", "danger")
+            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
+        # A selected portal role can never override the account's stored role.
+        # This is especially important for Admin vs ICT separation.
+        role = user["role"]
         # Normal password login always goes directly to the person's dashboard.
         # Staff QR is only an optional convenience after the first successful password login.
         if user["role"] not in {"Student", "Parent", "System"} and "qr_login_enabled" in user.keys():
@@ -2284,6 +2295,11 @@ def enter_role(role: str):
     # ICT in particular are separate security domains; a user must explicitly
     # log out and authenticate as the other role.
     if existing and existing["role"] != role:
+        # Never cross roles inside an authenticated session. Return the user to
+        # their own workspace rather than presenting an unnecessary Access denied
+        # dead-end.
+        if existing["role"] in ALL_PORTAL_ROLES:
+            return redirect(role_target(existing["role"]))
         abort(403)
     return enter_role_without_login(role)
 
