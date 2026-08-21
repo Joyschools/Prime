@@ -181,6 +181,48 @@
     document.addEventListener("mouseenter", syncScrollRail, true);
   }
 
+
+  // Universal hash navigation: plain #links on any dashboard should behave like
+  // the Admin panel controls, with a gentle reveal and room for the sticky top bar.
+  function scrollToHash(hash, push=false) {
+    if (!hash || hash === "#") return;
+    const id = decodeURIComponent(hash.replace(/^#/, ""));
+    const target = document.getElementById(id);
+    if (!target) return;
+    document.querySelectorAll('.hash-target-active').forEach(el => el.classList.remove('hash-target-active'));
+    target.classList.add('hash-target-active');
+    target.scrollIntoView({behavior:"smooth", block:"start"});
+    window.setTimeout(() => target.classList.remove('hash-target-active'), 900);
+    if (push && history.replaceState) history.replaceState(null, "", `#${id}`);
+  }
+  document.addEventListener('click', (event) => {
+    const a = event.target.closest('a[href^="#"]');
+    if (!a) return;
+    const href = a.getAttribute('href');
+    if (!href || href === '#') return;
+    const target = document.getElementById(href.slice(1));
+    if (!target) return;
+    event.preventDefault();
+    scrollToHash(href, true);
+  });
+  if (window.location.hash) window.setTimeout(() => scrollToHash(window.location.hash, false), 40);
+
+  // Shared hover navigation: on pointer devices, pointing at a section exposes
+  // its choices automatically; clicks still work for touch devices and keyboard users.
+  const pointerFine = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
+  if (pointerFine) {
+    document.querySelectorAll('.nav-group').forEach(group => {
+      group.addEventListener('mouseenter', () => {
+        group.classList.add('pointer-open');
+        const toggle = group.querySelector('.nav-group-toggle');
+        toggle?.setAttribute('aria-expanded','true');
+      });
+      group.addEventListener('mouseleave', () => {
+        group.classList.remove('pointer-open');
+      });
+    });
+  }
+
   document.querySelectorAll(".nav-group-toggle").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();

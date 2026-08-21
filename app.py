@@ -554,6 +554,7 @@ def _init_db_once() -> None:
         ensure_column(conn, "school_settings", "welcome_animation_enabled INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "school_settings", "welcome_animation_name TEXT NOT NULL DEFAULT 'Toror Technology and Innovations Ltd.'")
         ensure_column(conn, "school_settings", "welcome_animation_duration_ms INTEGER NOT NULL DEFAULT 2200")
+        ensure_column(conn, "school_settings", "welcome_animation_style TEXT NOT NULL DEFAULT 'clean'")
         ensure_column(conn, "school_settings", "theme_preset TEXT NOT NULL DEFAULT 'classic'")
 
         ensure_column(conn, "students", "guardian_name TEXT")
@@ -1748,10 +1749,10 @@ def theme_preset_style(settings=None) -> str:
     preset=str(settings["theme_preset"] or "classic").lower() if "theme_preset" in settings.keys() else "classic"
     presets={
         "classic":"",
-        "christmas":":root{--theme-glow:rgba(220,38,38,.18)} body.app-body:before{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 12% 0%,rgba(22,163,74,.16),transparent 28%),radial-gradient(circle at 88% 0%,rgba(220,38,38,.16),transparent 28%);z-index:-1}",
-        "easter":":root{--theme-glow:rgba(168,85,247,.16)} body.app-body:before{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 15% 0%,rgba(250,204,21,.16),transparent 25%),radial-gradient(circle at 82% 0%,rgba(168,85,247,.16),transparent 25%);z-index:-1}",
-        "madaraka":":root{--theme-glow:rgba(220,38,38,.16)} body.app-body:before{content:'';position:fixed;inset:0;pointer-events:none;background:linear-gradient(120deg,rgba(0,0,0,.10),rgba(220,38,38,.10),rgba(22,163,74,.10));z-index:-1}",
-        "school-pride":":root{--theme-glow:rgba(37,99,235,.18)} body.app-body .topbar{box-shadow:0 14px 34px rgba(37,99,235,.18)}"
+        "christmas":":root{--theme-glow:rgba(220,38,38,.18)} body.app-body:before{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 12% 0%,rgba(22,163,74,.16),transparent 28%),radial-gradient(circle at 88% 0%,rgba(220,38,38,.16),transparent 28%);z-index:-1} body.app-body .topbar{border-top-color:rgba(220,38,38,.5);box-shadow:0 14px 34px rgba(220,38,38,.12)} body.app-body .panel{border-color:rgba(255,255,255,.10)}",
+        "easter":":root{--theme-glow:rgba(168,85,247,.16)} body.app-body:before{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 15% 0%,rgba(250,204,21,.16),transparent 25%),radial-gradient(circle at 82% 0%,rgba(168,85,247,.16),transparent 25%);z-index:-1} body.app-body .topbar{border-top-color:rgba(168,85,247,.45);box-shadow:0 14px 34px rgba(168,85,247,.12)}",
+        "madaraka":":root{--theme-glow:rgba(220,38,38,.16)} body.app-body:before{content:'';position:fixed;inset:0;pointer-events:none;background:linear-gradient(120deg,rgba(0,0,0,.10),rgba(220,38,38,.10),rgba(22,163,74,.10));z-index:-1} body.app-body .topbar{border-top-color:rgba(22,163,74,.55);box-shadow:0 14px 34px rgba(22,163,74,.10)}",
+        "school-pride":":root{--theme-glow:rgba(37,99,235,.18)} body.app-body .topbar{border-top-color:var(--primary-blue);box-shadow:0 14px 34px rgba(37,99,235,.18)}"
     }
     return presets.get(preset,presets["classic"])
 
@@ -1785,7 +1786,7 @@ def auth_template_context():
         "current_user": current_user(), "school_settings": settings, "portal_title": settings["school_name"], "theme_color": settings["primary_color"], "all_roles": ALL_PORTAL_ROLES, "public_roles": PUBLIC_ROLES,
         "theme_style": theme_style(settings), "theme_preset_style": theme_preset_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(),
         "active_adverts": active_advertisements(),
-        "welcome_animation": bool(settings["welcome_animation_enabled"]), "welcome_animation_name": settings["welcome_animation_name"], "welcome_animation_duration_ms": int(settings["welcome_animation_duration_ms"] or 2200),
+        "welcome_animation": bool(settings["welcome_animation_enabled"]), "welcome_animation_name": settings["welcome_animation_name"], "welcome_animation_duration_ms": int(settings["welcome_animation_duration_ms"] or 2200), "welcome_animation_style": settings["welcome_animation_style"] if "welcome_animation_style" in settings.keys() else "clean",
         "important_dates": important_dates(12, landing=request.path == '/'),
         "school_day": school_day_status(),
         "notification_count": notification_count(current_user()['id']) if current_user() else 0,
@@ -3346,7 +3347,7 @@ def ict_dashboard():
 
 
 def _theme_snapshot_payload(settings):
-    keys=["school_name","portal_subtitle","primary_color","accent_color","background_color","panel_color","sidebar_color","header_color","text_color","muted_text_color","font_family","heading_font","radius_px","button_radius_px","theme_mode","sidebar_style","menu_order","home_label","assignments_label","results_label","messages_label","finance_label","branding_label","custom_css","footer_title","footer_text","footer_contact","footer_links","platform_credit_enabled","landing_background_color","landing_panel_color","landing_text_color","landing_accent_color","landing_font_family","landing_heading_font","landing_content_width","landing_hero_layout","landing_role_columns","landing_background_path","institution_image_path","institution_image_2_path","institution_image_3_path","institution_image_1_position","institution_image_2_position","institution_image_3_position","welcome_animation_enabled","welcome_animation_name","welcome_animation_duration_ms"]
+    keys=["school_name","portal_subtitle","primary_color","accent_color","background_color","panel_color","sidebar_color","header_color","text_color","muted_text_color","font_family","heading_font","radius_px","button_radius_px","theme_mode","sidebar_style","menu_order","home_label","assignments_label","results_label","messages_label","finance_label","branding_label","custom_css","footer_title","footer_text","footer_contact","footer_links","platform_credit_enabled","landing_background_color","landing_panel_color","landing_text_color","landing_accent_color","landing_font_family","landing_heading_font","landing_content_width","landing_hero_layout","landing_role_columns","landing_background_path","institution_image_path","institution_image_2_path","institution_image_3_path","institution_image_1_position","institution_image_2_position","institution_image_3_position","welcome_animation_enabled","welcome_animation_name","welcome_animation_duration_ms","welcome_animation_style"]
     return {k: settings[k] for k in keys if k in settings.keys()}
 
 def _save_theme_snapshot(snapshot_type, actor_id):
@@ -3416,6 +3417,7 @@ def ict_landing_branding():
         "welcome_animation_enabled": 1 if request.form.get("welcome_animation_enabled") in {"1","on","true","yes"} else 0,
         "welcome_animation_name": request.form.get("welcome_animation_name", "Toror Technology and Innovations Ltd.").strip()[:120] or "Toror Technology and Innovations Ltd.",
         "welcome_animation_duration_ms": max(1200,min(5000,int(request.form.get("welcome_animation_duration_ms", "2200") or 2200))),
+        "welcome_animation_style": request.form.get("welcome_animation_style", "clean").strip().lower(),
     }
     if vals["landing_hero_layout"] not in {"split","stacked"}: vals["landing_hero_layout"]="split"
     positions=[request.form.get(f"institution_image_{i}_position","50% 50%").strip()[:40] for i in (1,2,3)]
@@ -3439,7 +3441,8 @@ def ict_landing_branding():
             folder=UPLOAD_DIR/"institution"; folder.mkdir(exist_ok=True)
             out=folder/f"history-{i}-{uuid.uuid4().hex[:10]}.{ext}"; file.save(out); path="uploads/institution/"+out.name
         paths.append(path)
-    execute("""UPDATE school_settings SET landing_background_color=?,landing_panel_color=?,landing_text_color=?,landing_accent_color=?,landing_font_family=?,landing_heading_font=?,landing_content_width=?,landing_hero_layout=?,landing_role_columns=?,landing_background_path=?,institution_image_path=?,institution_image_2_path=?,institution_image_3_path=?,institution_image_1_position=?,institution_image_2_position=?,institution_image_3_position=?,welcome_animation_enabled=?,welcome_animation_name=?,welcome_animation_duration_ms=? WHERE id=1""",(vals["landing_background_color"],vals["landing_panel_color"],vals["landing_text_color"],vals["landing_accent_color"],vals["landing_font_family"],vals["landing_heading_font"],vals["landing_content_width"],vals["landing_hero_layout"],vals["landing_role_columns"],landing_path,paths[0],paths[1],paths[2],positions[0],positions[1],positions[2],vals["welcome_animation_enabled"],vals["welcome_animation_name"],vals["welcome_animation_duration_ms"]))
+    if vals["welcome_animation_style"] not in {"clean","zoom","wave","particles","split"}: vals["welcome_animation_style"]="clean"
+    execute("""UPDATE school_settings SET landing_background_color=?,landing_panel_color=?,landing_text_color=?,landing_accent_color=?,landing_font_family=?,landing_heading_font=?,landing_content_width=?,landing_hero_layout=?,landing_role_columns=?,landing_background_path=?,institution_image_path=?,institution_image_2_path=?,institution_image_3_path=?,institution_image_1_position=?,institution_image_2_position=?,institution_image_3_position=?,welcome_animation_enabled=?,welcome_animation_name=?,welcome_animation_duration_ms=?,welcome_animation_style=? WHERE id=1""",(vals["landing_background_color"],vals["landing_panel_color"],vals["landing_text_color"],vals["landing_accent_color"],vals["landing_font_family"],vals["landing_heading_font"],vals["landing_content_width"],vals["landing_hero_layout"],vals["landing_role_columns"],landing_path,paths[0],paths[1],paths[2],positions[0],positions[1],positions[2],vals["welcome_animation_enabled"],vals["welcome_animation_name"],vals["welcome_animation_duration_ms"],vals["welcome_animation_style"]))
     audit(current_user()["id"],current_user()["full_name"],"Landing Page Branding Update","Public landing branding, history visuals and welcome animation updated.")
     flash("Landing-page branding and institution history visuals saved separately from the logged-in system theme.","success")
     return redirect(url_for("ict_dashboard")+"#branding")
