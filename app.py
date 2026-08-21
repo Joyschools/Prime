@@ -15,6 +15,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import mimetypes
+import smtplib
+import ssl
+from email.message import EmailMessage
 from collections.abc import MutableMapping
 from datetime import datetime, timedelta
 from functools import wraps
@@ -2144,47 +2147,107 @@ def _reset_user_from_token(raw_token: str):
 def forgot_password():
     settings = school_settings()
     message = None
-    reset_link = None
+    message_type = "success"
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
-        last_password = request.form.get("last_password", "")
-        row = q("SELECT id,full_name,username,role,password_hash,active FROM users WHERE lower(username)=? AND role!='System' LIMIT 1", (username,), one=True)
-        if row and row["active"] and last_password and check_password_hash(row["password_hash"], last_password):
+        email = request.form.get("email", "").strip().lower()
+        generic = (
+            "If the account details match a registered account, a secure password-reset "
+            "link has been sent to the registered email address. The link is valid for 30 minutes. "
+            "If no email is registered or email delivery is unavailable, Admin / ICT will receive a recovery request."
+        )
+        row = q("SELECT id,full_name,username,role,email,active FROM users WHERE lower(username)=? AND role!='System' LIMIT 1", (username,), one=True) if username else None
+
+        # Basic anti-abuse throttling by IP and account. We still return the same public message.
+        recent_ip = q("SELECT COUNT(*) AS n FROM password_reset_tokens WHERE requested_ip=? AND created_at >= datetime('now','-10 minutes')", (request.remote_addr or "",), one=True)
+        recent_user = q("SELECT COUNT(*) AS n FROM password_reset_tokens WHERE user_id=? AND created_at >= datetime('now','-10 minutes')", (row["id"],), one=True) if row else {"n": 0}
+        throttled = int((recent_ip or {"n": 0})["n"] or 0) >= 5 or int((recent_user or {"n": 0})["n"] or 0) >= 3
+
+        if row and row["active"] and email and row["email"] and email == row["email"].strip().lower() and not throttled:
             raw = _create_password_reset_token(row["id"], minutes=30)
             reset_link = url_for("password_reset", token=raw, _external=True)
-            notify_user(row["id"], "Password reset available", "Your identity was verified using your last password. A secure password reset link has been generated for your account.", url_for("password_reset", token=raw))
-            message = "Identity verified. Your secure reset link is ready below and is valid for 30 minutes."
-            audit(row["id"], row["full_name"], "Password Reset Request", "Self-service password reset link issued after previous-password verification.")
+            sent = _send_password_reset_email(row, reset_link)
+            if sent:
+                message = generic
+                audit(row["id"], row["full_name"], "Password Reset Request", "Self-service password reset link emailed to the account's registered email address.")
+            else:
+                # Email delivery is intentionally required for self-service reset.
+                # A recovery request is created so the institution can still help the user.
+                execute("INSERT INTO password_reset_requests(username,reason) VALUES(?,?)", (row["username"], "Self-service reset matched the registered email, but outbound email delivery is not configured or failed."))
+                recipients = q("SELECT id FROM users WHERE role IN ('Admin','ICT') AND active=1")
+                for admin_row in recipients:
+                    notify_user(admin_row["id"], "Password reset assistance requested", f"A password reset was requested for username '{row['username']}', but email delivery was unavailable.", url_for("password_reset_requests"), "High")
+                message_type = "warning"
+                message = "We could not send the reset email right now. Admin / ICT has received a recovery request for this account."
         else:
-            req_id = execute("INSERT INTO password_reset_requests(username,reason) VALUES(?,?)", (username or "(not provided)", "Self-service password reset could not be verified."))
-            recipients = q("SELECT id FROM users WHERE role IN ('Admin','ICT') AND active=1")
-            for admin_row in recipients:
-                notify_user(admin_row["id"], "Password reset assistance requested", f"A user requested password reset help for username '{username or '(not provided)'}'. Open the reset-request inbox to review and assist.", url_for("password_reset_requests"))
-            message = "We could not verify that username and previous password together. The request has been placed in the secure Admin / ICT inbox. Contact the institution's Admin or ICT office for assistance."
-    return render_template("forgot_password.html", settings=settings, message=message, reset_link=reset_link)
+            # Never disclose whether a username/email pair exists. Create an assistance
+            # request only when a plausible account exists and the request is not obviously abusive.
+            if row and not throttled:
+                execute("INSERT INTO password_reset_requests(username,reason) VALUES(?,?)", (row["username"], "Self-service password reset could not be completed. The username/email pair was not verified or no recovery email is registered."))
+                recipients = q("SELECT id FROM users WHERE role IN ('Admin','ICT') AND active=1")
+                for admin_row in recipients:
+                    notify_user(admin_row["id"], "Password reset assistance requested", f"A user requested password reset help for username '{row['username']}'. Open the recovery inbox to review.", url_for("password_reset_requests"), "High")
+            message_type = "success"
+            message = generic
+    return render_template("forgot_password.html", settings=settings, message=message, message_type=message_type)
+
+
+def _send_password_reset_email(user, reset_link: str) -> bool:
+    host = os.environ.get("MAIL_SERVER", "").strip()
+    username = os.environ.get("MAIL_USERNAME", "").strip()
+    password = os.environ.get("MAIL_PASSWORD", "")
+    if not host or not username or not password or not user["email"]:
+        return False
+    try:
+        port = int(os.environ.get("MAIL_PORT", "587"))
+    except Exception:
+        port = 587
+    use_tls = os.environ.get("MAIL_USE_TLS", "1").strip().lower() not in {"0", "false", "no", "off"}
+    sender = os.environ.get("MAIL_FROM", "").strip() or username
+    school_name = school_settings()["school_name"] or "School Portal System"
+    msg = EmailMessage()
+    msg["Subject"] = f"{school_name} password reset"
+    msg["From"] = sender
+    msg["To"] = user["email"].strip()
+    msg.set_content(
+        f"Hello {user['full_name']},\n\n"
+        f"A password reset was requested for your {school_name} account ({user['username']}).\n\n"
+        f"Use this secure link within 30 minutes:\n{reset_link}\n\n"
+        "The link can be used once. If you did not request this, you can ignore this email.\n\n"
+        f"{school_name}\n"
+    )
+    try:
+        context = ssl.create_default_context()
+        if use_tls:
+            with smtplib.SMTP(host, port, timeout=15) as smtp:
+                smtp.ehlo(); smtp.starttls(context=context); smtp.ehlo(); smtp.login(username, password); smtp.send_message(msg)
+        else:
+            with smtplib.SMTP_SSL(host, port, timeout=15, context=context) as smtp:
+                smtp.login(username, password); smtp.send_message(msg)
+        return True
+    except Exception as exc:
+        app.logger.warning("Password reset email failed: %s", exc)
+        return False
 
 
 @app.route("/password-reset/<token>", methods=["GET", "POST"])
 def password_reset(token):
     row = _reset_user_from_token(token)
     if not row:
-        return render_template("reset_password.html", settings=school_settings(), invalid=True, token="", user=None, error="This reset link is invalid, expired, or has already been used."), 400
+        return render_template("reset_password.html", settings=school_settings(), invalid=True, token="", user=None, error="This reset link is invalid, expired, or has already been used.", completed=False), 400
     if request.method == "POST":
-        username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
         confirm = request.form.get("confirm_password", "")
-        if username != row["username"].lower():
-            return render_template("reset_password.html", settings=school_settings(), invalid=False, token=token, user=row, error="Username does not match the verified account.")
         if len(password) < 8:
-            return render_template("reset_password.html", settings=school_settings(), invalid=False, token=token, user=row, error="Use a new password with at least 8 characters.")
+            return render_template("reset_password.html", settings=school_settings(), invalid=False, token=token, user=row, error="Use a new password with at least 8 characters.", completed=False)
         if password != confirm:
-            return render_template("reset_password.html", settings=school_settings(), invalid=False, token=token, user=row, error="The two new passwords do not match.")
+            return render_template("reset_password.html", settings=school_settings(), invalid=False, token=token, user=row, error="The two new passwords do not match.", completed=False)
         execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(password), row["user_id"]))
         execute("UPDATE password_reset_tokens SET used_at=CURRENT_TIMESTAMP WHERE id=?", (row["id"],))
         audit(row["user_id"], row["full_name"], "Password Reset Completed", "Account password changed through the verified self-service reset link.")
-        notify_user(row["user_id"], "Password changed", "Your account password has been changed successfully. Please sign in with the new password.", url_for("login", role=row["role"]))
-        return redirect(url_for("login", role=row["role"], reset="success"))
-    return render_template("reset_password.html", settings=school_settings(), invalid=False, token=token, user=row, error=None)
+        notify_user(row["user_id"], "Password reset complete", "Your password was successfully changed. If you did not make this change, contact Admin / ICT immediately.", "/login")
+        return render_template("reset_password.html", settings=school_settings(), invalid=False, token="", user=row, error=None, completed=True)
+    return render_template("reset_password.html", settings=school_settings(), invalid=False, token=token, user=row, error=None, completed=False)
 
 
 @app.route("/admin/password-reset-requests")
@@ -2221,6 +2284,25 @@ def notify_reset_requester(request_id: int):
     if user:
         notify_user(user["id"], "Your password reset request is being handled", "Admin / ICT has received your password reset request. Please follow the institution's sign-in guidance or contact the office directly if you need further assistance.", "/")
     flash("The account was notified where a matching account exists.", "success")
+    return redirect(url_for("password_reset_requests"))
+
+
+@app.route("/admin/password-reset-requests/<int:request_id>/generate", methods=["POST"])
+@login_required
+@role_required("Admin", "ICT")
+def generate_reset_for_request(request_id: int):
+    item = q("SELECT * FROM password_reset_requests WHERE id=?", (request_id,), one=True)
+    if not item:
+        abort(404)
+    user = q("SELECT id,full_name,username,role,active FROM users WHERE lower(username)=? AND role!='System' LIMIT 1", (item["username"].lower(),), one=True)
+    if not user or not user["active"]:
+        flash("No active account matches this recovery request.", "warning")
+        return redirect(url_for("password_reset_requests"))
+    raw = _create_password_reset_token(user["id"], minutes=20)
+    reset_link = url_for("password_reset", token=raw, _external=True)
+    actor=current_user()
+    audit(actor["id"], actor["full_name"], "Password Reset Link Generated", f"Generated a supervised 20-minute reset link for {user['username']}.")
+    flash(f"Supervised reset link for {user['username']} (valid 20 minutes): {reset_link}", "success")
     return redirect(url_for("password_reset_requests"))
 
 

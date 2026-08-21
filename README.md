@@ -27,3 +27,7 @@ Do not create or restore a top-level file named `types.py`: Python's standard li
 module with that name, and a project-level `types.py` shadows it during Python startup.
 Render uses `pip install -r requirements.txt` and `gunicorn app:app` as defined in `render.yaml`
 and `Procfile`.
+
+
+## Password recovery email
+For self-service password reset, configure these Render environment variables: `MAIL_SERVER`, `MAIL_PORT` (default `587`), `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM` (optional; defaults to `MAIL_USERNAME`), and `MAIL_USE_TLS` (`1` by default). The application uses a one-time reset link that expires after 30 minutes. If mail delivery is unavailable or the account has no registered email, Admin / ICT receives a recovery request instead.
