@@ -20,3 +20,10 @@ This release focuses on Reception/Gate operations, subject enrolment, teacher ro
 - demo.student / DemoStudent@123
 
 Set `SEED_DEMO_DATA=0` in production.
+
+## Deployment
+The repository pins the Python runtime to the 3.13 series for Render via `.python-version`.
+Do not create or restore a top-level file named `types.py`: Python's standard library has a
+module with that name, and a project-level `types.py` shadows it during Python startup.
+Render uses `pip install -r requirements.txt` and `gunicorn app:app` as defined in `render.yaml`
+and `Procfile`.
