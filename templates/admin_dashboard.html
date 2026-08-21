@@ -9,7 +9,7 @@
   <meta name="theme-color" content="{{ theme_color }}">
   <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-<style>{{theme_style|safe}}</style></head>
+<style>{{theme_style|safe}}{{theme_preset_style|safe}}</style></head>
 <body class="app-body admin-body sidebar-style-{{ school_settings.sidebar_style|default("drawer", true) }}">{% include "_notification_bell.html" %}
   <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
   <div class="scroll-rail" id="scrollRail" aria-hidden="true"><div class="scroll-track"><div class="scroll-thumb" id="scrollThumb"></div></div></div>
@@ -142,7 +142,8 @@
       {% endif %}
     {% endwith %}
 
-    <section id="admin-overview-panel" class="panel glass workspace-panel landing-panel">
+    <section class="portal-adverts">{% for ad in active_adverts %}<article class="advert-card"><span class="eyebrow">School advert · {{ad.poster or 'School'}}</span><h3>{{ad.title}}</h3><p>{{ad.body}}</p>{% if ad.link_url %}<a class="btn btn-ghost mini" href="{{ad.link_url}}" target="_blank" rel="noopener">Open link</a>{% endif %}</article>{% endfor %}</section>
+<section id="admin-overview-panel" class="panel glass workspace-panel landing-panel">
       <div class="people-hero">
         <div class="hero-card">
           <div class="eyebrow">{{ school_settings.institution_type }} · Executive command centre</div>
@@ -152,6 +153,7 @@
             <button class="btn btn-primary nav-action" type="button" data-target="users-panel">Open People & Access</button>
             <a class="btn btn-ghost" href="{{ url_for('backup_download') }}">Protect with backup</a>
             <a class="btn btn-ghost" href="{{ url_for('institution') }}">View institution profile</a>
+            <a class="btn btn-ghost" href="#users-panel" onclick="event.preventDefault();document.querySelector('[data-target=\"users-panel\"]')?.click();">Manage users</a>
           </div>
         </div>
         <div class="hero-stat"><span class="eyebrow">People under management</span><strong>{{ users|length }}</strong><span class="muted">{{ school_settings.learner_label }}s, staff, guardians and administrators</span></div>
@@ -445,6 +447,7 @@
       </div>
     </section>
 
+<section class="panel glass" id="theme-advert-panel"><div class="panel-head"><div><div class="eyebrow">Experience & communication</div><h3>Theme and school adverts</h3></div></div><div class="quick-actions" style="margin-bottom:12px"><form method="post" action="/admin/theme/preset" class="quick-actions"><select name="theme_preset" style="min-width:220px"><option value="classic" {% if settings.theme_preset=='classic' %}selected{% endif %}>Classic</option><option value="christmas" {% if settings.theme_preset=='christmas' %}selected{% endif %}>Christmas</option><option value="easter" {% if settings.theme_preset=='easter' %}selected{% endif %}>Easter</option><option value="madaraka" {% if settings.theme_preset=='madaraka' %}selected{% endif %}>Madaraka</option><option value="school-pride" {% if settings.theme_preset=='school-pride' %}selected{% endif %}>School pride</option></select><button class="btn btn-primary" type="submit">Apply theme</button></form></div><form method="post" action="/advertisements/create" class="stack-form two-col"><label><span>Advert title</span><input name="title" required></label><label><span>Priority</span><input name="priority" type="number" min="0" max="100" value="10"></label><label style="grid-column:1/-1"><span>Message</span><textarea name="body" rows="3" required></textarea></label><label><span>Start date</span><input name="start_date" type="date"></label><label><span>End date</span><input name="end_date" type="date"></label><label><span>Optional link</span><input name="link_url" type="url"></label><div><span>&nbsp;</span><button class="btn btn-primary" type="submit">Publish advert</button></div></form></section>
 <section id="institution-profile-panel" class="panel glass workspace-panel hidden">
       <div class="panel-head"><div><div class="eyebrow">Institution configuration</div><h3>Configure the platform around the institution</h3><p class="muted">Terminology is configurable; the underlying security model stays consistent.</p></div></div>
       <form method="post" action="{{ url_for('admin_institution_profile') }}" class="stack-form two-col">

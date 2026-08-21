@@ -249,6 +249,20 @@ def _init_db_once() -> None:
                 school_fee REAL NOT NULL DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS advertisements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL DEFAULT '',
+                link_url TEXT NOT NULL DEFAULT '',
+                start_date TEXT NOT NULL DEFAULT '',
+                end_date TEXT NOT NULL DEFAULT '',
+                priority INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_by INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+            );
+
             CREATE TABLE IF NOT EXISTS students (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 admission_no TEXT NOT NULL UNIQUE,
@@ -296,6 +310,14 @@ def _init_db_once() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(actor_id) REFERENCES users(id) ON DELETE SET NULL
             );
+
+            CREATE TABLE IF NOT EXISTS login_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+                method TEXT NOT NULL DEFAULT 'Password', logged_in_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ip_address TEXT, user_agent TEXT, latitude REAL, longitude REAL, accuracy REAL, location_label TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_login_events_user_time ON login_events(user_id, logged_in_at);
 
             CREATE TABLE IF NOT EXISTS exam_batches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -532,6 +554,7 @@ def _init_db_once() -> None:
         ensure_column(conn, "school_settings", "welcome_animation_enabled INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "school_settings", "welcome_animation_name TEXT NOT NULL DEFAULT 'Toror Technology and Innovations Ltd.'")
         ensure_column(conn, "school_settings", "welcome_animation_duration_ms INTEGER NOT NULL DEFAULT 2200")
+        ensure_column(conn, "school_settings", "theme_preset TEXT NOT NULL DEFAULT 'classic'")
 
         ensure_column(conn, "students", "guardian_name TEXT")
         ensure_column(conn, "students", "guardian_phone TEXT")
@@ -1249,6 +1272,13 @@ def audit(actor_id: int | None, actor_name: str, action: str, details: str) -> N
     )
 
 
+def record_login_event(user, method='Password', latitude=None, longitude=None, accuracy=None):
+    ip=request.headers.get('X-Forwarded-For', request.remote_addr or '')
+    if ',' in ip: ip=ip.split(',')[0].strip()
+    ua=(request.headers.get('User-Agent') or '')[:500]
+    return execute("INSERT INTO login_events(user_id,method,ip_address,user_agent,latitude,longitude,accuracy) VALUES(?,?,?,?,?,?,?)",(user['id'],method,ip[:120],ua,latitude,longitude,accuracy))
+
+
 # -------------------------
 # Local role session helpers
 # -------------------------
@@ -1541,10 +1571,15 @@ def record_reception_scan(action, token='', device_token='', full_name='', phone
     return {'ok':True,'visit_id':vid,'name':full_name or 'Unregistered person','message':f'{full_name or "Unregistered person"} checked in at {now}.','registered':False}
 
 def specialized_dashboard_for(user) -> str:
+    # Institutional role is authoritative. A stale workspace value must not
+    # reroute ICT/Finance/Librarian/Admin to a generic workforce screen.
+    role=(user.get("role") if hasattr(user, "get") else user["role"]) or ""
+    if role in ALL_PORTAL_ROLES and role in {"Admin","ICT","Finance","Teacher","Student","Parent","Librarian"}:
+        return role_target(role)
     wt=workspace_type_for_user(user)
     if wt=="Driver": return url_for("driver_dashboard")
     if wt in {"Guard","Cook","Other Staff"}: return url_for("workforce_dashboard", kind=wt)
-    return role_target(user["role"])
+    return role_target(role)
 
 def enter_role_without_login(role: str):
     if role == "Parent" and not parent_portal_enabled():
@@ -1708,6 +1743,22 @@ def theme_style(settings=None) -> str:
     return css+extra
 
 
+def theme_preset_style(settings=None) -> str:
+    settings=settings or school_settings()
+    preset=str(settings["theme_preset"] or "classic").lower() if "theme_preset" in settings.keys() else "classic"
+    presets={
+        "classic":"",
+        "christmas":":root{--theme-glow:rgba(220,38,38,.18)} body.app-body:before{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 12% 0%,rgba(22,163,74,.16),transparent 28%),radial-gradient(circle at 88% 0%,rgba(220,38,38,.16),transparent 28%);z-index:-1}",
+        "easter":":root{--theme-glow:rgba(168,85,247,.16)} body.app-body:before{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 15% 0%,rgba(250,204,21,.16),transparent 25%),radial-gradient(circle at 82% 0%,rgba(168,85,247,.16),transparent 25%);z-index:-1}",
+        "madaraka":":root{--theme-glow:rgba(220,38,38,.16)} body.app-body:before{content:'';position:fixed;inset:0;pointer-events:none;background:linear-gradient(120deg,rgba(0,0,0,.10),rgba(220,38,38,.10),rgba(22,163,74,.10));z-index:-1}",
+        "school-pride":":root{--theme-glow:rgba(37,99,235,.18)} body.app-body .topbar{box-shadow:0 14px 34px rgba(37,99,235,.18)}"
+    }
+    return presets.get(preset,presets["classic"])
+
+def active_advertisements(limit=4):
+    today=datetime.utcnow().strftime("%Y-%m-%d")
+    return q("SELECT a.*,u.full_name AS poster FROM advertisements a LEFT JOIN users u ON u.id=a.created_by WHERE a.active=1 AND (a.start_date='' OR a.start_date<=?) AND (a.end_date='' OR a.end_date>=?) ORDER BY a.priority DESC,a.created_at DESC LIMIT ?",(today,today,limit))
+
 def landing_style(settings=None) -> str:
     settings=settings or school_settings()
     ff=str(settings['landing_font_family'] or 'Inter').replace('<','').replace('>','').replace(';','').replace('"','')
@@ -1732,7 +1783,8 @@ def auth_template_context():
     settings=school_settings()
     return {
         "current_user": current_user(), "school_settings": settings, "portal_title": settings["school_name"], "theme_color": settings["primary_color"], "all_roles": ALL_PORTAL_ROLES, "public_roles": PUBLIC_ROLES,
-        "theme_style": theme_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(),
+        "theme_style": theme_style(settings), "theme_preset_style": theme_preset_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(),
+        "active_adverts": active_advertisements(),
         "welcome_animation": bool(settings["welcome_animation_enabled"]), "welcome_animation_name": settings["welcome_animation_name"], "welcome_animation_duration_ms": int(settings["welcome_animation_duration_ms"] or 2200),
         "important_dates": important_dates(12, landing=request.path == '/'),
         "school_day": school_day_status(),
@@ -2181,17 +2233,15 @@ def login():
         if not user or not check_password_hash(user["password_hash"], password):
             flash("Invalid username, password, or role.", "danger")
             return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username, password, or role.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
-        # The first successful password login activates the user's personal QR sign-in.
+        # Normal password login always goes directly to the person's dashboard.
+        # Staff QR is only an optional convenience after the first successful password login.
         if user["role"] not in {"Student", "Parent", "System"} and "qr_login_enabled" in user.keys():
             execute("UPDATE users SET qr_login_enabled=1,last_password_login_at=CURRENT_TIMESTAMP,qr_access_token=COALESCE(NULLIF(qr_access_token,''),lower(hex(randomblob(16)))) WHERE id=?", (user["id"],))
-            user = q("SELECT * FROM users WHERE id=?", (user["id"],), one=True)
-        session.clear()
-        session.permanent = True
-        session["user_id"] = user["id"]
-        session["active_portal_role"] = user["role"]
-        context = _portal_context_for(user["id"])
-        target = specialized_dashboard_for(user)
-        return redirect(target + "?" + urllib.parse.urlencode({"portal_context": context}))
+            user=q("SELECT * FROM users WHERE id=?",(user["id"],),one=True)
+        login_id=record_login_event(user,'Password')
+        session.clear(); session.permanent=True
+        session["user_id"]=user["id"]; session["active_portal_role"]=user["role"]; session["login_event_id"]=login_id; session["login_location_pending"]=1
+        return redirect(specialized_dashboard_for(user))
     return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
 
 
@@ -2278,9 +2328,10 @@ def teacher_class_attendance():
     if request.method=='POST':
         saved=0
         for st in students:
-            status=request.form.get(f"attendance_{st['id']}",'Absent')
-            if status not in {'Present','Absent','Late','Excused'}: status='Absent'
+            status=request.form.get(f"attendance_{st['id']}",'').strip()
             note=request.form.get(f"note_{st['id']}",'').strip()
+            if status not in {'Present','Absent','Late','Excused'}:
+                execute("DELETE FROM class_attendance WHERE teacher_user_id=? AND student_id=? AND class_name=? AND subject=? AND attendance_date=?",(user['id'],st['id'],cls,subject,date)); continue
             execute("INSERT INTO class_attendance(teacher_user_id,student_id,class_name,subject,attendance_date,status,note) VALUES(?,?,?,?,?,?,?) ON CONFLICT(teacher_user_id,student_id,class_name,subject,attendance_date) DO UPDATE SET status=excluded.status,note=excluded.note",(user['id'],st['id'],cls,subject,date,status,note)); saved+=1
         flash(f'{saved} class attendance records saved.','success')
         return redirect(url_for('teacher_class_attendance',class_name=cls,subject=subject,attendance_date=date))
@@ -2763,6 +2814,24 @@ def coming_soon(feature: str):
     return redirect(url_for("index"))
 
 
+@app.route("/api/login-location", methods=["POST"])
+@login_required
+def login_location():
+    payload=request.get_json(silent=True) or {}
+    try:
+        lat=float(payload.get('latitude')); lon=float(payload.get('longitude')); acc=float(payload.get('accuracy')) if payload.get('accuracy') is not None else None
+        if not (-90<=lat<=90 and -180<=lon<=180): raise ValueError
+    except (TypeError,ValueError):
+        return jsonify({'ok':False}),400
+    event_id=session.get('login_event_id')
+    if event_id:
+        execute("UPDATE login_events SET latitude=?,longitude=?,accuracy=? WHERE id=? AND user_id=?",(lat,lon,acc,event_id,current_user()['id']))
+    else:
+        event_id=record_login_event(current_user(),'Location update',lat,lon,acc); session['login_event_id']=event_id
+    session.pop('login_location_pending',None)
+    return jsonify({'ok':True})
+
+
 @app.route("/logout")
 def logout():
     g.logging_out = True
@@ -3187,6 +3256,47 @@ def institution_save():
     execute("UPDATE school_settings SET institution_history=?, institution_performance=?, institution_religion=?, institution_affiliations=?, institution_help=?, institution_contact=?, institution_portal_guide=?, institution_admin_guide=?, institution_ict_guide=?, institution_finance_guide=?, institution_driver_guide_en=?, institution_driver_guide_sw=?, institution_image_path=?, institution_enabled=1 WHERE id=1",(values["institution_history"],values["institution_performance"],values["institution_religion"],values["institution_affiliations"],values["institution_help"],values["institution_contact"],values["institution_portal_guide"],values["institution_admin_guide"],values["institution_ict_guide"],values["institution_finance_guide"],values["institution_driver_guide_en"],values["institution_driver_guide_sw"],image_path))
     flash("Institution information updated.","success"); return redirect(url_for("institution"))
 
+@app.route("/admin/theme/preset", methods=["POST"])
+@login_required
+@role_required("Admin","ICT")
+def save_theme_preset():
+    preset=(request.form.get("theme_preset") or "classic").strip().lower()
+    if preset not in {"classic","christmas","easter","madaraka","school-pride"}: preset="classic"
+    _save_theme_snapshot("workspace", current_user()["id"])
+    execute("UPDATE school_settings SET theme_preset=? WHERE id=1",(preset,))
+    audit(current_user()["id"],current_user()["full_name"],"Theme Preset",f"Workspace theme set to {preset}.")
+    flash(f"Workspace theme set to {preset.replace('-', ' ').title()}.","success")
+    return redirect(url_for("ict_dashboard") if current_user()["role"]=="ICT" else url_for("admin_dashboard"))
+
+@app.route("/advertisements/create", methods=["POST"])
+@login_required
+@role_required("Admin","ICT")
+def create_advertisement():
+    title=request.form.get("title","").strip()[:160]
+    body=request.form.get("body","").strip()[:5000]
+    link=request.form.get("link_url","").strip()[:600]
+    start=request.form.get("start_date","").strip()[:10]
+    end=request.form.get("end_date","").strip()[:10]
+    try: priority=max(0,min(100,int(request.form.get("priority",0))))
+    except Exception: priority=0
+    if not title or not body:
+        flash("An advert needs a title and message.","danger")
+        return redirect(request.referrer or url_for("ict_dashboard"))
+    execute("INSERT INTO advertisements(title,body,link_url,start_date,end_date,priority,active,created_by) VALUES(?,?,?,?,?,?,1,?)",(title,body,link,start,end,priority,current_user()["id"]))
+    audit(current_user()["id"],current_user()["full_name"],"Create Advert",f"Advert '{title}' published.")
+    flash("Advert published to the school portal.","success")
+    return redirect(request.referrer or url_for("ict_dashboard"))
+
+@app.route("/advertisements/<int:advert_id>/toggle", methods=["POST"])
+@login_required
+@role_required("Admin","ICT")
+def toggle_advertisement(advert_id:int):
+    row=q("SELECT * FROM advertisements WHERE id=?",(advert_id,),one=True)
+    if not row: abort(404)
+    execute("UPDATE advertisements SET active=? WHERE id=?",(0 if row["active"] else 1,advert_id))
+    flash("Advert status updated.","success")
+    return redirect(request.referrer or url_for("ict_dashboard"))
+
 @app.route("/ict/features", methods=["POST"])
 @login_required
 @role_required("Admin","ICT")
@@ -3232,7 +3342,7 @@ def ict_dashboard():
     library_items=q("SELECT * FROM library_items ORDER BY active DESC,category,title")
     students=q("SELECT * FROM students WHERE active=1 ORDER BY grade,full_name")
     users=q("SELECT id,full_name,username,role,student_id,active FROM users WHERE role!='System' ORDER BY role,full_name")
-    return render_template("role_dashboard.html", role="ICT", workspace=workspace_for("ICT"), settings=settings, actor_name=current_user()["full_name"], nav_items=nav_items, onboarding_students=q("SELECT id, full_name, admission_no FROM students ORDER BY full_name"), elections=elections, election_candidates=election_candidates, library_items=library_items, students=students, users=users)
+    return render_template("ict_dashboard.html", role="ICT", workspace=workspace_for("ICT"), settings=settings, actor_name=current_user()["full_name"], nav_items=nav_items, onboarding_students=q("SELECT id, full_name, admission_no FROM students ORDER BY full_name"), elections=elections, election_candidates=election_candidates, library_items=library_items, students=students, users=users)
 
 
 def _theme_snapshot_payload(settings):
@@ -4010,8 +4120,9 @@ def student_profile(student_id:int):
     results=q("SELECT * FROM exam_results WHERE student_id=? ORDER BY term DESC,subject",(student_id,))
     student_departments=q("SELECT d.name,d.category,sd.status FROM student_departments sd JOIN departments d ON d.id=sd.department_id WHERE sd.student_id=? AND sd.status!='Dropped' ORDER BY d.name",(student_id,))
     subjects=q("SELECT sc.subject,sc.department,ss.status FROM student_subjects ss JOIN subjects_catalog sc ON sc.id=ss.subject_id WHERE ss.student_id=? AND ss.status!='Dropped' ORDER BY sc.department,sc.subject",(student_id,))
+    class_attendance=q("SELECT ca.*,u.full_name AS teacher_name FROM class_attendance ca JOIN users u ON u.id=ca.teacher_user_id WHERE ca.student_id=? ORDER BY ca.attendance_date DESC,ca.id DESC LIMIT 120",(student_id,))
     awards=[r for r in records if r['category']=='Award']; discipline=[r for r in records if r['category']=='Indiscipline']
-    return render_template('student_profile.html',student=student,guardians=guardians,payments=payments,records=records,results=results,awards=awards,discipline=discipline,settings=school_settings(),actor_name=user['full_name'],role=role,can_edit=role in {'Admin','ICT'},can_write_record=role in {'Admin','Teacher'},parent_visible_count=sum(1 for r in records if r['visible_to_parent']),subjects=subjects,student_departments=student_departments)
+    return render_template('student_profile.html',student=student,guardians=guardians,payments=payments,records=records,results=results,class_attendance=class_attendance,awards=awards,discipline=discipline,settings=school_settings(),actor_name=user['full_name'],role=role,can_edit=role in {'Admin','ICT'},can_write_record=role in {'Admin','Teacher'},parent_visible_count=sum(1 for r in records if r['visible_to_parent']),subjects=subjects,student_departments=student_departments)
 
 @app.route("/students/<int:student_id>/record", methods=["POST"])
 @login_required
@@ -4804,15 +4915,14 @@ def staff_attendance_qr(user_id:int):
 def qr_landing(token:str):
     user=q("SELECT * FROM users WHERE qr_access_token=? AND active=1 AND role NOT IN ('Student','Parent','System')",(token,),one=True)
     if not user:
-        flash("That staff QR is invalid or no longer active.","warning")
-        return redirect(url_for("login"))
+        return render_template('error.html',message='This QR code is not linked to an active staff account.'),404
     if not qr_login_allowed(user):
-        flash("This QR is not active yet. Complete one normal name-and-password login first.","warning")
-        return redirect(url_for("login", role=user["role"], qr_setup="1"))
-    session.clear(); session.permanent=True; session["user_id"]=user["id"]; session["active_portal_role"]=user["role"];
-    context=_portal_context_for(user["id"]); target=specialized_dashboard_for(user)
-    audit(user["id"], user["full_name"], "QR Login", f"{user['full_name']} signed in with personal staff QR.")
-    return redirect(target + "?" + urllib.parse.urlencode({"portal_context": context, "qr": "1"}))
+        return render_template('error.html',message='QR sign-in is not enabled for this staff account yet. Use your normal username and password first.'),403
+    login_id=record_login_event(user,'QR')
+    session.clear(); session.permanent=True
+    session["user_id"]=user["id"]; session["active_portal_role"]=user["role"]; session["login_event_id"]=login_id; session["login_location_pending"]=1
+    audit(user["id"],user["full_name"],"QR Login",f"{user['full_name']} signed in with personal staff QR.")
+    return redirect(specialized_dashboard_for(user))
 
 @app.route("/finance/ledger", methods=["POST"])
 @login_required

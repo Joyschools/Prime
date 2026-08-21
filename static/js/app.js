@@ -65,6 +65,26 @@
     if (!isPhoneLayout()) document.body.classList.remove("mobile-nav-open");
   });
 
+  // Gentle desktop sidebar edge scrolling: move the pointer near the top/bottom
+  // and the navigation rail eases in that direction instead of jumping.
+  let sidebarScrollFrame = null;
+  let sidebarPointerY = null;
+  function sidebarEdgeScroll(){
+    if (!sidebarPointerY || isPhoneLayout() || !sidebarDrawer) { sidebarScrollFrame=null; return; }
+    const rect=sidebarDrawer.getBoundingClientRect();
+    const edge=64;
+    let delta=0;
+    if(sidebarPointerY < rect.top+edge) delta=-2.2*(1-(sidebarPointerY-rect.top)/edge);
+    else if(sidebarPointerY > rect.bottom-edge) delta=2.2*(1-(rect.bottom-sidebarPointerY)/edge);
+    if(Math.abs(delta)>0.1) sidebarDrawer.scrollTop += delta;
+    sidebarScrollFrame=window.requestAnimationFrame(sidebarEdgeScroll);
+  }
+  sidebarDrawer?.addEventListener("mousemove",(event)=>{
+    sidebarPointerY=event.clientY;
+    if(!sidebarScrollFrame) sidebarScrollFrame=window.requestAnimationFrame(sidebarEdgeScroll);
+  });
+  sidebarDrawer?.addEventListener("mouseleave",()=>{sidebarPointerY=null;});
+
   function getScrollMetrics() {
     const doc = document.documentElement;
     const scrollTop = window.scrollY || doc.scrollTop || 0;
@@ -102,14 +122,16 @@
     const thumbHeight = scrollThumb.offsetHeight || 34;
     const offset = Math.min(Math.max(clientY - rect.top - (thumbHeight / 2), 0), Math.max(rect.height - thumbHeight, 0));
     const ratio = rect.height - thumbHeight <= 0 ? 0 : offset / (rect.height - thumbHeight);
-    window.scrollTo({ top: ratio * maxScroll, behavior: "auto" });
+    window.scrollTo({ top: ratio * maxScroll, behavior: "smooth" });
   }
   function showPanel(panelId, scrollTarget) {
     const panel = document.getElementById(panelId);
     if (!panel) return;
     panels.forEach((p) => p.classList.add("hidden"));
     panel.classList.remove("hidden");
-    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    panel.classList.add("panel-reveal");
+    window.requestAnimationFrame(() => panel.classList.remove("panel-reveal"));
+    window.setTimeout(() => panel.scrollIntoView({ behavior: "smooth", block: "start" }), 20);
     if (scrollTarget) {
       window.setTimeout(() => document.getElementById(scrollTarget)?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
     }

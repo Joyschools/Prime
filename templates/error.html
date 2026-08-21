@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-<style>{{theme_style|safe}}</style></head>
+<style>{{theme_style|safe}}{{theme_preset_style|safe}}</style></head>
 <body class="auth-body">
   <main class="auth-shell">
     <section class="auth-card glass">
