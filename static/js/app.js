@@ -68,6 +68,12 @@
     if (!isPhoneLayout()) document.body.classList.remove("mobile-nav-open");
   });
 
+  // Mobile drawer: tapping outside closes it; page navigation closes it automatically.
+  document.getElementById("prime-mobile-nav")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleSidebar();
+  });
+
   // Gentle desktop sidebar edge scrolling: move the pointer near the top/bottom
   // and the navigation rail eases in that direction instead of jumping.
   let sidebarScrollFrame = null;
