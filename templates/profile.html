@@ -1,45 +1,26 @@
-
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ current_user.role }} | Profile</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-<style>{{theme_style|safe}}{{theme_preset_style|safe}}</style></head>
-<body class="app-body sidebar-style-{{ school_settings.sidebar_style|default("drawer", true) }}">{% include "_notification_bell.html" %}
-  <div class="scroll-rail" id="scrollRail" aria-hidden="true"><div class="scroll-track"><div class="scroll-thumb" id="scrollThumb"></div></div></div>
-  <main class="content single">
-    <section class="topbar glass">
-      <div>
-        <div class="eyebrow">Profile</div>
-        <h1>{{ profile_user.full_name }}</h1>
-        <div class="muted">{{ workspace }}</div>
-      </div>
-      <div class="top-actions">
-        <a class="btn btn-ghost" href="{{ url_for('admin_dashboard') if profile_user.role == 'Admin' else url_for('dashboard') }}">Back</a>
-        <a class="btn btn-ghost" href="{{ url_for('logout') }}">Logout</a>
-      </div>
-    </section>
-
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <div class="flash-stack">{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}</div>
-      {% endif %}
-    {% endwith %}
-
-    <section class="panel glass profile-card">
-      <div class="panel-head"><div><div class="eyebrow">Account details</div><h3>Edit profile</h3></div></div>
-      <form class="stack-form" method="post">
-        <label><span>Full name</span><input name="full_name" value="{{ profile_user.full_name }}" required></label>
-        <label><span>Username</span><input value="{{ profile_user.username }}" disabled></label>
-        <label><span>Role</span><input value="{{ profile_user.role }}" disabled></label>
-        <label><span>New password</span><div class="password-wrap"><input id="profilePassword" name="password" type="password" minlength="4" placeholder="Leave blank to keep current"><button class="password-toggle" type="button" data-password-target="profilePassword">Show</button></div></label>
-        <button class="btn btn-primary" type="submit">Save changes</button>
-      </form>
-    </section>
-  </main>
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
-
-<div style="position:fixed;right:14px;bottom:14px;z-index:90;display:flex;gap:8px"><a class="btn btn-ghost mini" href="/system-help">Help</a><a class="btn btn-primary mini" href="/ai-assistant">AI</a></div>{% include '_footer.html' %}</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ school_settings.school_name }} | Profile</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<style>{{theme_style|safe}}{{theme_preset_style|safe}}
+.profile-shell{max-width:980px;margin:0 auto}.profile-hero{display:grid;grid-template-columns:auto 1fr auto;gap:20px;align-items:center}.profile-avatar{width:112px;height:112px;border-radius:28px;object-fit:cover;border:3px solid rgba(36,87,214,.18);background:var(--panel-3);display:grid;place-items:center;font-size:36px;font-weight:900;color:var(--primary-blue,#2457d6);overflow:hidden}.profile-avatar img{width:100%;height:100%;object-fit:cover}.profile-badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}.profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.profile-card{padding:20px}.profile-action-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.profile-action{padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--panel-3);text-decoration:none;display:grid;gap:5px}.profile-action strong{font-size:15px}.profile-action span{font-size:12px;color:var(--muted-text)}
+@media(max-width:700px){.profile-hero{grid-template-columns:auto 1fr}.profile-hero>.top-actions{grid-column:1/-1}.profile-grid,.profile-action-grid{grid-template-columns:1fr}.profile-avatar{width:90px;height:90px;border-radius:22px}}
+</style></head>
+<body class="app-body sidebar-style-{{ school_settings.sidebar_style|default('drawer',true) }}">
+{% include "_notification_bell.html" %}
+<main class="content single"><div class="profile-shell">
+<header class="topbar glass profile-hero">
+<div class="profile-avatar">{% if profile_user.profile_photo %}<img src="/{{ profile_user.profile_photo }}" alt="Profile photo">{% else %}<span>{{ profile_user.full_name[:1]|upper }}</span>{% endif %}</div>
+<div><div class="eyebrow">Your profile</div><h1 style="margin:4px 0">{{ profile_user.full_name }}</h1><div class="muted">{{ workspace }} · {{ profile_user.username }}</div><div class="profile-badges"><span class="pill-role">{{ profile_user.role }}</span>{% if profile_user.student_id %}<span class="pill-role">Student account linked</span>{% endif %}</div></div>
+<div class="top-actions"><a class="btn btn-ghost" href="{{ url_for('admin_dashboard') if profile_user.role == 'Admin' else url_for('dashboard') }}">Back</a><a class="btn btn-ghost" href="{{ url_for('logout') }}">Logout</a></div>
+</header>
+{% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+<section class="panel glass profile-card"><div class="panel-head"><div><div class="eyebrow">Profile picture</div><h3>Keep your identity up to date</h3></div></div><form class="stack-form" method="post" enctype="multipart/form-data"><label><span>Profile photo</span><input type="file" name="profile_photo" accept=".png,.jpg,.jpeg,.webp"><small class="muted">This picture is used across your account and is included on official student exam cards when available.</small></label><label><span>Full name</span><input name="full_name" value="{{ profile_user.full_name }}" required></label><label><span>Username</span><input value="{{ profile_user.username }}" disabled></label><label><span>Role</span><input value="{{ profile_user.role }}" disabled></label><label><span>New password</span><div class="password-wrap"><input id="profilePassword" name="password" type="password" minlength="4" placeholder="Leave blank to keep current"><button class="password-toggle" type="button" data-password-target="profilePassword">Show</button></div></label><button class="btn btn-primary" type="submit">Save profile</button></form></section>
+<section class="panel glass profile-card"><div class="panel-head"><div><div class="eyebrow">Your shortcuts</div><h3>Everything in one place</h3></div></div><div class="profile-action-grid">
+<a class="profile-action" href="/communication"><strong>Messages</strong><span>Send and receive school communication.</span></a>
+<a class="profile-action" href="/notifications"><strong>Notifications</strong><span>See updates and mark them read.</span></a>
+<a class="profile-action" href="/calendar"><strong>Calendar</strong><span>Important dates and school events.</span></a>
+<a class="profile-action" href="/system-help"><strong>Help</strong><span>Role-specific guidance when you need it.</span></a>
+{% if profile_user.student_id %}<a class="profile-action" href="/students/{{ profile_user.student_id }}"><strong>My student profile</strong><span>Academic identity, subjects and attendance.</span></a>{% if exam_card %}<a class="profile-action" href="/exam-cards/{{ exam_card.id }}/download"><strong>Download exam card</strong><span>Includes your profile picture and verification QR.</span></a>{% else %}<a class="profile-action" href="/students/{{ profile_user.student_id }}/subjects"><strong>My subjects</strong><span>View your registered subjects.</span></a>{% endif %}{% endif %}
+</div></section>
+</div></main><script src="{{ url_for('static', filename='js/app.js') }}"></script>{% include '_footer.html' %}</body></html>

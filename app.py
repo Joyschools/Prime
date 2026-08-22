@@ -1300,7 +1300,7 @@ def _user_from_auth_token(token: str):
         return None
     if not uid:
         return None
-    return q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token FROM users WHERE id = ? AND active = 1 AND role != 'System'", (uid,), one=True)
+    return q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token, profile_photo FROM users WHERE id = ? AND active = 1 AND role != 'System'", (uid,), one=True)
 
 def _portal_context_serializer():
     return URLSafeTimedSerializer(app.config["SECRET_KEY"], salt=_PORTAL_CONTEXT_SALT)
@@ -1326,7 +1326,7 @@ def _user_from_portal_context(token: str):
     valid = q("SELECT token_id FROM portal_contexts WHERE token_id=? AND user_id=? AND revoked=0", (tid, uid), one=True)
     if not valid:
         return None
-    return q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
+    return q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token, profile_photo FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
 
 def _portal_context_id(token: str):
     try:
@@ -1356,7 +1356,7 @@ def load_current_user() -> None:
             return
     user_id = session.get("user_id")
     if user_id:
-        g.user = q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token FROM users WHERE id = ? AND active = 1 AND role != 'System'", (user_id,), one=True)
+        g.user = q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token, profile_photo FROM users WHERE id = ? AND active = 1 AND role != 'System'", (user_id,), one=True)
         if g.user:
             session.permanent = True
             g.portal_context = None
@@ -1408,7 +1408,7 @@ def persist_auth_cookie(response):
         try:
             body=response.get_data(as_text=True)
             if 'id="prime-global-tools"' not in body and "</body>" in body:
-                shell="""<button id="prime-mobile-nav" class="prime-mobile-nav" type="button" aria-label="Open navigation" aria-expanded="false" title="Open navigation">☰</button><div id="prime-global-tools" class="prime-global-tools"><button type="button" id="prime-profile-btn" class="prime-profile-avatar prime-bell" aria-label="Open profile and notifications" title="Profile"><span aria-hidden="true">◉</span><b id="prime-notification-count" class="prime-profile-badge hidden"></b></button><div id="prime-profile-menu" class="prime-profile-menu"><div class="prime-profile-head"><strong>Profile & updates</strong><span>Account, messages and notifications</span></div><a class="prime-profile-link" href="/profile">Profile & settings</a><a class="prime-profile-link" href="/communication">Messages</a><a class="prime-profile-link" href="/notifications">Notifications</a><a class="prime-profile-link" href="/calendar">Calendar</a><a class="prime-profile-link" href="/system-help">Help</a><a class="prime-profile-link" href="/logout">Log out</a></div></div><button id="prime-mobile-text" class="prime-mobile-text" type="button" aria-label="Adjust text size" title="Adjust text size">Aa</button><div id="prime-text-sheet" class="prime-text-sheet" role="dialog" aria-modal="true" aria-label="Text size settings"><div class="prime-text-sheet-card"><div><strong>Text size</strong><span class="muted">Adjust this device only.</span></div><div class="prime-text-choices"><button type="button" data-prime-text="normal">Normal</button><button type="button" data-prime-text="large">Large</button><button type="button" data-prime-text="xlarge">Extra large</button></div><button type="button" class="btn btn-ghost btn-block" id="prime-text-close">Done</button></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-profile-avatar{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#2457d6) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer;position:relative}.prime-profile-avatar span{font-size:20px;line-height:1}.prime-profile-badge{display:grid}.prime-profile-badge.hidden{display:none}.prime-mobile-text,.prime-text-sheet{display:none}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav,body.auth-body .prime-mobile-text{display:none}@media(max-width:820px){.prime-global-tools{right:12px;top:12px}.prime-mobile-text{display:grid;place-items:center;position:fixed;right:64px;top:12px;width:46px;height:46px;border-radius:14px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:15px;font-weight:900;cursor:pointer;z-index:5001}.prime-text-sheet{position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:6000;align-items:flex-end;justify-content:center;padding:14px}.prime-text-sheet.open{display:flex}.prime-text-sheet-card{width:min(460px,100%);border:1px solid var(--text-border,var(--border));border-radius:20px;background:var(--panel);box-shadow:0 -18px 50px rgba(0,0,0,.26);padding:18px;display:grid;gap:16px}.prime-text-choices{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.prime-text-choices button{border:1px solid var(--text-border,var(--border));background:var(--panel-3);color:var(--primary-text);border-radius:12px;padding:12px 8px;font-weight:800;cursor:pointer}}</style><script>(function(){var m=document.getElementById('prime-mobile-nav');if(m){m.addEventListener('click',function(e){e.stopPropagation();var hasSidebar=!!document.querySelector('.sidebar');document.body.classList.toggle(hasSidebar?'mobile-nav-open':'prime-smart-menu-open');});}document.addEventListener('click',function(e){if(document.body.classList.contains('mobile-nav-open') && !e.target.closest('.sidebar') && !e.target.closest('#prime-mobile-nav')) document.body.classList.remove('mobile-nav-open');var menu=document.getElementById('prime-profile-menu'),btn=document.getElementById('prime-profile-btn');if(menu&&btn){if(e.target.closest('#prime-profile-btn')){menu.classList.toggle('open')}else if(!e.target.closest('#prime-profile-menu')){menu.classList.remove('open')}}});var tb=document.getElementById('prime-mobile-text'),sheet=document.getElementById('prime-text-sheet'),close=document.getElementById('prime-text-close'),choices=document.querySelectorAll('[data-prime-text]');var saved=localStorage.getItem('prime_text_size')||'large';if(saved==='normal'||saved==='large'||saved==='xlarge')document.documentElement.dataset.primeText=saved;if(tb&&sheet){tb.addEventListener('click',function(){sheet.classList.add('open')});sheet.addEventListener('click',function(e){if(e.target===sheet)sheet.classList.remove('open')});close&&close.addEventListener('click',function(){sheet.classList.remove('open')});choices.forEach(function(b){b.classList.toggle('active',b.dataset.primeText===saved);b.addEventListener('click',function(){saved=b.dataset.primeText;localStorage.setItem('prime_text_size',saved);document.documentElement.dataset.primeText=saved;choices.forEach(function(x){x.classList.toggle('active',x.dataset.primeText===saved)})})})}function poll(){fetch('/api/notifications',{cache:'no-store'}).then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');n.textContent=''}else{n.classList.remove('hidden');n.textContent=c>99?'99+':String(c)}}).catch(function(){})}poll();setInterval(poll,12000)})();</script>"""
+                shell="""<button id="prime-mobile-nav" class="prime-mobile-nav" type="button" aria-label="Open navigation" aria-expanded="false" title="Open navigation">☰</button><div id="prime-global-tools" class="prime-global-tools"><button type="button" id="prime-profile-btn" class="prime-profile-avatar prime-bell" aria-label="Open profile and notifications" title="Profile">{% if current_user.profile_photo %}<img src="/{{ current_user.profile_photo }}" alt="Profile" style="width:100%;height:100%;object-fit:cover;border-radius:50%">{% else %}<span aria-hidden="true">{{ current_user.full_name[:1]|upper if current_user else 'U' }}</span>{% endif %}<b id="prime-notification-count" class="prime-profile-badge hidden"></b></button><div id="prime-profile-menu" class="prime-profile-menu"><div class="prime-profile-head"><strong>Profile & updates</strong><span>Account, messages and notifications</span></div><a class="prime-profile-link" href="/profile">Profile & settings</a><a class="prime-profile-link" href="/communication">Messages</a><a class="prime-profile-link" href="/notifications">Notifications</a><a class="prime-profile-link" href="/calendar">Calendar</a><a class="prime-profile-link" href="/system-help">Help</a><a class="prime-profile-link" href="/logout">Log out</a></div></div><button id="prime-mobile-text" class="prime-mobile-text" type="button" aria-label="Adjust text size" title="Adjust text size">Aa</button><div id="prime-text-sheet" class="prime-text-sheet" role="dialog" aria-modal="true" aria-label="Text size settings"><div class="prime-text-sheet-card"><div><strong>Text size</strong><span class="muted">Adjust this device only.</span></div><div class="prime-text-choices"><button type="button" data-prime-text="normal">Normal</button><button type="button" data-prime-text="large">Large</button><button type="button" data-prime-text="xlarge">Extra large</button></div><button type="button" class="btn btn-ghost btn-block" id="prime-text-close">Done</button></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-profile-avatar{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#2457d6) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer;position:relative}.prime-profile-avatar span{font-size:20px;line-height:1}.prime-profile-badge{display:grid}.prime-profile-badge.hidden{display:none}.prime-mobile-text,.prime-text-sheet{display:none}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav,body.auth-body .prime-mobile-text{display:none}@media(max-width:820px){.prime-global-tools{right:12px;top:12px}.prime-mobile-text{display:grid;place-items:center;position:fixed;right:64px;top:12px;width:46px;height:46px;border-radius:14px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:15px;font-weight:900;cursor:pointer;z-index:5001}.prime-text-sheet{position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:6000;align-items:flex-end;justify-content:center;padding:14px}.prime-text-sheet.open{display:flex}.prime-text-sheet-card{width:min(460px,100%);border:1px solid var(--text-border,var(--border));border-radius:20px;background:var(--panel);box-shadow:0 -18px 50px rgba(0,0,0,.26);padding:18px;display:grid;gap:16px}.prime-text-choices{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.prime-text-choices button{border:1px solid var(--text-border,var(--border));background:var(--panel-3);color:var(--primary-text);border-radius:12px;padding:12px 8px;font-weight:800;cursor:pointer}}</style><script>(function(){var m=document.getElementById('prime-mobile-nav');if(m){m.addEventListener('click',function(e){e.stopPropagation();var hasSidebar=!!document.querySelector('.sidebar');var open=!document.body.classList.contains('mobile-nav-open');document.body.classList.toggle(hasSidebar?'mobile-nav-open':'prime-smart-menu-open',open);m.setAttribute('aria-expanded',open?'true':'false');});}document.addEventListener('click',function(e){var action=e.target.closest('.nav-action,[data-target]');if(action && !action.closest('.prime-profile-menu')){var targetId=action.getAttribute('data-target');if(targetId){var target=document.getElementById(targetId);if(target){target.classList.toggle('hidden');target.classList.toggle('open');action.setAttribute('aria-expanded',target.classList.contains('open')?'true':'false');e.preventDefault();}}}if(document.body.classList.contains('mobile-nav-open') && !e.target.closest('.sidebar') && !e.target.closest('#prime-mobile-nav')){document.body.classList.remove('mobile-nav-open');var mm=document.getElementById('prime-mobile-nav');if(mm)mm.setAttribute('aria-expanded','false');}var menu=document.getElementById('prime-profile-menu'),btn=document.getElementById('prime-profile-btn');if(menu&&btn){if(e.target.closest('#prime-profile-btn')){menu.classList.toggle('open')}else if(!e.target.closest('#prime-profile-menu')){menu.classList.remove('open')}}});var tb=document.getElementById('prime-mobile-text'),sheet=document.getElementById('prime-text-sheet'),close=document.getElementById('prime-text-close'),choices=document.querySelectorAll('[data-prime-text]');var saved=localStorage.getItem('prime_text_size')||'large';if(saved==='normal'||saved==='large'||saved==='xlarge')document.documentElement.dataset.primeText=saved;if(tb&&sheet){tb.addEventListener('click',function(){sheet.classList.add('open')});sheet.addEventListener('click',function(e){if(e.target===sheet)sheet.classList.remove('open')});close&&close.addEventListener('click',function(){sheet.classList.remove('open')});choices.forEach(function(b){b.classList.toggle('active',b.dataset.primeText===saved);b.addEventListener('click',function(){saved=b.dataset.primeText;localStorage.setItem('prime_text_size',saved);document.documentElement.dataset.primeText=saved;choices.forEach(function(x){x.classList.toggle('active',x.dataset.primeText===saved)})})})}function poll(){fetch('/api/notifications',{cache:'no-store'}).then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');n.textContent=''}else{n.classList.remove('hidden');n.textContent=c>99?'99+':String(c)}}).catch(function(){})}poll();setInterval(poll,12000)})();</script>"""
                 response.set_data(body.replace("</body>",shell+"</body>",1))
         except Exception:
             pass
@@ -1510,7 +1510,7 @@ def _ensure_demo_identity() -> None:
         session.permanent = True
         session["user_id"] = uid
         session["active_portal_role"] = desired
-        g.user = q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
+        g.user = q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token, profile_photo FROM users WHERE id=? AND active=1 AND role!='System'", (uid,), one=True)
 
 
 def role_target(role: str) -> str:
@@ -1861,7 +1861,7 @@ def navigation_items(role: str, settings):
     }
     allowed={
         "Teacher": ["Home","Assignments","Submissions","Online classes","Elections","Library","Institution"],
-        "Student": ["Home","Assignments","Results","Online classes","Elections","Library","Institution"],
+        "Student": ["Home","Assignments","Results","Online classes","Library","Institution"],
         "Parent": ["Home","My children","Results & fees","Teacher communication","Library","Institution"],
         "Finance": ["Home","Finance","Payments","Library","Institution"],
         "ICT": ["Home","Branding","Theme","Navigation order","Elections","Library","Institution","Members"],
@@ -2002,10 +2002,18 @@ def embed_qr_in_document(source_path: Path, qr_path: Path, token: str) -> str:
 def generate_exam_card_pdf(student,batch_name,doc,qr_path):
     buf=io.BytesIO(); c=canvas.Canvas(buf,pagesize=A4); w,h=A4; settings=school_settings(); c.setTitle(f"Exam Card - {student['full_name']}")
     c.setFont("Helvetica-Bold",18); c.drawString(44,h-58,settings["school_name"]); c.setFont("Helvetica-Bold",14); c.drawString(44,h-84,"EXAMINATION CARD")
+    photo_path=(student['profile_photo'] if 'profile_photo' in student.keys() else '') if student else ''
+    if photo_path:
+        try:
+            target=(BASE_DIR/photo_path).resolve() if photo_path.startswith('uploads/') else (UPLOAD_DIR/photo_path).resolve()
+            if target.exists() and target.is_file():
+                c.drawImage(str(target),44,h-255,width=88,height=110,preserveAspectRatio=True,mask='auto')
+        except Exception:
+            pass
     c.setFont("Helvetica",11); y=h-130
-    for line in [f"Student: {student['full_name']}",f"Admission No: {student['admission_no']}",f"Grade: {student['grade']}",f"Examination: {batch_name}",f"Fee balance: {settings['currency_code']} {float(student['balance'] or 0):,.0f}"]:
-        c.drawString(60,y,line); y-=22
-    c.drawString(60,y-8,"Present this card when requested by the school."); c.drawImage(str(qr_path),w-170,95,width=100,height=100,preserveAspectRatio=True,mask='auto'); c.setFont("Helvetica",7); c.drawString(w-174,84,"Scan to verify authenticity"); c.drawString(44,44,f"Verification token: {doc['qr_token']}"); c.save(); buf.seek(0); return buf
+    for line in [f"Student: {student['full_name']}",f"Admission No: {student['admission_no']}",f"Grade: {student['grade']}",f"Examination: {batch_name}",f"Fee balance: {settings['currency_code']} {float(student['balance'] or 0):,.0f}","Status: APPROVED"]:
+        c.drawString(150 if photo_path else 60,y,line); y-=22
+    c.drawString(60, y-8,"Present this card when requested by the school."); c.drawImage(str(qr_path),w-170,95,width=100,height=100,preserveAspectRatio=True,mask='auto'); c.setFont("Helvetica",7); c.drawString(w-174,84,"Scan to verify authenticity"); c.drawString(44,44,f"Verification token: {doc['qr_token']}"); c.save(); buf.seek(0); return buf
 
 # -------------------------
 # Context / templates
@@ -3142,7 +3150,7 @@ def admin_dashboard():
     )
     users = q("""SELECT u.*, COALESCE(u.title, '') AS title, COALESCE(u.department, '') AS department,
                       CASE WHEN u.active=1 THEN 'Active' ELSE 'Archived' END AS access_state
-               FROM users u ORDER BY u.active DESC, u.created_at DESC""")
+               FROM users u WHERE u.role!='System' ORDER BY u.active DESC, u.created_at DESC""")
     audits = q("SELECT * FROM audit_log ORDER BY created_at DESC, id DESC LIMIT 20")
     total_students = q("SELECT COUNT(*) AS c FROM students", one=True)["c"]
     active_students = q("SELECT COUNT(*) AS c FROM students WHERE active = 1", one=True)["c"]
@@ -3339,7 +3347,18 @@ def library():
     if not school_settings()["library_enabled"] and current_user()["role"] not in {"Admin","ICT","Librarian"}: abort(404)
     class_level=request.args.get("class","").strip(); subject=request.args.get("subject","").strip()
     where=["active=1"]; params=[]
-    if class_level: where.append("(class_level=? OR class_level='')"); params.append(class_level)
+    role=current_user()["role"]
+    if role=="Student":
+        st=portal_student()
+        class_level=(st["grade"] if st else class_level) or ""
+        where.append("(class_level=? OR class_level='')"); params.append(class_level)
+    elif role=="Parent":
+        children=parent_children(current_user())
+        child=children[0] if children else None
+        class_level=(child["grade"] if child else class_level) or ""
+        where.append("(class_level=? OR class_level='')"); params.append(class_level)
+    elif class_level:
+        where.append("(class_level=? OR class_level='')"); params.append(class_level)
     if subject: where.append("(subject=? OR subject='')"); params.append(subject)
     items=q(f"SELECT * FROM library_items WHERE {' AND '.join(where)} ORDER BY class_level,subject,category,title",params)
     loans=q("""SELECT l.*, i.title, s.full_name AS student_name, s.admission_no FROM library_loans l JOIN library_items i ON i.id=l.item_id JOIN students s ON s.id=l.student_id WHERE l.status='Issued' ORDER BY l.due_date, l.issued_at""")
@@ -4138,6 +4157,7 @@ def profile():
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
         password = request.form.get("password", "")
+        photo = request.files.get("profile_photo")
         if not full_name:
             flash("Full name is required.", "danger")
         else:
@@ -4148,12 +4168,22 @@ def profile():
                 execute("UPDATE users SET full_name = ?, password_hash = ? WHERE id = ?", (full_name, generate_password_hash(password), user["id"]))
             else:
                 execute("UPDATE users SET full_name = ? WHERE id = ?", (full_name, user["id"]))
+            if photo and photo.filename:
+                ext=photo.filename.rsplit('.',1)[-1].lower() if '.' in photo.filename else ''
+                if ext not in {'png','jpg','jpeg','webp'}:
+                    flash("Profile photo must be PNG, JPG, JPEG or WEBP.", "danger")
+                    return redirect(url_for("profile"))
+                folder=UPLOAD_DIR/"profile_photos"; folder.mkdir(exist_ok=True)
+                out=folder/f"user-{user['id']}-{uuid.uuid4().hex[:12]}.{ext}"
+                photo.save(out)
+                execute("UPDATE users SET profile_photo=? WHERE id=?", ("uploads/profile_photos/"+out.name,user["id"]))
             session["user_id"] = user["id"]
-            audit(user["id"], full_name, "Profile Update", "Profile details updated.")
+            audit(user["id"], full_name, "Profile Update", "Profile details, password and/or profile photo updated.")
             flash("Profile updated successfully.", "success")
             return redirect(url_for("profile"))
-    profile_user = q("SELECT id, full_name, username, role, created_at FROM users WHERE id = ?", (user["id"],), one=True)
-    return render_template("profile.html", profile_user=profile_user, workspace=workspace_for(profile_user["role"]))
+    profile_user = q("SELECT id, full_name, username, role, created_at, profile_photo, student_id FROM users WHERE id = ?", (user["id"],), one=True)
+    exam_card = q("SELECT id,qr_token,created_at FROM portal_documents WHERE document_type='Exam Card' AND student_id=? AND status='Valid' ORDER BY created_at DESC,id DESC LIMIT 1", (profile_user["student_id"],), one=True) if profile_user and profile_user["student_id"] else None
+    return render_template("profile.html", profile_user=profile_user, workspace=workspace_for(profile_user["role"]), exam_card=exam_card)
 
 
 @app.route("/settings", methods=["POST"])
@@ -4596,7 +4626,7 @@ def create_exam_cards():
 @app.route("/exam-cards/<int:document_id>/download")
 @login_required
 def download_exam_card(document_id):
-    doc=q("SELECT d.*,s.full_name,s.admission_no,s.grade,s.balance FROM portal_documents d JOIN students s ON s.id=d.student_id WHERE d.id=? AND d.document_type='Exam Card'",(document_id,),one=True)
+    doc=q("SELECT d.*,s.full_name,s.admission_no,s.grade,s.balance,u.profile_photo FROM portal_documents d JOIN students s ON s.id=d.student_id LEFT JOIN users u ON u.student_id=s.id AND u.role='Student' AND u.active=1 WHERE d.id=? AND d.document_type='Exam Card'",(document_id,),one=True)
     if not doc: abort(404)
     if current_user()["role"] in {"Student", "Parent"} and not can_access_student(doc["student_id"]): abort(403)
     if doc['file_path']: return send_file(BASE_DIR/doc['file_path'],as_attachment=True,download_name=Path(doc['file_path']).name)
