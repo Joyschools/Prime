@@ -881,6 +881,13 @@ def _init_db_once() -> None:
         ensure_column(conn, "teacher_assignments", "online_url TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "markbook_entries", "weight REAL NOT NULL DEFAULT 100")
         ensure_column(conn, "attendance_events", "location_label TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "attendance_events", "accuracy REAL")
+        conn.execute("CREATE TABLE IF NOT EXISTS attendance_absence_requests (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,absence_date TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Pending' CHECK(status IN ('Pending','Approved','Denied')),requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,reviewed_by INTEGER,reviewed_at TEXT,review_note TEXT,UNIQUE(user_id,absence_date),FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(reviewed_by) REFERENCES users(id) ON DELETE SET NULL)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_absence_date ON attendance_absence_requests(absence_date,status)")
+        conn.execute("CREATE TABLE IF NOT EXISTS staff_timetable (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 0 AND 6),start_time TEXT NOT NULL,end_time TEXT NOT NULL,title TEXT NOT NULL,location TEXT NOT NULL DEFAULT '',notes TEXT NOT NULL DEFAULT '',active INTEGER NOT NULL DEFAULT 1,created_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_timetable_user_day ON staff_timetable(user_id,day_of_week,start_time)")
+        conn.execute("CREATE TABLE IF NOT EXISTS staff_reminders (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,role_scope TEXT NOT NULL DEFAULT 'All',title TEXT NOT NULL,due_at TEXT NOT NULL,notes TEXT NOT NULL DEFAULT '',priority TEXT NOT NULL DEFAULT 'Normal',completed INTEGER NOT NULL DEFAULT 0,created_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_reminders_due ON staff_reminders(due_at,completed)")
         conn.execute("""CREATE TABLE IF NOT EXISTS class_teacher_assignments (
             id INTEGER PRIMARY KEY AUTOINCREMENT, class_name TEXT NOT NULL UNIQUE, teacher_user_id INTEGER NOT NULL,
             assigned_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1554,7 +1561,7 @@ def resolve_staff_token(raw_token: str):
     return q("SELECT * FROM users WHERE qr_access_token=? AND active=1 AND role!='System'",(token,),one=True) if token else None
 
 def reception_admin_ids():
-    return [r['id'] for r in q("SELECT id FROM users WHERE active=1 AND role='Admin'")]
+    return [r['id'] for r in q("SELECT id FROM users WHERE active=1 AND role IN ('Admin','ICT')")]
 
 def record_reception_scan(action, token='', device_token='', full_name='', phone='', gender='', reason='', source='online', method='QR', latitude=None, longitude=None, accuracy=None, event_at=None, school_unit='', school_location='', id_number=''):
     action=str(action or '').upper()
@@ -1685,8 +1692,8 @@ def role_shortcuts(user):
         'Teacher':[('Live classes','/online-classes','Host & schedule classes'),('My groups','/groups','Groups, discussions & meetings'),('My leadership','/leadership','Department / HOD responsibilities')],
         'Student':[('Student shortcuts','/student-dashboard#shortcuts','Learning shortcuts'),('Live classes','/online-classes','Join scheduled classes'),('My groups','/groups','Groups & discussions'),('Student leadership','/leadership','Leadership workspace')],
         'Parent':[('Family dates','/calendar','School calendar'),('Teacher communication','/communication','Talk to teachers'),('Learning updates','/notifications','Family notifications')],
-        'ICT':[('Content & dates','/calendar','Publish dates'),('Groups','/groups','Manage groups'),('Leadership','/leadership','Set structure')],
-        'Admin':[('Content & dates','/calendar','Publish dates'),('Groups','/groups','Manage groups'),('Leadership','/leadership','Manage structure')],
+        'ICT':[('Attendance','/admin/attendance','People & attendance'),('Timetable','/staff/timetable','Staff schedules'),('Reminders','/staff/reminders','Work reminders'),('Content & dates','/calendar','Publish dates'),('Groups','/groups','Manage groups'),('Leadership','/leadership','Set structure')],
+        'Admin':[('Attendance','/admin/attendance','People & attendance'),('Timetable','/staff/timetable','Staff schedules'),('Reminders','/staff/reminders','Work reminders'),('Content & dates','/calendar','Publish dates'),('Groups','/groups','Manage groups'),('Leadership','/leadership','Manage structure')],
     }
     return common+extras.get(role,[('Groups','/groups','Groups & activities')])
 
@@ -2685,15 +2692,116 @@ def reception_export():
     for r in rows: w.writerow([r['full_name'],r['person_type'],r['position'],r['staff_code'],r['phone'],r['gender'],r['reason'],r['school_unit'],r['school_location'],r['check_in'] or '',r['check_out'] or '',r['source'],r['method'],r['device_token']])
     b=io.BytesIO(out.getvalue().encode('utf-8-sig')); b.seek(0); return send_file(b,mimetype='text/csv',as_attachment=True,download_name=f"{secure_filename(school_settings()['school_name'])}-reception-register.csv")
 
+KENYA_TZ_OFFSET = timedelta(hours=3)
+
+def _utc_now_naive():
+    # The application stores timestamps in UTC as naive ISO strings.
+    return datetime.utcnow()
+
+def _local_now_naive():
+    return datetime.utcnow() + KENYA_TZ_OFFSET
+
+def _local_iso(dt: datetime | None):
+    if not dt:
+        return ''
+    return (dt + KENYA_TZ_OFFSET).strftime('%Y-%m-%d %H:%M:%S')
+
+def _parse_stored_event(raw):
+    if not raw:
+        return None
+    txt=str(raw).replace('Z','').strip()
+    try:
+        return datetime.fromisoformat(txt)
+    except Exception:
+        try:
+            return datetime.strptime(txt[:19], '%Y-%m-%d %H:%M:%S')
+        except Exception:
+            return None
+
+def attendance_day_bounds_utc(day):
+    day=attendance_date_from_value(day)
+    local_start=datetime.strptime(day,'%Y-%m-%d')
+    local_end=local_start+timedelta(days=1)
+    return (local_start-KENYA_TZ_OFFSET).strftime('%Y-%m-%d %H:%M:%S'), (local_end-KENYA_TZ_OFFSET).strftime('%Y-%m-%d %H:%M:%S')
+
+def _reverse_geocode(latitude, longitude):
+    """Turn the exact captured coordinates into a human-readable place without changing the coordinates."""
+    try:
+        if latitude is None or longitude is None:
+            return ''
+        lat=float(latitude); lon=float(longitude)
+        url='https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat='+urllib.parse.quote(str(lat))+'&lon='+urllib.parse.quote(str(lon))+'&zoom=18&addressdetails=1'
+        req=urllib.request.Request(url,headers={'User-Agent':'Prime-School-Portal/1.0 (attendance location lookup)'})
+        with urllib.request.urlopen(req,timeout=3) as resp:
+            data=json.loads(resp.read().decode('utf-8'))
+        addr=data.get('address') or {}
+        parts=[]
+        for key in ('house_number','road','neighbourhood','suburb','village','town','city','municipality','county','state'):
+            val=(addr.get(key) or '').strip()
+            if val and val not in parts:
+                parts.append(val)
+        label=', '.join(parts[:7])
+        return label or (data.get('display_name') or '')
+    except Exception:
+        return ''
+
+def _attendance_event_location(latitude, longitude, location_label=''):
+    label=''
+    # Never borrow or trust a label from another scan/device. Resolve this event's exact
+    # coordinates on the server whenever coordinates exist; only use the submitted label
+    # as a last-resort fallback when the reverse-geocoder is unavailable.
+    if latitude is not None and longitude is not None:
+        label=_reverse_geocode(latitude,longitude)
+        if not label:
+            label=(location_label or '').strip()
+    return label
+
+def _expected_school_days(start_date, end_date):
+    days=[]
+    cur=start_date
+    rules=q("SELECT start_date,end_date,school_day FROM school_calendar WHERE end_date>=? AND start_date<=? ORDER BY start_date",(start_date,end_date))
+    while cur<=end_date:
+        ds=cur.isoformat(); school_day=1
+        for r in rules:
+            if r['start_date']<=ds<=r['end_date']:
+                school_day=int(r['school_day'])
+        if cur.weekday()<5 and school_day:
+            days.append(ds)
+        cur+=timedelta(days=1)
+    return days
+
+def _attendance_range(value=None):
+    value=(value or 'day').strip().lower()
+    today=_local_now_naive().date()
+    spans={'day':1,'week':7,'month':30,'3m':90,'6m':180,'8m':240,'year':365}
+    if value not in spans: value='day'
+    start=today-timedelta(days=spans[value]-1)
+    return value,start,today
+
+def _decorate_attendance_rows(rows):
+    out=[]
+    for row in rows:
+        d=dict(row)
+        for key in ('check_in_at','check_out_at','event_at'):
+            if d.get(key):
+                dt=_parse_stored_event(d[key]); d[key+'_local']=_local_iso(dt) if dt else d[key]
+        out.append(d)
+    return out
+
 def attendance_date_from_value(value=None):
     raw=(value or '').strip()
     if raw:
         try:
-            return datetime.fromisoformat(raw.replace('Z','+00:00')).date().isoformat()
+            parsed=datetime.fromisoformat(raw.replace('Z','+00:00'))
+            if parsed.tzinfo is not None:
+                parsed=parsed.astimezone(__import__('datetime').timezone.utc).replace(tzinfo=None) + KENYA_TZ_OFFSET
+            elif 'T' in raw or (' ' in raw and len(raw)>=19):
+                parsed=parsed + KENYA_TZ_OFFSET
+            return parsed.date().isoformat()
         except Exception:
             try: return datetime.strptime(raw[:10], '%Y-%m-%d').date().isoformat()
             except Exception: pass
-    return datetime.now().date().isoformat()
+    return _local_now_naive().date().isoformat()
 
 def attendance_day_is_closed(day):
     row=q("SELECT status FROM attendance_days WHERE attendance_date=?", (attendance_date_from_value(day),), one=True)
@@ -2707,8 +2815,8 @@ def set_attendance_day(day,status,actor_id=None):
         execute("INSERT INTO attendance_days(attendance_date,status,closed_at,closed_by) VALUES(?, 'Open', NULL, NULL) ON CONFLICT(attendance_date) DO UPDATE SET status='Open',closed_at=NULL,closed_by=NULL",(day,))
 
 def next_attendance_action(user_id):
-    today=datetime.now().date().isoformat()
-    row=q("SELECT action,event_at FROM attendance_events WHERE user_id=? AND substr(event_at,1,10)=? ORDER BY event_at DESC,id DESC LIMIT 1",(user_id,today),one=True)
+    today=_local_now_naive().date().isoformat(); start_utc,end_utc=attendance_day_bounds_utc(today)
+    row=q("SELECT action,event_at FROM attendance_events WHERE user_id=? AND event_at>=? AND event_at<? ORDER BY event_at DESC,id DESC LIMIT 1",(user_id,start_utc,end_utc),one=True)
     return 'OUT' if row and row['action']=='IN' else 'IN'
 
 def _payload_float(payload,key):
@@ -2721,10 +2829,11 @@ def record_account_attendance(user,action,event_at=None,source='online',method='
     if action not in {'IN','OUT'}: return {'ok':False,'message':'Invalid attendance action.'}
     stamp=event_at or datetime.utcnow().isoformat(timespec='seconds')
     if attendance_day_is_closed(stamp): return {'ok':False,'message':f'Attendance for {attendance_date_from_value(stamp)} is closed by the school.','closed':True}
-    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(user['id'],action,method,'',stamp,source,latitude,longitude,None,device_note,location_label))
+    location_label=_attendance_event_location(latitude,longitude,location_label)
+    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,accuracy,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(user['id'],action,method,'',stamp,source,latitude,longitude,accuracy,None,device_note,location_label))
     position=user['title'] or user['role'] or 'Staff'
-    notify_users(reception_admin_ids(),f'Attendance: {user["full_name"]} checked {"IN" if action=="IN" else "OUT"}',f'{user["full_name"]} ({position}) checked {"in" if action=="IN" else "out"} at {stamp}. Location: {location_label or "Not captured"}.',url_for('admin_attendance'))
-    return {'ok':True,'message':f'{user["full_name"]} checked {"in" if action=="IN" else "out"}.','action':action,'event_at':stamp,'dashboard':specialized_dashboard_for(user)}
+    notify_users(reception_admin_ids(),f'Attendance: {user["full_name"]} checked {"IN" if action=="IN" else "OUT"}',f'{user["full_name"]} ({position}) checked {"in" if action=="IN" else "out"} at {_local_iso(_parse_stored_event(stamp)) or stamp}. Location: {location_label or "Exact coordinates captured; address lookup unavailable"}.',url_for('admin_attendance'))
+    return {'ok':True,'message':f'{user["full_name"]} checked {"in" if action=="IN" else "out"}.','action':action,'event_at':stamp,'location_label':location_label,'dashboard':specialized_dashboard_for(user)}
 
 @app.route("/attendance")
 @login_required
@@ -2756,9 +2865,11 @@ def attendance_record():
     if action not in {'IN','OUT'} or not office or token!=office['token']: return jsonify({'ok':False,'message':'Invalid institution attendance QR.'}),400
     stamp=event_at or datetime.utcnow().isoformat(timespec='seconds')
     if attendance_day_is_closed(stamp): return jsonify({'ok':False,'message':f'Attendance for {attendance_date_from_value(stamp)} is closed by the school.'}),409
-    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(current_user()['id'],action,'QR',token,stamp,request.form.get('source','online'),request.form.get('latitude',type=float),request.form.get('longitude',type=float),request.form.get('speed_kph',type=float),request.form.get('device_note',''),request.form.get('location_label','').strip()))
-    notify_users(reception_admin_ids(),f'Attendance: {current_user()["full_name"]} checked {"IN" if action=="IN" else "OUT"}',f'{current_user()["full_name"]} checked {"in" if action=="IN" else "out"} at {stamp}. Location: {request.form.get("location_label") or "Not captured"}.',url_for('admin_attendance'))
-    return jsonify({'ok':True,'message':f'Checked {"in" if action=="IN" else "out"}.','event_at':stamp})
+    lat=request.form.get('latitude',type=float); lon=request.form.get('longitude',type=float); accuracy=request.form.get('accuracy',type=float)
+    resolved_location=_attendance_event_location(lat,lon,request.form.get('location_label','').strip())
+    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,accuracy,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(current_user()['id'],action,'QR',token,stamp,request.form.get('source','online'),lat,lon,accuracy,request.form.get('speed_kph',type=float),request.form.get('device_note',''),resolved_location))
+    notify_users(reception_admin_ids(),f'Attendance: {current_user()["full_name"]} checked {"IN" if action=="IN" else "OUT"}',f'{current_user()["full_name"]} checked {"in" if action=="IN" else "out"} at {_local_iso(_parse_stored_event(stamp)) or stamp}. Location: {resolved_location or "Exact coordinates captured; address lookup unavailable"}.',url_for('admin_attendance'))
+    return jsonify({'ok':True,'message':f'Checked {"in" if action=="IN" else "out"}.','event_at':stamp,'location_label':resolved_location})
 
 @app.route("/attendance/sync",methods=['POST'])
 @login_required
@@ -2769,172 +2880,164 @@ def attendance_sync():
     for item in events[:100]:
         if item.get('token')!=office['token'] or str(item.get('action','')).upper() not in {'IN','OUT'}: continue
         if attendance_day_is_closed(item.get('event_at')): continue
-        execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(current_user()['id'],str(item['action']).upper(),'QR',office['token'],item.get('event_at') or None,'offline-sync',item.get('latitude'),item.get('longitude'),item.get('speed_kph'),item.get('device_note',''),item.get('location_label',''))); saved+=1
+        execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,accuracy,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(current_user()['id'],str(item['action']).upper(),'QR',office['token'],item.get('event_at') or None,'offline-sync',item.get('latitude'),item.get('longitude'),item.get('accuracy'),item.get('speed_kph'),item.get('device_note',''),_attendance_event_location(item.get('latitude'),item.get('longitude'),item.get('location_label','')))); saved+=1
     return jsonify({'ok':True,'saved':saved})
 
 @app.route("/admin/attendance", methods=["GET","POST"])
 @login_required
 @role_required('Admin','ICT')
 def admin_attendance():
-    day=attendance_date_from_value(request.values.get('date'))
+    selected_date=attendance_date_from_value(request.values.get('date'))
+    range_key=(request.values.get('range') or 'day').strip().lower()
     if request.method=='POST':
-        day=attendance_date_from_value(request.form.get('attendance_date') or day)
+        selected_date=attendance_date_from_value(request.form.get('attendance_date') or selected_date)
         action=request.form.get('day_action','').strip().lower()
         if action in {'close','open'}:
-            set_attendance_day(day,'Closed' if action=='close' else 'Open',current_user()['id'])
-            audit(current_user()['id'],current_user()['full_name'],f'Attendance Day {action.title()}',f'Attendance day {day} set to {"Closed" if action=="close" else "Open"}.')
-            flash(f'Attendance for {day} is now {"closed" if action=="close" else "open"}.','success')
-        return redirect(url_for('admin_attendance',date=day))
-    events=q("SELECT a.*,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS position,u.school_unit,u.school_location FROM attendance_events a JOIN users u ON u.id=a.user_id WHERE substr(a.event_at,1,10)=? ORDER BY a.event_at ASC,a.id ASC",(day,))
-    visits=q("SELECT * FROM reception_visits WHERE substr(COALESCE(check_in,check_out),1,10)=? ORDER BY COALESCE(check_out,check_in) DESC,id DESC",(day,))
-    office=q("SELECT * FROM attendance_qr_settings WHERE id=1",one=True)
-    day_row=q("SELECT * FROM attendance_days WHERE attendance_date=?",(day,),one=True)
-    summary=q("SELECT COUNT(*) AS total_events,COUNT(DISTINCT user_id) AS people,SUM(CASE WHEN action='IN' THEN 1 ELSE 0 END) AS checkins,SUM(CASE WHEN action='OUT' THEN 1 ELSE 0 END) AS checkouts,COUNT(DISTINCT CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL THEN user_id END) AS located_people FROM attendance_events WHERE substr(event_at,1,10)=?",(day,),one=True)
-    latest_by_user=q("SELECT a.*,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS position,u.school_unit,u.school_location FROM attendance_events a JOIN users u ON u.id=a.user_id WHERE substr(a.event_at,1,10)=? AND a.id=(SELECT MAX(a2.id) FROM attendance_events a2 WHERE a2.user_id=a.user_id AND substr(a2.event_at,1,10)=?) ORDER BY u.full_name",(day,day))
-    return render_template('admin_attendance.html',settings=school_settings(),events=events,visits=visits,office=office,actor_name=current_user()['full_name'],role=current_user()['role'],selected_date=day,day_status=(day_row['status'] if day_row else 'Open'),summary=summary,latest_by_user=latest_by_user)
+            set_attendance_day(selected_date,'Closed' if action=='close' else 'Open',current_user()['id'])
+            audit(current_user()['id'],current_user()['full_name'],f'Attendance Day {action.title()}',f'Attendance day {selected_date} set to {"Closed" if action=="close" else "Open"}.')
+            flash(f'Attendance for {selected_date} is now {"closed" if action=="close" else "open"}.','success')
+        return redirect(url_for('admin_attendance',date=selected_date,range=range_key))
 
-@app.route("/teacher/assignments",methods=['POST'])
+    range_key,start_date,end_date=_attendance_range(range_key)
+    # Keep the explicit day selector tied to the selected day while range buttons expand the reporting window.
+    if request.values.get('date'):
+        start_date=end_date=datetime.strptime(selected_date,'%Y-%m-%d').date()
+        range_key='day'
+    start_utc,end_utc=attendance_day_bounds_utc(start_date.isoformat())[0], attendance_day_bounds_utc(end_date.isoformat())[1]
+    day_start_utc,day_end_utc=attendance_day_bounds_utc(selected_date)
+
+    employees=q("SELECT * FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System') ORDER BY full_name")
+    rows=q("""
+        SELECT u.id,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS title,u.department,u.school_unit,u.staff_code,u.active,
+               (SELECT MIN(a.event_at) FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<?) AS check_in_at,
+               (SELECT MAX(a.event_at) FROM attendance_events a WHERE a.user_id=u.id AND a.action='OUT' AND a.event_at>=? AND a.event_at<?) AS check_out_at,
+               (SELECT a.location_label FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? AND a.location_label!='' ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS location_label,
+               (SELECT a.latitude FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? AND a.latitude IS NOT NULL ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS latitude,
+               (SELECT a.longitude FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? AND a.longitude IS NOT NULL ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS longitude,
+               (SELECT a.accuracy FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? AND a.accuracy IS NOT NULL ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS accuracy
+        FROM users u WHERE u.active=1 AND u.role NOT IN ('Student','Parent','System') ORDER BY u.full_name
+    """,(start_utc,end_utc,start_utc,end_utc,start_utc,end_utc,start_utc,end_utc,start_utc,end_utc,start_utc,end_utc))
+    rows=_decorate_attendance_rows(rows)
+    expected_days=_expected_school_days(start_date,end_date)
+    expected_count=len(expected_days)
+    # Per-person missed days are computed from the same exact expected school-day set; approved reasons are separated.
+    for row in rows:
+        rid=row['id']; present={r['day'] for r in q("SELECT DISTINCT substr(a.event_at,1,10) AS day FROM attendance_events a WHERE a.user_id=? AND a.action='IN' AND a.event_at>=? AND a.event_at<?",(rid,start_utc,end_utc))}
+        # event_at is UTC, so convert each event day into Kenya local date for range reporting.
+        local_present=set()
+        evs=q("SELECT event_at FROM attendance_events WHERE user_id=? AND action='IN' AND event_at>=? AND event_at<?",(rid,start_utc,end_utc))
+        for ev in evs:
+            dt=_parse_stored_event(ev['event_at'])
+            if dt: local_present.add((dt+KENYA_TZ_OFFSET).date().isoformat())
+        row['expected_days']=expected_count
+        row['present_days']=len(local_present)
+        row['missed_days']=max(0,expected_count-len(local_present))
+        row['approved_missed']=q("SELECT COUNT(*) AS n FROM attendance_absence_requests WHERE user_id=? AND absence_date>=? AND absence_date<=? AND status='Approved'",(rid,start_date.isoformat(),end_date.isoformat()),one=True)['n']
+        row['absence_reasons']=q("SELECT * FROM attendance_absence_requests WHERE user_id=? AND absence_date>=? AND absence_date<=? ORDER BY absence_date DESC",(rid,start_date.isoformat(),end_date.isoformat()))
+
+    events=q("SELECT a.*,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS position,u.department,u.school_unit FROM attendance_events a JOIN users u ON u.id=a.user_id WHERE a.event_at>=? AND a.event_at<? ORDER BY a.event_at DESC,a.id DESC",(start_utc,end_utc))
+    events=_decorate_attendance_rows(events)
+    day_row=q("SELECT * FROM attendance_days WHERE attendance_date=?",(selected_date,),one=True)
+    summary=q("""
+      SELECT COUNT(*) AS total_events,COUNT(DISTINCT user_id) AS people,
+             SUM(CASE WHEN action='IN' THEN 1 ELSE 0 END) AS checkins,
+             SUM(CASE WHEN action='OUT' THEN 1 ELSE 0 END) AS checkouts,
+             COUNT(DISTINCT CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL THEN user_id END) AS located_people
+      FROM attendance_events WHERE event_at>=? AND event_at<?
+    """,(start_utc,end_utc),one=True)
+    summary=dict(summary)
+    summary['expected_staff']=len(employees)
+    summary['missed_staff_days']=sum(int(r['missed_days']) for r in rows)
+    summary['excused_days']=sum(int(r['approved_missed']) for r in rows)
+    summary['complete_checkout']=sum(1 for r in rows if r['check_in_at'] and r['check_out_at'])
+    reminders=q("SELECT sr.*,u.full_name AS assigned_name FROM staff_reminders sr LEFT JOIN users u ON u.id=sr.user_id WHERE sr.completed=0 AND (sr.user_id IS NULL OR sr.user_id IN (SELECT id FROM users WHERE role IN ('Admin','ICT'))) ORDER BY sr.due_at LIMIT 12")
+    timetable=q("SELECT st.*,u.full_name FROM staff_timetable st JOIN users u ON u.id=st.user_id WHERE st.active=1 AND u.active=1 AND u.role IN ('Admin','ICT','Teacher','Finance','Librarian','Driver','Reception') ORDER BY st.day_of_week,st.start_time,u.full_name")
+    return render_template('admin_attendance.html',settings=school_settings(),events=events,office=q("SELECT * FROM attendance_qr_settings WHERE id=1",one=True),actor_name=current_user()['full_name'],role=current_user()['role'],selected_date=selected_date,day_status=(day_row['status'] if day_row else 'Open'),summary=summary,latest_by_user=rows,range_key=range_key,range_start=start_date.isoformat(),range_end=end_date.isoformat(),timetable=timetable,reminders=reminders)
+
+@app.route('/admin/attendance/employee/<int:user_id>')
 @login_required
-@role_required('Teacher')
-def teacher_assignment_add():
-    cls=request.form.get('class_name','').strip(); subject=request.form.get('subject','').strip(); unit=request.form.get('unit_code','').strip(); online_url=request.form.get('online_url','').strip()
-    if not cls or not subject: flash('Class and subject are required.','danger'); return redirect(url_for('teacher_dashboard'))
-    execute("INSERT INTO teacher_assignments(teacher_user_id,class_name,subject,unit_code,online_url) VALUES(?,?,?,?,?)",(current_user()['id'],cls,subject,unit,online_url)); flash('Teaching assignment added.','success'); return redirect(url_for('teacher_dashboard'))
+@role_required('Admin','ICT')
+def admin_attendance_employee(user_id):
+    user=q("SELECT * FROM users WHERE id=? AND role NOT IN ('Student','Parent','System')",(user_id,),one=True)
+    if not user: abort(404)
+    events=q("SELECT * FROM attendance_events WHERE user_id=? ORDER BY event_at DESC,id DESC LIMIT 500",(user_id,))
+    events=_decorate_attendance_rows(events)
+    reasons=q("SELECT * FROM attendance_absence_requests WHERE user_id=? ORDER BY absence_date DESC,id DESC LIMIT 200",(user_id,))
+    return render_template('attendance_employee.html',settings=school_settings(),user=user,events=events,reasons=reasons,role=current_user()['role'],actor_name=current_user()['full_name'])
 
-@app.route("/teacher/markbook",methods=['POST'])
+@app.route('/attendance/absence',methods=['POST'])
 @login_required
-@role_required('Teacher')
-def teacher_markbook_save():
-    cls=request.form.get('class_name','').strip(); subject=request.form.get('subject','').strip(); assessment=request.form.get('assessment','').strip() or 'Assessment'
-    try: max_mark=float(request.form.get('max_mark','100') or 100)
-    except ValueError: max_mark=100
-    try: weight=float(request.form.get('weight','100') or 100)
-    except ValueError: weight=100
-    weight=max(0.1,min(100,weight))
-    if not cls or not subject: flash('Class and subject are required.','danger'); return redirect(url_for('teacher_dashboard'))
-    assigned_classes=[r['class_name'] for r in q("SELECT class_name FROM teacher_assignments WHERE teacher_user_id=? AND active=1",(current_user()['id'],))]
-    if cls not in assigned_classes and current_user()['role']=='Teacher':
-        flash('You can only enter marks for a class assigned to you.','danger'); return redirect(url_for('teacher_dashboard'))
-    students=q("SELECT id FROM students WHERE active=1 AND grade=? ORDER BY full_name",(cls,)); saved=0
-    for st in students:
-        raw=request.form.get(f"mark_{st['id']}", "")
-        if raw=='': continue
-        try: mark=max(0,min(max_mark,float(raw)))
-        except ValueError: continue
-        execute("DELETE FROM markbook_entries WHERE teacher_user_id=? AND class_name=? AND subject=? AND student_id=? AND assessment=?",(current_user()['id'],cls,subject,st['id'],assessment))
-        execute("INSERT INTO markbook_entries(teacher_user_id,class_name,subject,student_id,assessment,mark,max_mark,weight,status) VALUES(?,?,?,?,?,?,?,?,?,'Submitted')",(current_user()['id'],cls,subject,st['id'],assessment,mark,max_mark,weight)); saved+=1
-    audit(current_user()['id'],current_user()['full_name'],'Teacher Markbook',f'{saved} {subject} marks submitted for {cls}; assessment={assessment}; weight={weight}%.')
-    flash(f'{saved} marks submitted. The system recalculates weighted totals, grades and class positions automatically.','success'); return redirect(url_for('teacher_dashboard'))
+def attendance_absence():
+    user=current_user(); day=attendance_date_from_value(request.form.get('absence_date')); reason=(request.form.get('reason') or '').strip()[:2000]
+    if not reason: flash('Please give a reason for the absence.','danger'); return redirect(request.referrer or url_for('attendance_center'))
+    execute("INSERT INTO attendance_absence_requests(user_id,absence_date,reason) VALUES(?,?,?) ON CONFLICT(user_id,absence_date) DO UPDATE SET reason=excluded.reason,status='Pending',requested_at=CURRENT_TIMESTAMP,reviewed_by=NULL,reviewed_at=NULL,review_note=NULL",(user['id'],day,reason))
+    admin_ids=[r['id'] for r in q("SELECT id FROM users WHERE active=1 AND role IN ('Admin','ICT')")]
+    notify_users(admin_ids,f'Attendance reason submitted: {user["full_name"]}',f'{user["full_name"]} submitted a reason for {day}: {reason}',url_for('admin_attendance'))
+    flash('Attendance reason submitted for review.','success')
+    return redirect(request.referrer or url_for('attendance_center'))
 
-def markbook_class_summary(class_name, subject=''):
-    clause='AND lower(m.subject)=lower(?)' if subject else ''
-    params=[class_name]
-    if subject: params.append(subject)
-    rows=q(f"SELECT m.student_id,s.full_name,s.admission_no,m.subject,m.assessment,m.mark,m.max_mark,m.weight FROM markbook_entries m JOIN students s ON s.id=m.student_id WHERE m.class_name=? AND s.active=1 {clause} ORDER BY s.full_name,m.created_at",tuple(params))
-    by={}
-    for r in rows:
-        sid=r['student_id']; by.setdefault(sid,{'student_id':sid,'full_name':r['full_name'],'admission_no':r['admission_no'],'weighted':0.0,'weight_total':0.0,'assessments':[]})
-        try: pct=(float(r['mark'])/float(r['max_mark']))*100 if float(r['max_mark']) else 0
-        except Exception: pct=0
-        w=float(r['weight'] or 100)
-        by[sid]['weighted'] += pct*w
-        by[sid]['weight_total'] += w
-        by[sid]['assessments'].append(r)
-    result=[]
-    for v in by.values():
-        v['score']=round(v['weighted']/v['weight_total'],2) if v['weight_total'] else 0
-        sc=v['score']
-        v['grade']='A' if sc>=80 else 'B' if sc>=70 else 'C' if sc>=60 else 'D' if sc>=50 else 'E'
-        result.append(v)
-    result.sort(key=lambda x:(-x['score'],x['full_name'].lower()))
-    for i,v in enumerate(result,1): v['position']=i
-    return result
-
-@app.route("/teacher/markbook/summary")
+@app.route('/admin/attendance/absence/<int:request_id>/review',methods=['POST'])
 @login_required
-@role_required('Teacher','Admin')
-def teacher_markbook_summary():
-    cls=request.args.get('class_name','').strip(); subject=request.args.get('subject','').strip()
-    if not cls: return redirect(url_for('teacher_dashboard'))
-    if current_user()['role']=='Teacher' and not q("SELECT 1 FROM teacher_assignments WHERE teacher_user_id=? AND class_name=? AND active=1 LIMIT 1",(current_user()['id'],cls),one=True): abort(403)
-    return render_template('teacher_markbook_summary.html',settings=school_settings(),actor_name=current_user()['full_name'],role=current_user()['role'],class_name=cls,subject=subject,rows=markbook_class_summary(cls,subject))
+@role_required('Admin','ICT')
+def review_absence(request_id):
+    status=request.form.get('status','Pending').strip().title()
+    if status not in {'Pending','Approved','Denied'}: status='Pending'
+    note=(request.form.get('review_note') or '').strip()[:1000]
+    req=q("SELECT * FROM attendance_absence_requests WHERE id=?",(request_id,),one=True)
+    if not req: abort(404)
+    execute("UPDATE attendance_absence_requests SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,review_note=? WHERE id=?",(status,current_user()['id'],note,request_id))
+    notify_users([req['user_id']],f'Attendance reason {status.lower()}',f'Your attendance reason for {req["absence_date"]} was marked {status.lower()}. {note}'.strip(),url_for('attendance_center'))
+    return redirect(request.referrer or url_for('admin_attendance'))
 
-@app.route("/teacher/scheme-of-work",methods=['GET','POST'])
+@app.route('/staff/timetable',methods=['GET','POST'])
 @login_required
-@role_required('Teacher','Admin')
-def teacher_scheme_of_work():
+def staff_timetable():
     user=current_user()
+    if request.method=='POST' and user['role'] not in {'Admin','ICT'}:
+        abort(403)
     if request.method=='POST':
-        cls=request.form.get('class_name','').strip(); subject=request.form.get('subject','').strip(); term=request.form.get('term','').strip() or 'Current Term'
-        try: week=max(1,int(request.form.get('week_no','1') or 1))
-        except ValueError: week=1
-        if not cls or not subject or not request.form.get('topic','').strip(): flash('Class, subject and topic are required.','danger'); return redirect(url_for('teacher_scheme_of_work'))
-        execute("INSERT INTO scheme_of_work(teacher_user_id,class_name,subject,term,week_no,topic,objectives,activities,resources,assessment,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(user['id'],cls,subject,term,week,request.form.get('topic','').strip(),request.form.get('objectives','').strip(),request.form.get('activities','').strip(),request.form.get('resources','').strip(),request.form.get('assessment','').strip(),request.form.get('status','Planned').strip() or 'Planned'))
-        flash('Scheme of Work entry saved.','success')
-        return redirect(url_for('teacher_scheme_of_work',class_name=cls,subject=subject))
-    cls=request.args.get('class_name','').strip(); subject=request.args.get('subject','').strip()
-    assignments=q("SELECT * FROM teacher_assignments WHERE teacher_user_id=? AND active=1 ORDER BY class_name,subject",(user['id'],)) if user['role']=='Teacher' else q("SELECT * FROM teacher_assignments WHERE active=1 ORDER BY class_name,subject")
-    rows=q("SELECT * FROM scheme_of_work WHERE teacher_user_id=? AND (?='' OR lower(class_name)=lower(?)) AND (?='' OR lower(subject)=lower(?)) ORDER BY term,week_no,id",(user['id'],cls,cls,subject,subject)) if user['role']=='Teacher' else q("SELECT sw.*,u.full_name AS teacher_name FROM scheme_of_work sw JOIN users u ON u.id=sw.teacher_user_id WHERE (?='' OR lower(sw.class_name)=lower(?)) AND (?='' OR lower(sw.subject)=lower(?)) ORDER BY sw.class_name,sw.subject,sw.term,sw.week_no",(cls,cls,subject,subject))
-    return render_template('scheme_of_work.html',settings=school_settings(),actor_name=user['full_name'],role=user['role'],assignments=assignments,rows=rows,selected_class=cls,selected_subject=subject)
+        uid=request.form.get('user_id',type=int) or user['id']; day=max(0,min(6,request.form.get('day_of_week',type=int) or 0)); start=(request.form.get('start_time') or '').strip(); end=(request.form.get('end_time') or '').strip(); title=(request.form.get('title') or '').strip(); loc=(request.form.get('location') or '').strip(); notes=(request.form.get('notes') or '').strip()
+        if not title or not start or not end: flash('Staff, title, start and end time are required.','danger'); return redirect(url_for('staff_timetable'))
+        execute("INSERT INTO staff_timetable(user_id,day_of_week,start_time,end_time,title,location,notes,created_by) VALUES(?,?,?,?,?,?,?,?)",(uid,day,start,end,title,loc,notes,user['id']))
+        flash('Timetable entry saved.','success')
+        return redirect(url_for('staff_timetable'))
+    target=request.args.get('user_id',type=int) if user['role'] in {'Admin','ICT'} else user['id']
+    if target:
+        entries=q("SELECT st.*,u.full_name,u.role,u.title AS user_title FROM staff_timetable st JOIN users u ON u.id=st.user_id WHERE st.active=1 AND st.user_id=? ORDER BY st.day_of_week,st.start_time,u.full_name",(target,))
+    else:
+        entries=q("SELECT st.*,u.full_name,u.role,u.title AS user_title FROM staff_timetable st JOIN users u ON u.id=st.user_id WHERE st.active=1 AND u.active=1 ORDER BY st.day_of_week,st.start_time,u.full_name")
+    staff=q("SELECT id,full_name,role,title FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System') ORDER BY full_name") if user['role'] in {'Admin','ICT'} else []
+    return render_template('staff_timetable.html',settings=school_settings(),entries=entries,staff=staff,target_user=target,actor_name=user['full_name'],role=user['role'])
 
-@app.route("/admin/compulsory-subjects",methods=['GET','POST'])
+@app.route('/staff/reminders',methods=['GET','POST'])
 @login_required
-@role_required('Admin','ICT')
-def admin_compulsory_subjects():
+def staff_reminders():
+    user=current_user()
+    if request.method=='POST' and user['role'] not in {'Admin','ICT'}: abort(403)
     if request.method=='POST':
-        cls=request.form.get('class_name','').strip(); subject=request.form.get('subject','').strip(); unit=request.form.get('unit_name','').strip()
-        if not cls or not subject: flash('Class and subject are required.','danger')
-        else:
-            execute("INSERT INTO compulsory_subjects(class_name,subject,unit_name,created_by) VALUES(?,?,?,?) ON CONFLICT(class_name,subject) DO UPDATE SET unit_name=excluded.unit_name,active=1,created_by=excluded.created_by",(cls,subject,unit,current_user()['id']))
-            flash(f'{subject} is now compulsory for {cls}. Students in that class will receive scheduled-class notifications.','success')
-        return redirect(url_for('admin_compulsory_subjects'))
-    rows=q("SELECT c.*,u.full_name AS set_by FROM compulsory_subjects c LEFT JOIN users u ON u.id=c.created_by WHERE c.active=1 ORDER BY c.class_name,c.subject")
-    classes=q("SELECT DISTINCT grade AS class_name FROM students WHERE active=1 ORDER BY grade"); return render_template('admin_compulsory_subjects.html',settings=school_settings(),rows=rows,classes=classes,actor_name=current_user()['full_name'],role=current_user()['role'])
+        uid=request.form.get('user_id',type=int); scope=request.form.get('role_scope','All').strip() or 'All'; title=(request.form.get('title') or '').strip(); due=(request.form.get('due_at') or '').strip(); notes=(request.form.get('notes') or '').strip(); priority=request.form.get('priority','Normal').strip()
+        if not title or not due: flash('Reminder title and due time are required.','danger'); return redirect(url_for('staff_reminders'))
+        execute("INSERT INTO staff_reminders(user_id,role_scope,title,due_at,notes,priority,created_by) VALUES(?,?,?,?,?,?,?)",(uid,scope,title,due,notes,priority,user['id']))
+        recipient_ids=[uid] if uid else [r['id'] for r in q("SELECT id FROM users WHERE active=1 AND role NOT IN ('System','Student','Parent')" if scope=='Staff' else "SELECT id FROM users WHERE active=1 AND role NOT IN ('System','Student','Parent')")]
+        if uid: recipient_ids=[uid]
+        notify_users(recipient_ids,'New reminder',f'{title} — {due}',url_for('staff_reminders'), 'High' if priority=='High' else 'Normal')
+        flash('Reminder created.','success'); return redirect(url_for('staff_reminders'))
+    if user['role'] in {'Admin','ICT'}:
+        rows=q("SELECT sr.*,u.full_name AS assigned_name FROM staff_reminders sr LEFT JOIN users u ON u.id=sr.user_id WHERE sr.completed=0 ORDER BY sr.due_at,sr.id")
+        staff=q("SELECT id,full_name,role FROM users WHERE active=1 AND role NOT IN ('Student','Parent','System') ORDER BY full_name")
+    else:
+        rows=q("SELECT sr.*,u.full_name AS assigned_name FROM staff_reminders sr LEFT JOIN users u ON u.id=sr.user_id WHERE sr.completed=0 AND (sr.user_id=? OR (sr.user_id IS NULL AND (sr.role_scope='All' OR sr.role_scope=?))) ORDER BY sr.due_at",(user['id'],user['role']))
+        staff=[]
+    return render_template('staff_reminders.html',settings=school_settings(),rows=rows,staff=staff,actor_name=user['full_name'],role=user['role'])
 
-@app.route("/admin/class-teachers",methods=['GET','POST'])
+@app.route('/staff/reminders/<int:reminder_id>/complete',methods=['POST'])
 @login_required
-@role_required('Admin','ICT')
-def admin_class_teachers():
-    if request.method=='POST':
-        cls=request.form.get('class_name','').strip(); tid=request.form.get('teacher_user_id',type=int)
-        teacher=q("SELECT id,full_name FROM users WHERE id=? AND role='Teacher' AND active=1",(tid,),one=True) if tid else None
-        if not cls or not teacher: flash('Choose a class and an active Teacher.','danger'); return redirect(url_for('admin_class_teachers'))
-        execute("INSERT INTO class_teacher_assignments(class_name,teacher_user_id,assigned_by) VALUES(?,?,?) ON CONFLICT(class_name) DO UPDATE SET teacher_user_id=excluded.teacher_user_id,assigned_by=excluded.assigned_by,created_at=CURRENT_TIMESTAMP",(cls,tid,current_user()['id']))
-        flash(f'{teacher["full_name"]} is now the class teacher for {cls}.','success')
-        return redirect(url_for('admin_class_teachers'))
-    classes=q("SELECT DISTINCT grade AS class_name FROM students WHERE active=1 AND TRIM(COALESCE(grade,''))!='' ORDER BY grade")
-    teachers=q("SELECT id,full_name,department,title FROM users WHERE role='Teacher' AND active=1 ORDER BY full_name")
-    assignments=q("SELECT cta.*,u.full_name AS teacher_name,u.department,u.title FROM class_teacher_assignments cta JOIN users u ON u.id=cta.teacher_user_id ORDER BY cta.class_name")
-    return render_template('admin_class_teachers.html',settings=school_settings(),actor_name=current_user()['full_name'],role=current_user()['role'],classes=classes,teachers=teachers,assignments=assignments)
-
-@app.route("/workforce/<kind>")
-@login_required
-def workforce_dashboard(kind):
-    kind=kind if kind in {'Guard','Cook','Other Staff'} else 'Other Staff'
-    if workspace_type_for_user(current_user())!=kind and current_user()['role'] not in {'Admin','ICT'}: abort(403)
-    return render_template('workforce_dashboard.html',settings=school_settings(),actor_name=current_user()['full_name'],role=current_user()['role'],kind=kind)
-
-@app.route("/driver")
-@login_required
-def driver_dashboard():
-    if workspace_type_for_user(current_user())!='Driver' and current_user()['role'] not in {'Admin','ICT'}: abort(403)
-    trip=q("SELECT * FROM transport_trips WHERE driver_user_id=? AND status='Active' ORDER BY id DESC LIMIT 1",(current_user()['id'],),one=True); history=q("SELECT * FROM transport_trips WHERE driver_user_id=? ORDER BY id DESC LIMIT 12",(current_user()['id'],))
-    return render_template('driver_dashboard.html',settings=school_settings(),actor_name=current_user()['full_name'],trip=trip,history=history)
-
-@app.route("/driver/trip/start",methods=['POST'])
-@login_required
-def driver_trip_start():
-    if workspace_type_for_user(current_user())!='Driver' and current_user()['role'] not in {'Admin','ICT'}: abort(403)
-    existing=q("SELECT id FROM transport_trips WHERE driver_user_id=? AND status='Active'",(current_user()['id'],),one=True)
-    if existing: flash('An active trip is already running.','warning'); return redirect(url_for('driver_dashboard'))
-    execute("INSERT INTO transport_trips(driver_user_id,vehicle,route_name,status) VALUES(?,?,?,'Active')",(current_user()['id'],request.form.get('vehicle','Vehicle').strip() or 'Vehicle',request.form.get('route_name','').strip())); flash('Trip started.','success'); return redirect(url_for('driver_dashboard'))
-
-@app.route("/driver/trip/stop",methods=['POST'])
-@login_required
-def driver_trip_stop():
-    trip=q("SELECT id FROM transport_trips WHERE driver_user_id=? AND status='Active' ORDER BY id DESC LIMIT 1",(current_user()['id'],),one=True)
-    if trip: execute("UPDATE transport_trips SET status='Completed',ended_at=CURRENT_TIMESTAMP WHERE id=?",(trip['id'],))
-    flash('Trip stopped.','success'); return redirect(url_for('driver_dashboard'))
+def complete_staff_reminder(reminder_id):
+    user=current_user(); row=q("SELECT * FROM staff_reminders WHERE id=?",(reminder_id,),one=True)
+    if not row: abort(404)
+    if user['role'] not in {'Admin','ICT'} and row['user_id'] not in {None,user['id']}: abort(403)
+    execute("UPDATE staff_reminders SET completed=1 WHERE id=?",(reminder_id,))
+    return redirect(request.referrer or url_for('staff_reminders'))
 
 @app.route("/driver/location",methods=['POST'])
 @login_required
@@ -5263,6 +5366,12 @@ def qr_consume(token:str):
     session['user_id']=user['id']; session['active_portal_role']=user['role']; session['login_event_id']=login_id; session['login_location_pending']=1
     audit(user['id'],user['full_name'],'QR Login + Attendance',f'{user["full_name"]} signed in with personal staff QR and was marked {action}.')
     return jsonify({'ok':True,'message':result['message'],'dashboard':result['dashboard'],'action':action})
+
+@app.route('/qr/<token>/offline-dashboard')
+def qr_offline_dashboard(token:str):
+    user=q("SELECT full_name,role,title,department,workspace_type FROM users WHERE qr_access_token=? AND active=1 AND role NOT IN ('Student','Parent','System')",(token,),one=True)
+    if not user: abort(404)
+    return render_template('qr_offline_dashboard.html',settings=school_settings(),user=user,dashboard_url=specialized_dashboard_for(user))
 
 @app.route("/qr/offline-sync",methods=['POST'])
 def qr_offline_sync():
