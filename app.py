@@ -509,8 +509,8 @@ def _init_db_once() -> None:
         ensure_column(conn, "school_settings", "portal_subtitle TEXT NOT NULL DEFAULT 'School Portal System'")
         ensure_column(conn, "school_settings", "panel_color TEXT NOT NULL DEFAULT '#40414f'")
         ensure_column(conn, "school_settings", "background_color TEXT NOT NULL DEFAULT '#343541'")
-        ensure_column(conn, "school_settings", "accent_color TEXT NOT NULL DEFAULT '#3457d5'")
-        ensure_column(conn, "school_settings", "primary_color TEXT NOT NULL DEFAULT '#3457d5'")
+        ensure_column(conn, "school_settings", "accent_color TEXT NOT NULL DEFAULT '#0e8a6d'")
+        ensure_column(conn, "school_settings", "primary_color TEXT NOT NULL DEFAULT '#10a37f'")
         ensure_column(conn, "school_settings", "branding_label TEXT NOT NULL DEFAULT 'Branding'")
         ensure_column(conn, "school_settings", "finance_label TEXT NOT NULL DEFAULT 'Finance'")
         ensure_column(conn, "school_settings", "messages_label TEXT NOT NULL DEFAULT 'Messages'")
@@ -1416,7 +1416,7 @@ def persist_auth_cookie(response):
         try:
             body=response.get_data(as_text=True)
             if 'id="prime-global-tools"' not in body and "</body>" in body:
-                shell="""<button id="prime-mobile-nav" class="prime-mobile-nav" type="button" aria-label="Open navigation" aria-expanded="false" title="Open navigation">☰</button><div id="prime-mobile-menu" class="prime-mobile-menu"><a href="/dashboard">Dashboard</a><a href="/calendar">School calendar</a><a href="/notifications">Notifications</a><a href="/system-help">System help</a><a href="/logout">Logout</a></div><div id="prime-global-tools" class="prime-global-tools"><a class="prime-search-link" href="/system-search" aria-label="Search system" title="Search system">⌕</a><a class="prime-bell" href="/notifications" aria-label="Notifications" title="Notifications"><span aria-hidden="true">🔔</span><b id="prime-notification-count" class="prime-count hidden"></b></a><button type="button" class="prime-shortcuts-btn" aria-label="Open shortcuts" onclick="document.getElementById('prime-shortcuts').classList.toggle('open')">☰</button><div id="prime-shortcuts" class="prime-shortcuts"><strong>Quick access</strong><a href="/calendar">Calendar</a><a href="/notifications">Notifications</a><a href="/online-classes">Live classes</a><a href="/groups">Groups</a><a href="/leadership">Leadership</a></div></div><button id="prime-mobile-text" class="prime-mobile-text" type="button" aria-label="Adjust text size" title="Adjust text size">Aa</button><div id="prime-text-sheet" class="prime-text-sheet" role="dialog" aria-modal="true" aria-label="Text size settings"><div class="prime-text-sheet-card"><div><strong>Text size</strong><span class="muted">Adjust this device only.</span></div><div class="prime-text-choices"><button type="button" data-prime-text="normal">Normal</button><button type="button" data-prime-text="large">Large</button><button type="button" data-prime-text="xlarge">Extra large</button></div><button type="button" class="btn btn-ghost btn-block" id="prime-text-close">Done</button></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-search-link,.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#3457d5) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-search-link,.prime-bell{font-size:18px}.prime-bell span{color:inherit;font-size:18px;line-height:1}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#3457d5) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}.prime-mobile-nav{display:none}.prime-mobile-nav.open{display:grid}.prime-mobile-text,.prime-text-sheet{display:none}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav,body.auth-body .prime-mobile-menu,body.auth-body .prime-mobile-text{display:none}@media(max-width:820px){.prime-shortcuts-btn{display:none!important}.prime-mobile-nav{display:grid;place-items:center;position:fixed;left:12px;top:12px;width:46px;height:46px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:22px;cursor:pointer;z-index:5001}.prime-global-tools{right:12px;top:12px}.prime-mobile-text{display:grid;place-items:center;position:fixed;right:64px;top:12px;width:46px;height:46px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:15px;font-weight:900;cursor:pointer;z-index:5001}.prime-text-sheet{position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:6000;align-items:flex-end;justify-content:center;padding:14px}.prime-text-sheet.open{display:flex}.prime-text-sheet-card{width:min(460px,100%);border:1px solid var(--text-border,var(--border));border-radius:20px 20px 14px 14px;background:var(--panel);box-shadow:0 -18px 50px rgba(0,0,0,.26);padding:18px;display:grid;gap:16px}.prime-text-sheet-card>div:first-child{display:grid;gap:4px}.prime-text-choices{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.prime-text-choices button{border:1px solid var(--text-border,var(--border));background:var(--panel-3);color:var(--primary-text);border-radius:12px;padding:12px 8px;font-weight:800;cursor:pointer}.prime-text-choices button.active{border-color:var(--primary-blue);box-shadow:0 0 0 3px rgba(16,163,127,.14)}}</style><script>(function(){var m=document.getElementById('prime-mobile-nav');if(m){if(document.getElementById('sidebarToggle')){m.remove();}else{m.addEventListener('click',function(){var hasSidebar=!!document.querySelector('.sidebar');document.body.classList.toggle(hasSidebar?'mobile-nav-open':'prime-smart-menu-open');});}}var tb=document.getElementById('prime-mobile-text'),sheet=document.getElementById('prime-text-sheet'),close=document.getElementById('prime-text-close'),choices=document.querySelectorAll('[data-prime-text]');var saved=localStorage.getItem('prime_text_size')||'large';if(saved==='normal'||saved==='large'||saved==='xlarge')document.documentElement.dataset.primeText=saved;if(tb&&sheet){tb.addEventListener('click',function(){sheet.classList.add('open');});sheet.addEventListener('click',function(e){if(e.target===sheet)sheet.classList.remove('open');});close&&close.addEventListener('click',function(){sheet.classList.remove('open');});choices.forEach(function(b){b.classList.toggle('active',b.dataset.primeText===saved);b.addEventListener('click',function(){saved=b.dataset.primeText;localStorage.setItem('prime_text_size',saved);document.documentElement.dataset.primeText=saved;choices.forEach(function(x){x.classList.toggle('active',x.dataset.primeText===saved);});});});}fetch('/api/notifications').then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});})();</script>"""
+                shell="""<button id="prime-mobile-nav" class="prime-mobile-nav" type="button" aria-label="Open navigation" aria-expanded="false" title="Open navigation">☰</button><div id="prime-mobile-menu" class="prime-mobile-menu"><a href="/dashboard">Dashboard</a><a href="/calendar">School calendar</a><a href="/notifications">Notifications</a><a href="/system-help">System help</a><a href="/logout">Logout</a></div><div id="prime-global-tools" class="prime-global-tools"><a class="prime-bell" href="/notifications" aria-label="Notifications" title="Notifications"><span aria-hidden="true">🔔</span><b id="prime-notification-count" class="prime-count hidden"></b></a><button type="button" class="prime-shortcuts-btn" aria-label="Open shortcuts" onclick="document.getElementById('prime-shortcuts').classList.toggle('open')">☰</button><div id="prime-shortcuts" class="prime-shortcuts"><strong>Quick access</strong><a href="/calendar">Calendar</a><a href="/notifications">Notifications</a><a href="/online-classes">Live classes</a><a href="/groups">Groups</a><a href="/leadership">Leadership</a></div></div><button id="prime-mobile-text" class="prime-mobile-text" type="button" aria-label="Adjust text size" title="Adjust text size">Aa</button><div id="prime-text-sheet" class="prime-text-sheet" role="dialog" aria-modal="true" aria-label="Text size settings"><div class="prime-text-sheet-card"><div><strong>Text size</strong><span class="muted">Adjust this device only.</span></div><div class="prime-text-choices"><button type="button" data-prime-text="normal">Normal</button><button type="button" data-prime-text="large">Large</button><button type="button" data-prime-text="xlarge">Extra large</button></div><button type="button" class="btn btn-ghost btn-block" id="prime-text-close">Done</button></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-bell span{color:inherit;font-size:18px;line-height:1}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#10a37f) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}.prime-mobile-nav{display:none}.prime-mobile-nav.open{display:grid}.prime-mobile-text,.prime-text-sheet{display:none}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav,body.auth-body .prime-mobile-menu,body.auth-body .prime-mobile-text{display:none}@media(max-width:820px){.prime-shortcuts-btn{display:none!important}.prime-mobile-nav{display:grid;place-items:center;position:fixed;left:12px;top:12px;width:46px;height:46px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:22px;cursor:pointer;z-index:5001}.prime-global-tools{right:12px;top:12px}.prime-mobile-text{display:grid;place-items:center;position:fixed;right:64px;top:12px;width:46px;height:46px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:15px;font-weight:900;cursor:pointer;z-index:5001}.prime-text-sheet{position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:6000;align-items:flex-end;justify-content:center;padding:14px}.prime-text-sheet.open{display:flex}.prime-text-sheet-card{width:min(460px,100%);border:1px solid var(--text-border,var(--border));border-radius:20px 20px 14px 14px;background:var(--panel);box-shadow:0 -18px 50px rgba(0,0,0,.26);padding:18px;display:grid;gap:16px}.prime-text-sheet-card>div:first-child{display:grid;gap:4px}.prime-text-choices{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.prime-text-choices button{border:1px solid var(--text-border,var(--border));background:var(--panel-3);color:var(--primary-text);border-radius:12px;padding:12px 8px;font-weight:800;cursor:pointer}.prime-text-choices button.active{border-color:var(--primary-blue);box-shadow:0 0 0 3px rgba(16,163,127,.14)}}</style><script>(function(){var m=document.getElementById('prime-mobile-nav');if(m){if(document.getElementById('sidebarToggle')){m.remove();}else{m.addEventListener('click',function(){var hasSidebar=!!document.querySelector('.sidebar');document.body.classList.toggle(hasSidebar?'mobile-nav-open':'prime-smart-menu-open');});}}var tb=document.getElementById('prime-mobile-text'),sheet=document.getElementById('prime-text-sheet'),close=document.getElementById('prime-text-close'),choices=document.querySelectorAll('[data-prime-text]');var saved=localStorage.getItem('prime_text_size')||'large';if(saved==='normal'||saved==='large'||saved==='xlarge')document.documentElement.dataset.primeText=saved;if(tb&&sheet){tb.addEventListener('click',function(){sheet.classList.add('open');});sheet.addEventListener('click',function(e){if(e.target===sheet)sheet.classList.remove('open');});close&&close.addEventListener('click',function(){sheet.classList.remove('open');});choices.forEach(function(b){b.classList.toggle('active',b.dataset.primeText===saved);b.addEventListener('click',function(){saved=b.dataset.primeText;localStorage.setItem('prime_text_size',saved);document.documentElement.dataset.primeText=saved;choices.forEach(function(x){x.classList.toggle('active',x.dataset.primeText===saved);});});});}fetch('/api/notifications').then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});})();</script>"""
                 response.set_data(body.replace("</body>",shell+"</body>",1))
         except Exception:
             pass
@@ -1749,14 +1749,12 @@ def theme_style(settings=None) -> str:
     header_text=_best_text(header, body_text)
     muted=_best_text(bg, requested_muted, minimum=3.0)
     input_bg=_best_text(panel, bg, minimum=1.2) if _contrast_ratio(panel,bg)<1.12 else bg
-    primary_button_text=_best_text(settings['primary_color'] or '#3457d5', '#ffffff')
+    primary_button_text=_best_text(settings['primary_color'] or '#10a37f', '#ffffff')
     heading_font=esc(settings['heading_font'] or settings['font_family'] or 'Inter')
     font_family=esc(settings['font_family'] or 'Inter')
-    bg_path=str(settings.get('background_path','') or '').strip() if hasattr(settings,'get') else ''
-    bg_image = f"body.app-body{{background-image:linear-gradient(180deg,rgba(15,23,42,.18),rgba(15,23,42,.24)),url('/{bg_path}');background-size:cover;background-position:center;background-attachment:fixed;}}" if bg_path else ''
     css=(
         f":root{{--bg:{bg};--panel:{panel};--panel-3:{input_bg};"
-        f"--primary-blue:{esc(settings['primary_color'] or '#3457d5')};--deep-accent-blue:{esc(settings['accent_color'] or '#3457d5')};"
+        f"--primary-blue:{esc(settings['primary_color'] or '#10a37f')};--deep-accent-blue:{esc(settings['accent_color'] or '#0e8a6d')};"
         f"--primary-text:{body_text};--muted-text:{muted};--panel-text:{panel_text};--sidebar-text:{sidebar_text};--header-text:{header_text};"
         f"--text-soft:{_rgba(body_text,.06)};--text-border:{_rgba(body_text,.14)};--text-hover:{_rgba(body_text,.10)};"
         f"--input-text:{_best_text(input_bg,body_text)};--primary-button-text:{primary_button_text};"
@@ -2830,11 +2828,6 @@ def record_account_attendance(user,action,event_at=None,source='online',method='
     action=str(action or '').upper()
     if action not in {'IN','OUT'}: return {'ok':False,'message':'Invalid attendance action.'}
     stamp=event_at or datetime.utcnow().isoformat(timespec='seconds')
-    if event_at and 'T' in event_at:
-        try:
-            stamp=(datetime.fromisoformat(event_at)-KENYA_TZ_OFFSET).isoformat(timespec='seconds')
-        except ValueError:
-            pass
     if attendance_day_is_closed(stamp): return {'ok':False,'message':f'Attendance for {attendance_date_from_value(stamp)} is closed by the school.','closed':True}
     location_label=_attendance_event_location(latitude,longitude,location_label)
     execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,accuracy,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(user['id'],action,method,'',stamp,source,latitude,longitude,accuracy,None,device_note,location_label))
@@ -2889,98 +2882,6 @@ def attendance_sync():
         if attendance_day_is_closed(item.get('event_at')): continue
         execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,accuracy,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(current_user()['id'],str(item['action']).upper(),'QR',office['token'],item.get('event_at') or None,'offline-sync',item.get('latitude'),item.get('longitude'),item.get('accuracy'),item.get('speed_kph'),item.get('device_note',''),_attendance_event_location(item.get('latitude'),item.get('longitude'),item.get('location_label','')))); saved+=1
     return jsonify({'ok':True,'saved':saved})
-
-
-SYSTEM_SEARCH_INDEX = [
-    {"title":"Home / QR attendance", "description":"Scan or manually record staff check-in and check-out", "url":"/admin-dashboard", "roles":{"Admin","ICT"}, "keywords":"home qr attendance check in check out login offline manual"},
-    {"title":"View all employees", "description":"Staff directory, edit, add, delete and attendance history", "url":"/admin/employees", "roles":{"Admin","ICT"}, "keywords":"employees staff people users edit delete add attendance"},
-    {"title":"View all learners", "description":"Student directory and learner records", "url":"/admin/learners", "roles":{"Admin","ICT"}, "keywords":"students learners pupils people access directory"},
-    {"title":"Attendance", "description":"Day, week, month, 3 months, 6 months, 8 months and year reports", "url":"/admin/attendance", "roles":{"Admin","ICT"}, "keywords":"attendance qr checkin checkout signed in signed out missed absence reports"},
-    {"title":"Staff timetable", "description":"Schedules for teachers and relevant staff", "url":"/staff/timetable", "roles":{"Admin","ICT","Teacher","Finance","Driver","Reception","Librarian"}, "keywords":"timetable schedule staff teacher class time"},
-    {"title":"Reminders", "description":"Operational reminders and due work", "url":"/staff/reminders", "roles":{"Admin","ICT","Teacher","Finance","Driver","Reception","Librarian"}, "keywords":"reminders tasks alerts due"},
-    {"title":"School settings", "description":"School identity, admissions, fees and institution configuration", "url":"/admin-dashboard#settings-panel", "roles":{"Admin","ICT"}, "keywords":"settings school setting configuration fees admissions school name institution"},
-    {"title":"Branding & logo", "description":"Logo, background images, fonts, colors and portal appearance", "url":"/admin-dashboard#settings-panel", "roles":{"Admin","ICT"}, "keywords":"logo upload background image branding colors theme font appearance"},
-    {"title":"Analytics & summary", "description":"Performance charts, school totals and breakdowns", "url":"/admin-dashboard#analytics-panel", "roles":{"Admin","ICT"}, "keywords":"analytics charts graph graphs summary metrics breakdown performance"},
-    {"title":"Finance", "description":"Income, expenses and ledger", "url":"/finance", "roles":{"Admin","Finance"}, "keywords":"finance income expenses payments ledger money"},
-    {"title":"Examinations", "description":"Compile grades and school totals", "url":"/admin-dashboard#exam-panel", "roles":{"Admin","ICT"}, "keywords":"exams examinations grades marks totals"},
-    {"title":"Subjects", "description":"Subject catalogue and compulsory subjects", "url":"/admin/subjects", "roles":{"Admin","ICT"}, "keywords":"subjects curriculum catalogue compulsory"},
-    {"title":"Class teacher assignments", "description":"Assign teaching staff to classes", "url":"/admin/class-teachers", "roles":{"Admin","ICT"}, "keywords":"class teacher assignments teachers"},
-    {"title":"Reception desk", "description":"Reception and operational front desk", "url":"/reception", "roles":{"Admin","ICT","Reception"}, "keywords":"reception desk visitors"},
-    {"title":"Backup & restore", "description":"Full system backup and recovery", "url":"/admin/dashboard#backup-panel", "roles":{"Admin"}, "keywords":"backup restore recovery export"},
-    {"title":"Exports", "description":"Students, employees, payments and audit exports", "url":"/admin/dashboard#exports-panel", "roles":{"Admin","ICT"}, "keywords":"export csv audit employees students payments"},
-    {"title":"System help", "description":"Guides and operational help", "url":"/system-help", "roles":set(ALL_PORTAL_ROLES), "keywords":"help guide support"},
-    {"title":"AI assistant", "description":"System assistant", "url":"/ai-assistant", "roles":set(ALL_PORTAL_ROLES), "keywords":"ai assistant help search"},
-]
-
-def _search_terms(text):
-    return re.findall(r'[a-z0-9]+', (text or '').lower())
-
-@app.route('/system-search')
-@login_required
-def system_search():
-    user=current_user(); role=user['role']; term=(request.args.get('q') or '').strip()
-    terms=set(_search_terms(term)); results=[]
-    if term:
-        for item in SYSTEM_SEARCH_INDEX:
-            if role not in item['roles']:
-                continue
-            hay=' '.join([item['title'],item['description'],item['keywords']]).lower()
-            hay_terms=set(_search_terms(hay))
-            score=0
-            if term.lower() in item['title'].lower(): score+=8
-            if term.lower() in item['description'].lower(): score+=4
-            score += len(terms & hay_terms)*2
-            if score:
-                results.append((score,item))
-        # Search live people too, but only within the user's allowed scope.
-        if role in {'Admin','ICT'}:
-            for u in q("SELECT id,full_name,username,role,COALESCE(title,'') AS title,COALESCE(department,'') AS department FROM users WHERE active=1 AND role NOT IN ('System') ORDER BY full_name LIMIT 500"):
-                hay=' '.join([u['full_name'] or '',u['username'] or '',u['role'] or '',u['title'] or '',u['department'] or '']).lower()
-                score=(8 if term.lower() in (u['full_name'] or '').lower() else 0)+(4 if term.lower() in hay else 0)+len(terms & set(_search_terms(hay)))
-                if score:
-                    results.append((score,{"title":u['full_name'],"description":f"{u['role']} · {u['title'] or u['department'] or 'Staff account'}","url":f"/users/{u['id']}/edit","kind":"User"}))
-            for st in q("SELECT id,full_name,admission_no,grade FROM students WHERE active=1 ORDER BY full_name LIMIT 1000"):
-                hay=' '.join([st['full_name'] or '',st['admission_no'] or '',st['grade'] or '']).lower()
-                score=(8 if term.lower() in (st['full_name'] or '').lower() else 0)+(4 if term.lower() in hay else 0)+len(terms & set(_search_terms(hay)))
-                if score:
-                    results.append((score,{"title":st['full_name'],"description":f"Student · {st['admission_no'] or 'No admission number'} · {st['grade'] or ''}","url":f"/students/{st['id']}","kind":"Student"}))
-    results=[item for _,item in sorted(results,key=lambda x:(-x[0],x[1].get('title','')))][:40]
-    return render_template('system_search.html',settings=school_settings(),actor_name=user['full_name'],role=role,term=term,results=results)
-
-
-@app.route('/admin/attendance/qr')
-@login_required
-@role_required('Admin','ICT')
-def admin_attendance_qr_image():
-    office=q("SELECT * FROM attendance_qr_settings WHERE id=1",one=True)
-    if not office: abort(404)
-    img=qrcode.make(f"ATTEND:{office['token']}"); buf=io.BytesIO(); img.save(buf,format='PNG'); buf.seek(0)
-    return send_file(buf,mimetype='image/png',download_name='institution-attendance-qr.png',as_attachment=False)
-
-@app.route('/admin/attendance/manual', methods=['POST'])
-@login_required
-@role_required('Admin','ICT')
-def admin_manual_attendance():
-    user_id=request.form.get('user_id',type=int)
-    action=(request.form.get('action') or '').upper().strip()
-    event_at=(request.form.get('event_at') or '').strip() or None
-    location_label=(request.form.get('location_label') or '').strip()[:500]
-    note=(request.form.get('device_note') or 'Manual attendance entry').strip()[:500]
-    target=q("SELECT * FROM users WHERE id=? AND active=1 AND role NOT IN ('Student','Parent','System')",(user_id,),one=True)
-    if not target or action not in {'IN','OUT'}:
-        flash('Choose a valid employee and check-in/check-out action.','danger')
-        return redirect(url_for('admin_dashboard'))
-    stamp=event_at or datetime.utcnow().isoformat(timespec='seconds')
-    if attendance_day_is_closed(stamp):
-        flash(f'Attendance for {attendance_date_from_value(stamp)} is closed.','danger')
-        return redirect(url_for('admin_dashboard'))
-    result=record_account_attendance(target,action,stamp,'manual','Manual',None,None,None,note,location_label)
-    if result.get('ok'):
-        notify_users(reception_admin_ids(),f'Attendance: {target["full_name"]} checked {"IN" if action=="IN" else "OUT"}',f'Manual attendance recorded for {target["full_name"]}. Location: {location_label or "Not supplied"}.',url_for('admin_attendance'))
-        flash(f'{target["full_name"]} marked {"in" if action=="IN" else "out"}.','success')
-    else:
-        flash(result.get('message','Attendance could not be recorded.'),'danger')
-    return redirect(url_for('admin_dashboard'))
 
 @app.route("/admin/attendance", methods=["GET","POST"])
 @login_required
@@ -3498,24 +3399,6 @@ def admin_dashboard():
     elections=q("SELECT * FROM elections ORDER BY created_at DESC")
     election_candidates={e["id"]:q("SELECT * FROM election_candidates WHERE election_id=? ORDER BY position,name",(e["id"],)) for e in elections}
     library_items=q("SELECT * FROM library_items ORDER BY active DESC,category,title")
-    local_today=(datetime.utcnow()+KENYA_TZ_OFFSET).date().isoformat()
-    today_start,today_end=attendance_day_bounds_utc(local_today)
-    today_attendance=q("""
-        SELECT u.id,u.full_name,u.role,COALESCE(u.title,u.role) AS title,
-               (SELECT a.event_at FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS sign_in_at,
-               (SELECT a.event_at FROM attendance_events a WHERE a.user_id=u.id AND a.action='OUT' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at DESC,a.id DESC LIMIT 1) AS sign_out_at,
-               (SELECT a.location_label FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? AND a.location_label!='' ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS location
-        FROM users u
-        WHERE u.active=1 AND u.role NOT IN ('Student','Parent','System')
-        ORDER BY u.full_name
-    """,(today_start,today_end,today_start,today_end,today_start,today_end))
-    today_attendance=[dict(r) for r in today_attendance]
-    for r in today_attendance:
-        r['sign_in_local']=_local_iso(_parse_stored_event(r['sign_in_at'])) if r.get('sign_in_at') else None
-        r['sign_out_local']=_local_iso(_parse_stored_event(r['sign_out_at'])) if r.get('sign_out_at') else None
-    analytics_max_employee=max([int(r['c'] or 0) for r in categories['employees']] or [1])
-    analytics_max_grade=max([int(r['c'] or 0) for r in categories['students']] or [1])
-    analytics_max_payment=max([int(r['c'] or 0) for r in categories['payments']] or [1])
 
     return render_template(
         "admin_dashboard.html",
@@ -3551,11 +3434,6 @@ def admin_dashboard():
                             JOIN students st ON st.id=gl.student_id ORDER BY gl.created_at DESC"""),
         archived_users=q("SELECT id, full_name, username, role, title, department, archived_at FROM users WHERE active=0 AND role!='System' ORDER BY archived_at DESC, full_name"),
         finance_closings=q("SELECT c.*,u.full_name AS submitted_name FROM finance_closings c JOIN users u ON u.id=c.submitted_by ORDER BY c.submitted_at DESC,c.id DESC LIMIT 20"),
-        today_attendance=today_attendance,
-        local_today=local_today,
-        analytics_max_employee=analytics_max_employee,
-        analytics_max_grade=analytics_max_grade,
-        analytics_max_payment=analytics_max_payment,
         all_roles=ALL_PORTAL_ROLES,
         onboarding_students=q("SELECT id,full_name,admission_no,grade FROM students WHERE active=1 ORDER BY grade,full_name"),
     )
@@ -3785,13 +3663,13 @@ def _save_theme_snapshot(snapshot_type, actor_id):
 
 @app.route("/ict/settings", methods=["POST"])
 @login_required
-@role_required("Admin", "ICT")
+@role_required("ICT")
 def ict_settings():
     _save_theme_snapshot("workspace", current_user()["id"])
     school_name=request.form.get("school_name", "School").strip() or "School"
     portal_subtitle=request.form.get("portal_subtitle", "School Portal System").strip() or "School Portal System"
-    primary=request.form.get("primary_color", "#3457d5").strip() or "#3457d5"
-    accent=request.form.get("accent_color", "#3457d5").strip() or "#3457d5"
+    primary=request.form.get("primary_color", "#10a37f").strip() or "#10a37f"
+    accent=request.form.get("accent_color", "#0e8a6d").strip() or "#0e8a6d"
     bg=request.form.get("background_color", "#343541").strip() or "#343541"
     panel=request.form.get("panel_color", "#40414f").strip() or "#40414f"
     sidebar=request.form.get("sidebar_color", panel).strip() or panel
@@ -3820,12 +3698,12 @@ def ict_settings():
     execute("""UPDATE school_settings SET school_name=?, portal_subtitle=?, primary_color=?, accent_color=?, background_color=?, panel_color=?, sidebar_color=?, header_color=?, text_color=?, muted_text_color=?, font_family=?, heading_font=?, radius_px=?, button_radius_px=?, theme_mode=?, sidebar_style=?, menu_order=?, home_label=?, assignments_label=?, results_label=?, messages_label=?, finance_label=?, branding_label=?, custom_css=?, footer_title=?, footer_text=?, footer_contact=?, footer_links=?, platform_credit_enabled=? WHERE id=1""", (school_name,portal_subtitle,primary,accent,bg,panel,sidebar,header,text_color,muted,font_family,heading_font,radius,button_radius,theme_mode,sidebar_style,menu_order,labels["home_label"],labels["assignments_label"],labels["results_label"],labels["messages_label"],labels["finance_label"],labels["branding_label"],custom_css,footer_title,footer_text,footer_contact,footer_links,platform_credit_enabled))
     audit(current_user()["id"], current_user()["full_name"], "Portal Theme Update", f"Institution-wide interface theme updated for {school_name}.")
     flash("The institution-wide interface has been redesigned and saved.", "success")
-    return redirect(url_for("ict_dashboard" if current_user()["role"]=="ICT" else "admin_dashboard"))
+    return redirect(url_for("ict_dashboard"))
 
 
 @app.route("/ict/landing-branding", methods=["POST"])
 @login_required
-@role_required("Admin", "ICT")
+@role_required("ICT")
 def ict_landing_branding():
     _save_theme_snapshot("landing", current_user()["id"])
     # Public landing page branding is intentionally separate from the in-system workspace theme.
@@ -3852,7 +3730,7 @@ def ict_landing_branding():
     if landing_file and landing_file.filename:
         ext=landing_file.filename.rsplit('.',1)[-1].lower() if '.' in landing_file.filename else ''
         if ext not in {"png","jpg","jpeg","webp"}:
-            flash("Landing background must be PNG, JPG, JPEG or WEBP.","danger"); return redirect((url_for("ict_dashboard") if current_user()["role"]=="ICT" else url_for("admin_dashboard"))+"#branding")
+            flash("Landing background must be PNG, JPG, JPEG or WEBP.","danger"); return redirect(url_for("ict_dashboard")+"#branding")
         folder=UPLOAD_DIR/"institution"; folder.mkdir(exist_ok=True)
         out=folder/f"landing-bg-{uuid.uuid4().hex[:10]}.{ext}"; landing_file.save(out); landing_path="uploads/institution/"+out.name
     for i in (1,2,3):
@@ -3862,7 +3740,7 @@ def ict_landing_branding():
         if file and file.filename:
             ext=file.filename.rsplit('.',1)[-1].lower() if '.' in file.filename else ''
             if ext not in {"png","jpg","jpeg","webp"}:
-                flash(f"History image {i} must be PNG, JPG, JPEG or WEBP.","danger"); return redirect((url_for("ict_dashboard") if current_user()["role"]=="ICT" else url_for("admin_dashboard"))+"#branding")
+                flash(f"History image {i} must be PNG, JPG, JPEG or WEBP.","danger"); return redirect(url_for("ict_dashboard")+"#branding")
             folder=UPLOAD_DIR/"institution"; folder.mkdir(exist_ok=True)
             out=folder/f"history-{i}-{uuid.uuid4().hex[:10]}.{ext}"; file.save(out); path="uploads/institution/"+out.name
         paths.append(path)
@@ -3870,40 +3748,40 @@ def ict_landing_branding():
     execute("""UPDATE school_settings SET landing_background_color=?,landing_panel_color=?,landing_text_color=?,landing_accent_color=?,landing_font_family=?,landing_heading_font=?,landing_content_width=?,landing_hero_layout=?,landing_role_columns=?,landing_background_path=?,institution_image_path=?,institution_image_2_path=?,institution_image_3_path=?,institution_image_1_position=?,institution_image_2_position=?,institution_image_3_position=?,welcome_animation_enabled=?,welcome_animation_name=?,welcome_animation_duration_ms=?,welcome_animation_style=? WHERE id=1""",(vals["landing_background_color"],vals["landing_panel_color"],vals["landing_text_color"],vals["landing_accent_color"],vals["landing_font_family"],vals["landing_heading_font"],vals["landing_content_width"],vals["landing_hero_layout"],vals["landing_role_columns"],landing_path,paths[0],paths[1],paths[2],positions[0],positions[1],positions[2],vals["welcome_animation_enabled"],vals["welcome_animation_name"],vals["welcome_animation_duration_ms"],vals["welcome_animation_style"]))
     audit(current_user()["id"],current_user()["full_name"],"Landing Page Branding Update","Public landing branding, history visuals and welcome animation updated.")
     flash("Landing-page branding and institution history visuals saved separately from the logged-in system theme.","success")
-    return redirect((url_for("ict_dashboard") if current_user()["role"]=="ICT" else url_for("admin_dashboard"))+"#branding")
+    return redirect(url_for("ict_dashboard")+"#branding")
 
 @app.route("/ict/logo", methods=["POST"])
 @login_required
-@role_required("Admin", "ICT")
+@role_required("ICT")
 def ict_logo():
     file=request.files.get("logo")
-    if not file or not file.filename: return redirect(url_for("ict_dashboard" if current_user()["role"]=="ICT" else "admin_dashboard"))
+    if not file or not file.filename: return redirect(url_for("ict_dashboard"))
     ext=file.filename.rsplit('.',1)[-1].lower() if '.' in file.filename else ''
     if ext not in {"png","jpg","jpeg","webp","svg"}:
         flash("Logo must be PNG, JPG, JPEG, WEBP or SVG.", "danger")
-        return redirect(url_for("ict_dashboard" if current_user()["role"]=="ICT" else "admin_dashboard"))
+        return redirect(url_for("ict_dashboard"))
     name="school-logo."+ext
     path=UPLOAD_DIR/name; file.save(path)
     execute("UPDATE school_settings SET logo_path=? WHERE id=1", ("uploads/"+name,))
     flash("School logo updated.", "success")
-    return redirect(url_for("ict_dashboard" if current_user()["role"]=="ICT" else "admin_dashboard"))
+    return redirect(url_for("ict_dashboard"))
 
 
 @app.route("/ict/background", methods=["POST"])
 @login_required
-@role_required("Admin", "ICT")
+@role_required("ICT")
 def ict_background():
     file=request.files.get("background")
-    if not file or not file.filename: return redirect(url_for("ict_dashboard" if current_user()["role"]=="ICT" else "admin_dashboard"))
+    if not file or not file.filename: return redirect(url_for("ict_dashboard"))
     ext=file.filename.rsplit('.',1)[-1].lower() if '.' in file.filename else ''
     if ext not in {"png","jpg","jpeg","webp"}:
         flash("Background must be PNG, JPG, JPEG or WEBP.", "danger")
-        return redirect(url_for("ict_dashboard" if current_user()["role"]=="ICT" else "admin_dashboard"))
+        return redirect(url_for("ict_dashboard"))
     name="school-background."+ext
     file.save(UPLOAD_DIR/name)
     execute("UPDATE school_settings SET background_path=? WHERE id=1", ("uploads/"+name,))
     flash("Portal background updated.", "success")
-    return redirect(url_for("ict_dashboard" if current_user()["role"]=="ICT" else "admin_dashboard"))
+    return redirect(url_for("ict_dashboard"))
 
 
 @app.route("/calendar")
@@ -5066,18 +4944,11 @@ def admin_login_access():
     flash(f"Login page is now {state}.", "success")
     return redirect(url_for("admin_dashboard"))
 
-@app.route("/users/add", methods=["GET", "POST"])
+@app.route("/users/add", methods=["POST"])
 @login_required
 def add_user():
     actor=current_user()
     if actor["role"] not in {"Admin","ICT"}: abort(403)
-    # GET is an entry point used by the People & Access directory.
-    # Keep the actual form in the role dashboard so permissions and fields
-    # stay centralized, but never expose a dead /users/add URL.
-    if request.method == "GET":
-        if actor["role"] == "Admin":
-            return redirect(url_for("admin_dashboard") + "#admin-add-user")
-        return redirect(url_for("ict_dashboard") + "#ict-add-user")
     full_name=request.form.get("full_name", "").strip()
     username=request.form.get("username", "").strip().lower()
     password=request.form.get("password", "")
@@ -5444,20 +5315,8 @@ def all_learners():
 @login_required
 @role_required("Admin","ICT")
 def all_employees():
-    today=(datetime.utcnow()+KENYA_TZ_OFFSET).date().isoformat()
-    start_utc,end_utc=attendance_day_bounds_utc(today)
-    rows=q("""
-      SELECT u.*,
-        (SELECT a.event_at FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS check_in_at,
-        (SELECT a.event_at FROM attendance_events a WHERE a.user_id=u.id AND a.action='OUT' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at DESC,a.id DESC LIMIT 1) AS check_out_at,
-        (SELECT a.location_label FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? AND a.location_label!='' ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS check_in_location
-      FROM users u WHERE u.role NOT IN ('Student','Parent','System') ORDER BY u.active DESC, u.full_name
-    """,(start_utc,end_utc,start_utc,end_utc,start_utc,end_utc))
-    rows=[dict(r) for r in rows]
-    for r in rows:
-        r['check_in_local']=_local_iso(_parse_stored_event(r.get('check_in_at'))) if r.get('check_in_at') else None
-        r['check_out_local']=_local_iso(_parse_stored_event(r.get('check_out_at'))) if r.get('check_out_at') else None
-    return render_template("directory.html", directory_type="Employees", rows=rows, settings=school_settings(), role=current_user()["role"], actor_name=current_user()["full_name"], guardian_map={}, today=today)
+    rows=q("SELECT * FROM users WHERE role NOT IN ('Student','Parent','System') ORDER BY active DESC,role,full_name")
+    return render_template("directory.html", directory_type="Employees", rows=rows, settings=school_settings(), role=current_user()["role"], actor_name=current_user()["full_name"], guardian_map={})
 
 @app.route("/users/<int:user_id>/qr")
 @login_required

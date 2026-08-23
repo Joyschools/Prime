@@ -9,9 +9,7 @@
   <meta name="theme-color" content="{{ theme_color }}">
   <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-<style>{{theme_style|safe}}{{theme_preset_style|safe}}
-.admin-home-qr{display:grid;grid-template-columns:1fr 270px;gap:22px;align-items:stretch;padding:24px;border:1px solid var(--text-border);border-radius:18px;background:linear-gradient(135deg,rgba(52,87,213,.12),rgba(15,23,42,.02))}.admin-home-copy h2{font-size:clamp(30px,3vw,46px);margin:.35rem 0}.admin-qr-box{display:grid;place-items:center;text-align:center;gap:8px;padding:18px;border:1px solid var(--text-border);border-radius:16px;background:var(--panel)}.admin-qr-box img{width:180px;height:180px;object-fit:contain;border-radius:10px;background:#fff;padding:8px}.manual-attendance{display:grid;grid-template-columns:1.1fr .7fr 1fr 1.2fr auto;gap:8px;margin-top:18px}.manual-attendance select,.manual-attendance input{min-width:0}.today-attendance-card{margin-top:14px;padding:16px;border:1px solid var(--text-border);border-radius:16px;background:var(--panel)}.clean-attendance th{font-size:11px;text-transform:uppercase;letter-spacing:.05em}.chart-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.chart-card{padding:16px;border:1px solid var(--text-border);border-radius:16px;background:var(--panel)}.chart-row{display:grid;grid-template-columns:92px 1fr 34px;gap:8px;align-items:center;margin:12px 0;font-size:12px}.chart-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-track{height:10px;border-radius:999px;background:var(--text-soft);overflow:hidden}.chart-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#3457d5,#6d5ce7)}.admin-search-mini{margin-top:8px}.admin-search-mini form{display:flex;gap:7px}.admin-search-mini input{width:min(330px,28vw);padding:9px 11px;border:1px solid var(--text-border);background:var(--panel-3);color:var(--primary-text);border-radius:10px}.admin-search-mini button{padding:9px 11px;border:1px solid var(--text-border);background:var(--panel);color:var(--primary-text);border-radius:10px;font-weight:800;cursor:pointer}@media(max-width:1100px){.manual-attendance{grid-template-columns:1fr 1fr}.admin-home-qr{grid-template-columns:1fr}.chart-grid{grid-template-columns:1fr}}@media(max-width:700px){.admin-search-mini input{width:170px}.manual-attendance{grid-template-columns:1fr}.admin-qr-box img{width:150px;height:150px}}
-</style></head>
+<style>{{theme_style|safe}}{{theme_preset_style|safe}}</style></head>
 <body class="app-body admin-body sidebar-style-{{ school_settings.sidebar_style|default("drawer", true) }}">{% include "_notification_bell.html" %}
   <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
   <div class="scroll-rail" id="scrollRail" aria-hidden="true"><div class="scroll-track"><div class="scroll-thumb" id="scrollThumb"></div></div></div>
@@ -34,14 +32,84 @@
     </div>
 
     <nav class="side-nav side-nav-groups" aria-label="Admin sections">
-      <section class="nav-group open"><button class="nav-group-toggle" type="button" aria-expanded="true" data-target="admin-overview-panel"><span>Home</span><span class="nav-caret">⌂</span></button><div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="admin-overview-panel">QR & daily attendance</button></div></section>
-      <section class="nav-group"><button class="nav-group-toggle" type="button" aria-expanded="false" data-target="users-panel"><span>People & Access</span><span class="nav-caret">▾</span></button><div class="nav-group-links"><a class="nav-link" href="/admin/employees">View all employees</a><a class="nav-link" href="/admin/learners">View all learners</a><a class="nav-link" href="/admin/class-teachers">Class teacher assignments</a></div></section>
-      <section class="nav-group"><button class="nav-group-toggle" type="button" aria-expanded="false" data-target="analytics-panel"><span>Summary & Analytics</span><span class="nav-caret">▾</span></button><div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="admin-overview-panel" data-scroll="admin-metrics">Summary</button><button class="nav-link nav-action" type="button" data-target="analytics-panel">Charts & breakdowns</button></div></section>
-      <section class="nav-group"><button class="nav-group-toggle" type="button" aria-expanded="false" data-target="operations-links"><span>Operations</span><span class="nav-caret">▾</span></button><div class="nav-group-links"><a class="nav-link" href="/admin/attendance">Attendance detail</a><a class="nav-link" href="/staff/timetable">Timetable</a><a class="nav-link" href="/staff/reminders">Reminders</a><a class="nav-link" href="/calendar">School calendar</a><a class="nav-link" href="/reception">Reception</a></div></section>
-      <section class="nav-group"><button class="nav-group-toggle" type="button" aria-expanded="false" data-target="finance-panel"><span>Finance</span><span class="nav-caret">▾</span></button><div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="finance-panel">Finance overview</button><a class="nav-link" href="/finance-dashboard">Finance workspace</a></div></section>
-      <section class="nav-group"><button class="nav-group-toggle" type="button" aria-expanded="false" data-target="exam-panel"><span>Academics</span><span class="nav-caret">▾</span></button><div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="exam-panel">Examinations</button><a class="nav-link" href="/admin/subjects">Subjects</a></div></section>
-      <section class="nav-group"><button class="nav-group-toggle" type="button" aria-expanded="false" data-target="settings-panel"><span>School settings</span><span class="nav-caret">▾</span></button><div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="settings-panel">School & branding</button><button class="nav-link nav-action" type="button" data-target="public-face-panel">Public face</button></div></section>
-      <section class="nav-group"><button class="nav-group-toggle" type="button" aria-expanded="false" data-target="system-links"><span>System</span><span class="nav-caret">▾</span></button><div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="exports-panel">Exports</button><button class="nav-link nav-action" type="button" data-target="backup-panel">Backup & restore</button><button class="nav-link nav-action" type="button" data-target="audit-panel">Audit logs</button><a class="nav-link" href="/system-help">System Help</a><a class="nav-link" href="/ai-assistant">AI Assistant</a></div></section>
+      <section class="nav-group open">
+        <button class="nav-group-toggle" type="button" aria-expanded="true" data-target="admin-overview-panel"><span>Overview</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="admin-overview-panel">Summary</button>
+          <button class="nav-link nav-action" type="button" data-target="admin-overview-panel" data-scroll="admin-metrics">Metrics</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="finance-panel"><span>Finance</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="finance-panel">Income / expenses</button>
+          <button class="nav-link nav-action" type="button" data-target="finance-panel" data-scroll="expense-ledger">Expense ledger</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="analytics-panel"><span>Analytics</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="analytics-panel">Charts</button>
+          <button class="nav-link nav-action" type="button" data-target="analytics-panel" data-scroll="admin-category-breakdown">Breakdowns</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="students-panel"><span>{{learner_plural}}</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="students-panel">Manage {{learner_plural|lower}}</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="exam-panel"><span>Examinations</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="exam-panel">Compile school grades</button>
+          <button class="nav-link nav-action" type="button" data-target="exam-panel" data-scroll="school-exam-summary">School totals</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="exports-panel"><span>Exports</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <a class="nav-link" href="{{ url_for('export_data', kind='students') }}">Students CSV</a>
+          <a class="nav-link" href="{{ url_for('export_data', kind='users') }}">Employees CSV</a>
+          <a class="nav-link" href="{{ url_for('export_data', kind='payments') }}">Payments CSV</a>
+          <a class="nav-link" href="{{ url_for('export_data', kind='audit') }}">Audit CSV</a>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="backup-panel"><span>Backup</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="backup-panel">Backup / restore</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="users-panel"><span>People & Access</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <a class="nav-link" href="/admin/learners">View all learners</a><a class="nav-link" href="/admin/employees">View all employees</a><a class="nav-link" href="/admin/class-teachers">Class teacher assignments</a><button class="nav-link nav-action" type="button" data-target="users-panel">Manage users</button><a class="nav-link" href="/admin/compulsory-subjects">Compulsory subjects</a><a class="nav-link" href="/admin/subjects">Subject catalogue</a><a class="nav-link" href="/reception">Reception desk</a>
+          <button class="nav-link nav-action" type="button" data-target="public-info-panel">Public page & access</button>
+          <button class="nav-link nav-action" type="button" data-target="institution-profile-panel">Institution configuration</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="audit-panel"><span>Audit</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="audit-panel">Logs</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="settings-panel"><span>School settings</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links">
+          <button class="nav-link nav-action" type="button" data-target="settings-panel">Branding</button><button class="nav-link nav-action" type="button" data-target="public-face-panel">Public face</button>
+        </div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="elections-admin-panel"><span>Elections</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="elections-admin-panel">Manage elections</button></div>
+      </section>
+      <section class="nav-group">
+        <button class="nav-group-toggle" type="button" aria-expanded="false" data-target="library-admin-panel"><span>Library</span><span class="nav-caret">▾</span></button>
+        <div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="library-admin-panel">Library control</button></div>
+      </section>
+      <section class="nav-group"><a class="nav-link" href="/institution">Institution profile</a></section>
     </nav>
 
     <div class="sidebar-foot">
@@ -54,7 +122,7 @@
       <div class="topbar-left">
         <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="Open navigation">☰</button>
         <div class="topbar-brand">
-          <div class="topbar-title">Admin Command Centre</div><div class="admin-search-mini"><form action="/system-search" method="get"><input name="q" placeholder="Search system…" aria-label="Search system"><button type="submit">Search</button></form></div>
+          <div class="topbar-title">Admin Command Centre</div>
           <div class="topbar-subtitle">{{ school_settings.school_name }}</div>
         </div>
       </div>
@@ -62,7 +130,7 @@
         <div class="muted topbar-clock" id="liveClock">Tuesday, Aug 4, 2026 • 11:30:58</div>
         <a class="btn btn-ghost mini" href="{{ url_for('logout') }}">Logout</a>
       </div>
-    <div class="quick-actions" style="margin:0 0 10px 0"><a class="btn btn-ghost mini" href="/system-search">System Search</a></div></header>
+    <div class="quick-actions" style="margin:0 0 10px 0"><a class="btn btn-ghost mini" href="/system-help">System Help</a><a class="btn btn-primary mini" href="/ai-assistant">AI Assistant</a></div></header>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -76,25 +144,19 @@
 
     <section class="portal-adverts">{% for ad in active_adverts %}<article class="advert-card"><span class="eyebrow">School advert · {{ad.poster or 'School'}}</span><h3>{{ad.title}}</h3><p>{{ad.body}}</p>{% if ad.link_url %}<a class="btn btn-ghost mini" href="{{ad.link_url}}" target="_blank" rel="noopener">Open link</a>{% endif %}</article>{% endfor %}</section>
 <section id="admin-overview-panel" class="panel glass workspace-panel landing-panel">
-      <div class="admin-home-qr">
-        <div class="admin-home-copy">
-          <div class="eyebrow">Today · {{ local_today }}</div>
-          <h2>Attendance Home</h2>
-          <p class="hero-copy">Scan a staff QR to sign in or out and open that person’s dashboard. No phone? Record the employee manually here.</p>
-          <div class="quick-actions"><a class="btn btn-primary" href="/admin/attendance">Open attendance detail</a><a class="btn btn-ghost" href="/admin/employees">View employees</a><a class="btn btn-ghost" href="/system-search?q=QR">Find QR tools</a></div>
-          <form method="post" action="/admin/attendance/manual" class="manual-attendance">
-            <select name="user_id" required><option value="">Select employee…</option>{% for u in users %}{% if u.role not in ['Student','Parent','System'] %}<option value="{{u.id}}">{{u.full_name}} · {{u.role}}</option>{% endif %}{% endfor %}</select>
-            <select name="action" required><option value="IN">Sign in</option><option value="OUT">Sign out</option></select>
-            <input type="datetime-local" name="event_at" aria-label="Attendance time">
-            <input name="location_label" placeholder="Location (e.g. Juja Theta, Main Gate)">
-            <button class="btn btn-primary" type="submit">Save attendance</button>
-          </form>
+      <div class="people-hero">
+        <div class="hero-card">
+          <div class="eyebrow">{{ school_settings.institution_type }} · Executive command centre</div>
+          <h2>{{ school_settings.school_name }}</h2>
+          <p class="hero-copy">One controlled environment for people, academics, finance, communication, records and institutional accountability.</p>
+          <div class="quick-actions">
+            <button class="btn btn-primary nav-action" type="button" data-target="users-panel">Open People & Access</button>
+            <a class="btn btn-ghost" href="{{ url_for('backup_download') }}">Protect with backup</a>
+            <a class="btn btn-ghost" href="{{ url_for('institution') }}">View institution profile</a>
+            <a class="btn btn-ghost" href="#users-panel" onclick="event.preventDefault();document.querySelector('[data-target=\"users-panel\"]')?.click();">Manage users</a>
+          </div>
         </div>
-        <div class="admin-qr-box"><div class="eyebrow">Staff QR</div><img src="/admin/attendance/qr" alt="Institution staff attendance QR"><strong>Scan to sign in / sign out</strong><span class="muted small">The same QR flow also authenticates staff to their own dashboard.</span></div>
-      </div>
-      <div class="today-attendance-card">
-        <div class="panel-head"><div><div class="eyebrow">Live register</div><h3>Today’s staff status</h3></div><span class="muted small">One row per employee</span></div>
-        <div class="table-wrap"><table class="clean-attendance"><thead><tr><th>Name</th><th>Role</th><th>Location</th><th>Sign in</th><th>Sign out</th></tr></thead><tbody>{% for a in today_attendance %}<tr><td><strong>{{a.full_name}}</strong></td><td>{{a.role}}</td><td>{{a.location or '—'}}</td><td>{% if a.sign_in_local %}{{a.sign_in_local[11:16]}}{% else %}<span class="muted">Not signed in</span>{% endif %}</td><td>{% if a.sign_out_local %}{{a.sign_out_local[11:16]}}{% else %}<span class="muted">—</span>{% endif %}</td></tr>{% else %}<tr><td colspan="5" class="muted">No active employees found.</td></tr>{% endfor %}</tbody></table></div>
+        <div class="hero-stat"><span class="eyebrow">People under management</span><strong>{{ users|length }}</strong><span class="muted">{{ school_settings.learner_label }}s, staff, guardians and administrators</span></div>
       </div>
       <div class="stats-grid" id="admin-metrics" style="margin-top:16px">
         <button class="mini-card nav-action" type="button" data-target="people-summary-panel"><span>{{ school_settings.learner_label }}s</span><strong>{{ summary.total_students }}</strong><small class="muted">Open people summary</small></button>
@@ -282,7 +344,11 @@
           <div><span>Employees by role</span><strong>{{ categories.employees|length }} groups</strong></div>
           <div><span>Payments by method</span><strong>{{ categories.payments|length }} groups</strong></div>
         </div>
-
+        <div class="bar-chart">
+          <div class="bar-row"><span>Collection trend</span><div class="bar"><div style="width:86%"></div></div></div>
+          <div class="bar-row"><span>Expense trend</span><div class="bar"><div style="width:54%"></div></div></div>
+          <div class="bar-row"><span>Payroll pressure</span><div class="bar"><div style="width:40%"></div></div></div>
+        </div>
       </div>
     </section>
 
@@ -370,7 +436,7 @@
         <div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>Department</th><th>Archived</th><th></th></tr></thead><tbody>{% for u in archived_users %}<tr><td>{{ u.full_name }}</td><td>{{ u.role }}</td><td>{{ u.department or '—' }}</td><td>{{ (u.archived_at or '')[:16] }}</td><td><form method="post" action="{{ url_for('restore_user', user_id=u.id) }}"><button class="btn btn-primary mini" type="submit">Restore</button></form></td></tr>{% else %}<tr><td colspan="5" class="muted">No archived accounts.</td></tr>{% endfor %}</tbody></table></div>
       </div>
 
-      <div class="detail-card" style="margin-top:18px; border-left:4px solid #263f9f">
+      <div class="detail-card" style="margin-top:18px; border-left:4px solid #0e8a6d">
         <div class="panel-head" style="margin-bottom:8px"><div><div class="eyebrow">Security control</div><h4 style="margin:0">Login Page Access</h4></div><span class="muted">Current: {% if settings.auth_required %}ENABLED{% else %}DISABLED{% endif %}</span></div>
         <p class="muted">Administrator login is always protected. When enabled, institutional accounts authenticate before entering their workspaces.</p>
         <button class="btn {% if settings.auth_required %}btn-ghost{% else %}btn-primary{% endif %}" type="button" id="openLoginAccess">{% if settings.auth_required %}Disable login page{% else %}Enable login page{% endif %}</button>
@@ -452,10 +518,6 @@
         <label style="grid-column:1/-1"><span>School fees</span><input name="school_fee" type="number" step="0.01" min="0" value="{{ school_settings.school_fee or 0 }}"></label>
         <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save settings</button></div>
       </form>
-      <div class="settings-media-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px">
-        <form class="detail-card" method="post" action="/ict/logo" enctype="multipart/form-data"><div class="eyebrow">School identity</div><h4>Logo</h4><p class="muted small">Upload the school logo used across the portal.</p><input type="file" name="logo" accept=".png,.jpg,.jpeg,.webp,.svg" required><button class="btn btn-ghost mini" type="submit" style="margin-top:8px">Upload logo</button></form>
-        <form class="detail-card" method="post" action="/ict/background" enctype="multipart/form-data"><div class="eyebrow">Logged-in appearance</div><h4>PC / phone background</h4><p class="muted small">Use one controlled background image for the logged-in portal. Public landing images stay separate.</p><input type="file" name="background" accept=".png,.jpg,.jpeg,.webp" required><button class="btn btn-ghost mini" type="submit" style="margin-top:8px">Upload background</button></form>
-      </div>
     </section>
 
     <section class="panel glass workspace-panel hidden">
@@ -481,7 +543,7 @@
         </table>
       </div>
     </section>
-  <section id="admin-add-student" class="panel glass" style="margin-top:14px"><div class="panel-head"><div><div class="eyebrow">People</div><h3>Add student</h3><p class="muted">Create the learner record directly. The account can be created separately from People & Access.</p></div><span class="feature-badge">Admin / ICT</span></div><form method="post" action="/students/add" class="stack-form two-col"><label><span>Admission No.</span><input name="admission_no" placeholder="Auto-generated if blank"></label><label><span>Full name</span><input name="full_name" required></label><label><span>Grade / Class</span><input name="grade" required placeholder="Grade 8 / Form 2 / Year 1"></label><label><span>Student phone</span><input name="student_phone"></label><label><span>Student email</span><input type="email" name="student_email"></label><label><span>Guardian name</span><input name="guardian_name"></label><label><span>Guardian phone</span><input name="guardian_phone"></label><label style="grid-column:1/-1"><span>Notes</span><textarea name="notes" rows="3"></textarea></label><div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Add student</button></div></form></section><section id="admin-add-user" class="panel glass" style="margin-top:14px"><div class="panel-head"><div><div class="eyebrow">People</div><h3>Add school user</h3><p class="muted">Administrator can create staff, learner, parent and administrative accounts. System accounts are never exposed here.</p></div><span class="feature-badge">Admin</span></div><form method="post" action="/users/add" class="stack-form two-col"><label><span>Full name</span><input name="full_name" required></label><label><span>Username</span><input name="username" required></label><label><span>Temporary password</span><input type="password" name="password" minlength="4" required></label><label><span>Role</span><select name="role">{% for r in all_roles if r != 'System' %}<option value="{{r}}">{{r}}</option>{% endfor %}</select></label><label><span>Staff workspace</span><select name="workspace_type"><option>Teaching</option><option>Driver</option><option>Reception</option><option>Guard</option><option>Cook</option><option>Other Staff</option></select></label><label><span>Admission No. for a new learner</span><input name="admission_no" placeholder="Auto-generated if blank"></label><label><span>Grade / Class for a new learner</span><input name="grade" placeholder="Grade 8 / Form 2 / Year 1"></label><label><span>Link an existing learner</span><select name="student_id"><option value="">Not linked</option>{% for st in onboarding_students %}<option value="{{st.id}}">{{st.full_name}} — {{st.admission_no}}</option>{% endfor %}</select></label><div><span>&nbsp;</span><button class="btn btn-primary" type="submit">Create user</button></div></form></section>
+  <section class="panel glass" style="margin-top:14px"><div class="panel-head"><div><div class="eyebrow">Institution people</div><h3>Full directories</h3><p class="muted">Learners and employees are now maintained as separate complete directories.</p></div></div><div class="quick-actions"><a class="btn btn-primary" href="/admin/learners">View all learners</a><a class="btn btn-ghost" href="/admin/employees">View all employees</a><a class="btn btn-ghost" href="/admin/subjects">Subject catalogue</a><a class="btn btn-ghost" href="/reception">Reception desk</a><a class="btn btn-ghost" href="/performance">Performance intelligence</a><a class="btn btn-ghost" href="/admin/attendance">Attendance control</a><a class="btn btn-ghost" href="/admin/transport">Driver tracking</a><a class="btn btn-ghost" href="/system-help">System Help</a><a class="btn btn-ghost" href="/ai-assistant">AI Assistant</a></div></section><section id="admin-add-student" class="panel glass" style="margin-top:14px"><div class="panel-head"><div><div class="eyebrow">People</div><h3>Add student</h3><p class="muted">Create the learner record directly. The account can be created separately from People & Access.</p></div><span class="feature-badge">Admin / ICT</span></div><form method="post" action="/students/add" class="stack-form two-col"><label><span>Admission No.</span><input name="admission_no" placeholder="Auto-generated if blank"></label><label><span>Full name</span><input name="full_name" required></label><label><span>Grade / Class</span><input name="grade" required placeholder="Grade 8 / Form 2 / Year 1"></label><label><span>Student phone</span><input name="student_phone"></label><label><span>Student email</span><input type="email" name="student_email"></label><label><span>Guardian name</span><input name="guardian_name"></label><label><span>Guardian phone</span><input name="guardian_phone"></label><label style="grid-column:1/-1"><span>Notes</span><textarea name="notes" rows="3"></textarea></label><div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Add student</button></div></form></section><section id="admin-add-user" class="panel glass" style="margin-top:14px"><div class="panel-head"><div><div class="eyebrow">People</div><h3>Add school user</h3><p class="muted">Administrator can create staff, learner, parent and administrative accounts. System accounts are never exposed here.</p></div><span class="feature-badge">Admin</span></div><form method="post" action="/users/add" class="stack-form two-col"><label><span>Full name</span><input name="full_name" required></label><label><span>Username</span><input name="username" required></label><label><span>Temporary password</span><input type="password" name="password" minlength="4" required></label><label><span>Role</span><select name="role">{% for r in all_roles if r != 'System' %}<option value="{{r}}">{{r}}</option>{% endfor %}</select></label><label><span>Staff workspace</span><select name="workspace_type"><option>Teaching</option><option>Driver</option><option>Reception</option><option>Guard</option><option>Cook</option><option>Other Staff</option></select></label><label><span>Admission No. for a new learner</span><input name="admission_no" placeholder="Auto-generated if blank"></label><label><span>Grade / Class for a new learner</span><input name="grade" placeholder="Grade 8 / Form 2 / Year 1"></label><label><span>Link an existing learner</span><select name="student_id"><option value="">Not linked</option>{% for st in onboarding_students %}<option value="{{st.id}}">{{st.full_name}} — {{st.admission_no}}</option>{% endfor %}</select></label><div><span>&nbsp;</span><button class="btn btn-primary" type="submit">Create user</button></div></form></section>
 <section class="panel glass" style="margin-top:14px"><div class="eyebrow">AI control</div><h3>AI configuration</h3><form method="post" action="/admin/ai-settings" class="stack-form two-col"><label><span>Enable AI</span><input type="checkbox" name="ai_enabled" {% if settings.ai_enabled %}checked{% endif %}></label><label><span>API version</span><select name="ai_provider"><option value="openai_responses" {% if settings.ai_provider=='openai_responses' %}selected{% endif %}>OpenAI Responses API</option><option value="openai_chat_completions" {% if settings.ai_provider=='openai_chat_completions' %}selected{% endif %}>OpenAI Chat Completions API</option></select></label><label><span>Model</span><input name="ai_model" value="{{settings.ai_model or 'gpt-5.6'}}"></label><div><span>API key</span><strong>Server environment only</strong><small class="muted">Set OPENAI_API_KEY in deployment secrets; never place it in HTML or database.</small></div><div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save AI settings</button></div></form></section><section class="panel glass" style="margin-top:14px"><div class="eyebrow">Advanced theme engine</div><h3>Rebrand the whole interface</h3><p class="muted">Admin can change colors, typography, density and component shape so the platform can look nothing like the default design.</p><form method="post" action="/admin/theme" class="stack-form two-col"><input type="hidden" name="school_name" value="{{settings.school_name}}"><input type="hidden" name="portal_subtitle" value="{{settings.portal_subtitle}}"><label><span>Primary</span><input type="color" name="primary_color" value="{{settings.primary_color}}"></label><label><span>Accent</span><input type="color" name="accent_color" value="{{settings.accent_color}}"></label><label><span>Background</span><input type="color" name="background_color" value="{{settings.background_color}}"></label><label><span>Panel</span><input type="color" name="panel_color" value="{{settings.panel_color}}"></label><label><span>Sidebar</span><input type="color" name="sidebar_color" value="{{settings.sidebar_color}}"></label><label><span>Header</span><input type="color" name="header_color" value="{{settings.header_color}}"></label><label><span>Text</span><input type="color" name="text_color" value="{{settings.text_color}}"></label><label><span>Muted text</span><input type="color" name="muted_text_color" value="{{settings.muted_text_color}}"></label><label><span>Body font</span><select name="font_family"><option {% if settings.font_family=='Inter' %}selected{% endif %}>Inter</option><option {% if settings.font_family=='Manrope' %}selected{% endif %}>Manrope</option><option {% if settings.font_family=='DM Sans' %}selected{% endif %}>DM Sans</option><option {% if settings.font_family=='Plus Jakarta Sans' %}selected{% endif %}>Plus Jakarta Sans</option><option {% if settings.font_family=='IBM Plex Sans' %}selected{% endif %}>IBM Plex Sans</option><option {% if settings.font_family=='Roboto' %}selected{% endif %}>Roboto</option><option {% if settings.font_family=='Noto Sans' %}selected{% endif %}>Noto Sans</option></select></label><label><span>Heading font</span><select name="heading_font"><option {% if settings.heading_font=='Inter' %}selected{% endif %}>Inter</option><option {% if settings.heading_font=='Manrope' %}selected{% endif %}>Manrope</option><option {% if settings.heading_font=='Merriweather' %}selected{% endif %}>Merriweather</option><option {% if settings.heading_font=='Source Serif 4' %}selected{% endif %}>Source Serif 4</option><option {% if settings.heading_font=='Plus Jakarta Sans' %}selected{% endif %}>Plus Jakarta Sans</option></select></label><label><span>Theme mode</span><select name="theme_mode"><option value="dark" {% if settings.theme_mode=='dark' %}selected{% endif %}>Dark</option><option value="light" {% if settings.theme_mode=='light' %}selected{% endif %}>Light</option><option value="system" {% if settings.theme_mode=='system' %}selected{% endif %}>System</option></select></label><label><span>Desktop sidebar position (PC only)</span><select name="sidebar_style"><option value="drawer" {% if settings.sidebar_style=='drawer' %}selected{% endif %}>Left / collapsible drawer (PC)</option><option value="top" {% if settings.sidebar_style=='top' %}selected{% endif %}>Top navigation (PC)</option><option value="hover" {% if settings.sidebar_style=='hover' %}selected{% endif %}>Hover-expand rail (PC)</option></select></label><label><span>Corner radius</span><input type="number" min="4" max="28" name="radius_px" value="{{settings.radius_px or 12}}"></label><label><span>Button radius</span><input type="number" min="4" max="28" name="button_radius_px" value="{{settings.button_radius_px or 10}}"></label><label style="grid-column:1/-1"><span>Custom CSS (admin only)</span><textarea name="custom_css" rows="5" placeholder="Optional safe visual overrides">{{settings.custom_css}}</textarea></label><label style="grid-column:1/-1"><span>Navigation order</span><input name="menu_order" value="{{settings.menu_order}}"></label><div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Apply complete theme</button></div></form><div class="restore-controls"><form method="post" action="/admin/theme/restore/workspace" onsubmit="return confirm('Restore the previous workspace theme?')"><button class="btn btn-ghost mini" type="submit">↶ Restore previous workspace setting</button></form><span class="muted">A restore point is captured automatically before each theme change.</span></div></section><section class="panel glass" style="margin-top:14px"><div class="eyebrow">Finance handovers</div><h3>Submitted finance days</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Submitted by</th><th>Status</th><th>Notes</th></tr></thead><tbody>{% for c in finance_closings %}<tr><td>{{c.closing_date}}</td><td>{{c.submitted_name}}</td><td>{{c.status}}</td><td>{{c.notes or "—"}}</td></tr>{% else %}<tr><td colspan="4" class="muted">No finance handovers yet.</td></tr>{% endfor %}</tbody></table></div></section></main>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 
