@@ -558,6 +558,15 @@ def _init_db_once() -> None:
         ensure_column(conn, "school_settings", "welcome_animation_name TEXT NOT NULL DEFAULT 'Toror Technology and Innovations Ltd.'")
         ensure_column(conn, "school_settings", "welcome_animation_duration_ms INTEGER NOT NULL DEFAULT 2200")
         ensure_column(conn, "school_settings", "welcome_animation_style TEXT NOT NULL DEFAULT 'clean'")
+        ensure_column(conn, "school_settings", "landing_hero_title TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "landing_hero_text TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "landing_cta_primary TEXT NOT NULL DEFAULT 'Sign in to your workspace'")
+        ensure_column(conn, "school_settings", "landing_cta_secondary TEXT NOT NULL DEFAULT 'View school information'")
+        ensure_column(conn, "school_settings", "landing_announcement TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "landing_contact TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "landing_show_dates INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "school_settings", "landing_show_gallery INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "school_settings", "landing_show_roles INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "school_settings", "theme_preset TEXT NOT NULL DEFAULT 'classic'")
 
         ensure_column(conn, "students", "guardian_name TEXT")
@@ -1460,9 +1469,11 @@ def role_required(*roles: str):
                         return redirect(role_target(user["role"]))
                     abort(403)
             elif user["role"] not in roles:
+                if user["role"] == "Teacher":
+                    return redirect(url_for("teacher_dashboard"))
                 abort(403)
             if user["role"] == "Teacher" and "Teacher" in roles and workspace_type_for_user(user) != "Teaching":
-                abort(403)
+                return redirect(url_for("teacher_dashboard"))
             return view(*args, **kwargs)
         return wrapper
     return decorator
@@ -2458,7 +2469,7 @@ def teacher_class_attendance():
     assigned=[r['class_name'] for r in q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=? ORDER BY class_name",(user['id'],))]
     cls=request.values.get('class_name','').strip()
     if cls and cls not in assigned:
-        flash('Only the Admin-assigned class teacher can access the full class register for that class.','danger')
+        flash('That class register is available from your Admin-assigned classes.','warning')
         return redirect(url_for('teacher_dashboard'))
     subject=request.values.get('subject','').strip() or 'General'
     date=request.values.get('attendance_date','').strip() or datetime.utcnow().strftime('%Y-%m-%d')
@@ -2483,6 +2494,25 @@ def finance_match_external(event_id:int):
     event=q("SELECT * FROM external_payment_events WHERE id=? AND status!='Matched'",(event_id,),one=True); sid=request.form.get('student_id',type=int); student=q('SELECT * FROM students WHERE id=? AND active=1',(sid,),one=True) if sid else None
     if not event or not student: flash('Payment event or student was not found.','danger'); return redirect(url_for('finance_dashboard'))
     poster=current_user()['id']; pid=execute("INSERT INTO payments(student_id,amount,method,reference_no,recorded_by,status) VALUES(?,?,?,?,?,'Posted')",(sid,event['amount'],event['provider'],event['external_reference'],poster)); new_balance=max(0,float(student['balance'] or 0)-float(event['amount'])); execute("UPDATE students SET balance=?,payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(new_balance,'Paid' if new_balance==0 else 'Pending',sid)); execute("UPDATE external_payment_events SET status='Matched',matched_student_id=?,processed_at=CURRENT_TIMESTAMP WHERE id=?",(sid,event_id)); audit(current_user()['id'],current_user()['full_name'],'Match External Payment',f'External payment {event["external_reference"]} matched to {student["admission_no"]}.'); flash('External payment matched and posted.','success'); return redirect(url_for('finance_dashboard'))
+
+@app.route("/admin/class-teachers", methods=["GET","POST"])
+@login_required
+@role_required("Admin","ICT")
+def admin_class_teachers():
+    if request.method == "POST":
+        class_name=request.form.get("class_name","").strip(); teacher_id=request.form.get("teacher_user_id",type=int)
+        teacher=q("SELECT id,full_name FROM users WHERE id=? AND active=1 AND role='Teacher'",(teacher_id,),one=True) if teacher_id else None
+        if not class_name or not teacher:
+            flash("Choose a class and an active Teacher.","danger")
+        else:
+            execute("INSERT INTO class_teacher_assignments(class_name,teacher_user_id,assigned_by) VALUES(?,?,?) ON CONFLICT(class_name) DO UPDATE SET teacher_user_id=excluded.teacher_user_id,assigned_by=excluded.assigned_by",(class_name,teacher_id,current_user()['id']))
+            audit(current_user()['id'],current_user()['full_name'],'Class Teacher Assignment',f'{class_name} assigned to {teacher["full_name"]}.')
+            flash("Class teacher assignment saved.","success")
+        return redirect(url_for('admin_class_teachers'))
+    classes=q("SELECT DISTINCT grade AS class_name FROM students WHERE active=1 AND grade!='' ORDER BY grade")
+    teachers=q("SELECT id,full_name,title,department FROM users WHERE active=1 AND role='Teacher' ORDER BY full_name")
+    assignments=q("SELECT a.*,u.full_name AS teacher_name,u.title,u.department FROM class_teacher_assignments a JOIN users u ON u.id=a.teacher_user_id ORDER BY a.class_name")
+    return render_template('admin_class_teachers.html',settings=school_settings(),classes=classes,teachers=teachers,assignments=assignments)
 
 @app.route("/admin/subjects", methods=["GET","POST"])
 @login_required
@@ -3138,6 +3168,53 @@ def complete_staff_reminder(reminder_id):
     execute("UPDATE staff_reminders SET completed=1 WHERE id=?",(reminder_id,))
     return redirect(request.referrer or url_for('staff_reminders'))
 
+@app.route("/driver")
+@app.route("/driver-dashboard")
+@login_required
+def driver_dashboard():
+    user=current_user()
+    if workspace_type_for_user(user) != 'Driver' and user['role'] not in {'Driver','Admin','ICT'}:
+        if user['role']=='Teacher': return redirect(url_for('teacher_dashboard'))
+        abort(403)
+    trip=q("SELECT * FROM transport_trips WHERE driver_user_id=? AND status='Active' ORDER BY id DESC LIMIT 1",(user['id'],),one=True)
+    return render_template('driver_dashboard.html',settings=school_settings(),actor_name=user['full_name'],trip=trip,notification_count=notification_count(user['id']))
+
+@app.route("/driver/trip/start",methods=['POST'])
+@login_required
+def driver_trip_start():
+    user=current_user()
+    if workspace_type_for_user(user)!='Driver' and user['role'] not in {'Admin','ICT'}: abort(403)
+    existing=q("SELECT id FROM transport_trips WHERE driver_user_id=? AND status='Active'",(user['id'],),one=True)
+    if existing:
+        flash('A trip is already active.','warning'); return redirect(url_for('driver_dashboard'))
+    vehicle=request.form.get('vehicle','').strip(); route=request.form.get('route_name','').strip()
+    if not vehicle:
+        flash('Vehicle / bus number is required.','danger'); return redirect(url_for('driver_dashboard'))
+    execute("INSERT INTO transport_trips(driver_user_id,vehicle,route_name,status) VALUES(?,?,?,'Active')",(user['id'],vehicle,route))
+    audit(user['id'],user['full_name'],'Driver Trip Started',f'{vehicle} · {route or "Route not specified"}.')
+    flash('Trip started. Live tracking is ready.','success'); return redirect(url_for('driver_dashboard'))
+
+@app.route("/driver/trip/stop",methods=['POST'])
+@login_required
+def driver_trip_stop():
+    user=current_user()
+    if workspace_type_for_user(user)!='Driver' and user['role'] not in {'Admin','ICT'}: abort(403)
+    trip=q("SELECT id,vehicle,route_name FROM transport_trips WHERE driver_user_id=? AND status='Active' ORDER BY id DESC LIMIT 1",(user['id'],),one=True)
+    if trip:
+        execute("UPDATE transport_trips SET status='Completed',ended_at=CURRENT_TIMESTAMP WHERE id=?",(trip['id'],))
+        audit(user['id'],user['full_name'],'Driver Trip Completed',f'{trip["vehicle"]} · {trip["route_name"] or "Route not specified"}.')
+        flash('Trip completed and tracking stopped.','success')
+    return redirect(url_for('driver_dashboard'))
+
+@app.route("/workforce/<kind>")
+@login_required
+def workforce_dashboard(kind):
+    user=current_user(); allowed={'Guard','Cook','Other Staff'}
+    if user['role'] not in allowed and workspace_type_for_user(user) not in allowed and user['role'] not in {'Admin','ICT'}:
+        if user['role']=='Teacher': return redirect(url_for('teacher_dashboard'))
+        abort(403)
+    return render_template('role_dashboard.html',school_settings=school_settings(),settings=school_settings(),role=kind,workspace=f'{kind} workspace',actor_name=user['full_name'],nav_items=navigation_items(kind,school_settings()),active_adverts=q("SELECT * FROM advertisements WHERE active=1 ORDER BY priority DESC,created_at DESC"),library_items=q("SELECT * FROM library_items WHERE active=1 ORDER BY category,title LIMIT 30"),notification_count=notification_count(user['id']),grades=[r['grade'] for r in q("SELECT DISTINCT grade FROM students ORDER BY grade")],students=[],assignments=[],submissions=[],results=[],teacher_online_url='/online-classes',student=None)
+
 @app.route("/driver/location",methods=['POST'])
 @login_required
 def driver_location():
@@ -3772,7 +3849,7 @@ def ict_dashboard():
 
 
 def _theme_snapshot_payload(settings):
-    keys=["school_name","portal_subtitle","primary_color","accent_color","background_color","panel_color","sidebar_color","header_color","text_color","muted_text_color","font_family","heading_font","radius_px","button_radius_px","theme_mode","sidebar_style","menu_order","home_label","assignments_label","results_label","messages_label","finance_label","branding_label","custom_css","footer_title","footer_text","footer_contact","footer_links","platform_credit_enabled","landing_background_color","landing_panel_color","landing_text_color","landing_accent_color","landing_font_family","landing_heading_font","landing_content_width","landing_hero_layout","landing_role_columns","landing_background_path","institution_image_path","institution_image_2_path","institution_image_3_path","institution_image_1_position","institution_image_2_position","institution_image_3_position","welcome_animation_enabled","welcome_animation_name","welcome_animation_duration_ms","welcome_animation_style"]
+    keys=["school_name","portal_subtitle","landing_hero_title","landing_hero_text","landing_cta_primary","landing_cta_secondary","landing_announcement","landing_contact","landing_show_dates","landing_show_gallery","landing_show_roles","primary_color","accent_color","background_color","panel_color","sidebar_color","header_color","text_color","muted_text_color","font_family","heading_font","radius_px","button_radius_px","theme_mode","sidebar_style","menu_order","home_label","assignments_label","results_label","messages_label","finance_label","branding_label","custom_css","footer_title","footer_text","footer_contact","footer_links","platform_credit_enabled","landing_background_color","landing_panel_color","landing_text_color","landing_accent_color","landing_font_family","landing_heading_font","landing_content_width","landing_hero_layout","landing_role_columns","landing_background_path","institution_image_path","institution_image_2_path","institution_image_3_path","institution_image_1_position","institution_image_2_position","institution_image_3_position","welcome_animation_enabled","welcome_animation_name","welcome_animation_duration_ms","welcome_animation_style"]
     return {k: settings[k] for k in keys if k in settings.keys()}
 
 def _save_theme_snapshot(snapshot_type, actor_id):
@@ -4065,13 +4142,15 @@ def live_classroom(session_id:int):
     user=current_user(); sess=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.id=? AND cs.active=1",(session_id,),one=True)
     if not sess: abort(404)
     allowed=False; mode='student'
-    if user['role']=='Teacher' and user['id']==sess['teacher_user_id']:
-        allowed=True; mode='teacher'
+    if user['role']=='Teacher':
+        allowed=True; mode='teacher' if user['id']==sess['teacher_user_id'] else 'teacher_observer'
     elif user['role']=='Admin': allowed=True; mode='moderator'
     elif user['role']=='Student':
         st=q("SELECT grade FROM students WHERE id=? AND active=1",(user['student_id'],),one=True) if user['student_id'] else None
         allowed=bool(st and str(st['grade']).lower()==str(sess['class_name']).lower())
-    if not allowed: abort(403)
+    if not allowed:
+        if user['role']=='Teacher': return redirect(url_for('online_classes'))
+        abort(403)
     roster=q("SELECT s.id,s.full_name,s.admission_no FROM students s WHERE s.active=1 AND lower(s.grade)=lower(?) ORDER BY s.full_name",(sess['class_name'],))
     provider=sess['provider_url'] or 'https://meet.jit.si/'
     provider=provider if provider.endswith('/') else provider+'/'
@@ -4570,10 +4649,20 @@ def add_student():
                 starting_balance,
             ),
         )
+        # Optional learner login is created at the same time so students can use their own password.
+        create_account = request.form.get("create_student_account") in {"1","on","yes","true"}
+        student_username = (request.form.get("student_username") or admission_no).strip().lower()
+        student_password = request.form.get("student_password") or ""
+        if create_account and len(student_password) < 4:
+            raise ValueError("Student password must be at least 4 characters.")
+        if create_account:
+            existing=q("SELECT id FROM users WHERE lower(username)=? LIMIT 1",(student_username,),one=True)
+            if existing: raise ValueError("Student username already exists.")
+            execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active,workspace_type,school_unit,qr_access_token,qr_login_enabled) VALUES(?,?,?,?,?,1,'Learning',?,lower(hex(randomblob(16))),0)",(full_name,student_username,generate_password_hash(student_password),"Student",student_id,school_settings()["school_name"],))
         audit(current_user()["id"], current_user()["full_name"], "Add Student", f"{full_name} ({admission_no}) created.")
-        flash("Student added.", "success")
-    except sqlite3.IntegrityError:
-        flash("Admission number already exists.", "danger")
+        flash("Student added" + (" with login credentials." if create_account else "."), "success")
+    except (sqlite3.IntegrityError, ValueError) as exc:
+        flash(str(exc) if isinstance(exc, ValueError) else "Admission number already exists.", "danger")
     return redirect(request.referrer or url_for("dashboard"))
 
 
@@ -5043,7 +5132,7 @@ def admin_public_settings():
     keys=["institution_history","institution_performance","institution_religion","institution_affiliations","institution_help","institution_contact","institution_owners","developer_name","developer_about","company_name","company_about"]
     values={k:request.form.get(k,"").strip() for k in keys}
     selected=[k for k in ["institution","history","achievements","owners","developer","company"] if request.form.get(f"show_{k}")]
-    execute("""UPDATE school_settings SET institution_history=?, institution_performance=?, institution_religion=?, institution_affiliations=?, institution_help=?, institution_contact=?, institution_owners=?, developer_name=?, developer_about=?, company_name=?, company_about=?, prelogin_sections=? WHERE id=1""", (values["institution_history"],values["institution_performance"],values["institution_religion"],values["institution_affiliations"],values["institution_help"],values["institution_contact"],values["institution_owners"],values["developer_name"],values["developer_about"],values["company_name"],values["company_about"],",".join(selected)))
+    execute("""UPDATE school_settings SET institution_history=?, institution_performance=?, institution_religion=?, institution_affiliations=?, institution_help=?, institution_contact=?, institution_owners=?, developer_name=?, developer_about=?, company_name=?, company_about=?, prelogin_sections=?, landing_hero_title=?, landing_hero_text=?, landing_cta_primary=?, landing_cta_secondary=?, landing_announcement=?, landing_contact=?, landing_show_dates=?, landing_show_gallery=?, landing_show_roles=? WHERE id=1""", (values["institution_history"],values["institution_performance"],values["institution_religion"],values["institution_affiliations"],values["institution_help"],values["institution_contact"],values["institution_owners"],values["developer_name"],values["developer_about"],values["company_name"],values["company_about"],",".join(selected), request.form.get("landing_hero_title","").strip()[:240], request.form.get("landing_hero_text","").strip()[:2000], request.form.get("landing_cta_primary","").strip()[:80] or "Sign in to your workspace", request.form.get("landing_cta_secondary","").strip()[:80] or "View school information", request.form.get("landing_announcement","").strip()[:500], request.form.get("landing_contact","").strip()[:500], 1 if request.form.get("landing_show_dates") else 0, 1 if request.form.get("landing_show_gallery") else 0, 1 if request.form.get("landing_show_roles") else 0))
     audit(current_user()["id"], current_user()["full_name"], "Public Information", "Pre-login information sections updated.")
     flash("Public information settings saved.", "success")
     return redirect(url_for("admin_dashboard"))
