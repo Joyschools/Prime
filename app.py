@@ -847,6 +847,7 @@ def _init_db_once() -> None:
         conn.executescript("""
         CREATE TABLE IF NOT EXISTS attendance_events (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,action TEXT NOT NULL CHECK(action IN ('IN','OUT')),method TEXT NOT NULL DEFAULT 'QR',office_token TEXT,event_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,source TEXT NOT NULL DEFAULT 'online',latitude REAL,longitude REAL,speed_kph REAL,device_note TEXT,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS idx_attendance_user_time ON attendance_events(user_id,event_at);
+        CREATE TABLE IF NOT EXISTS attendance_days (attendance_date TEXT PRIMARY KEY,status TEXT NOT NULL DEFAULT 'Open' CHECK(status IN ('Open','Closed')),closed_at TEXT,closed_by INTEGER,FOREIGN KEY(closed_by) REFERENCES users(id) ON DELETE SET NULL);
         CREATE TABLE IF NOT EXISTS teacher_assignments (id INTEGER PRIMARY KEY AUTOINCREMENT,teacher_user_id INTEGER NOT NULL,class_name TEXT NOT NULL,subject TEXT NOT NULL,unit_code TEXT,active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS communication_messages (id INTEGER PRIMARY KEY AUTOINCREMENT,sender_user_id INTEGER NOT NULL,recipient_user_id INTEGER NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,read_at TEXT,FOREIGN KEY(sender_user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(recipient_user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS class_attendance (id INTEGER PRIMARY KEY AUTOINCREMENT,teacher_user_id INTEGER NOT NULL,student_id INTEGER NOT NULL,class_name TEXT NOT NULL,subject TEXT NOT NULL,attendance_date TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('Present','Absent','Late','Excused')),note TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(teacher_user_id,student_id,class_name,subject,attendance_date),FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE);
@@ -2684,6 +2685,47 @@ def reception_export():
     for r in rows: w.writerow([r['full_name'],r['person_type'],r['position'],r['staff_code'],r['phone'],r['gender'],r['reason'],r['school_unit'],r['school_location'],r['check_in'] or '',r['check_out'] or '',r['source'],r['method'],r['device_token']])
     b=io.BytesIO(out.getvalue().encode('utf-8-sig')); b.seek(0); return send_file(b,mimetype='text/csv',as_attachment=True,download_name=f"{secure_filename(school_settings()['school_name'])}-reception-register.csv")
 
+def attendance_date_from_value(value=None):
+    raw=(value or '').strip()
+    if raw:
+        try:
+            return datetime.fromisoformat(raw.replace('Z','+00:00')).date().isoformat()
+        except Exception:
+            try: return datetime.strptime(raw[:10], '%Y-%m-%d').date().isoformat()
+            except Exception: pass
+    return datetime.now().date().isoformat()
+
+def attendance_day_is_closed(day):
+    row=q("SELECT status FROM attendance_days WHERE attendance_date=?", (attendance_date_from_value(day),), one=True)
+    return bool(row and row['status']=='Closed')
+
+def set_attendance_day(day,status,actor_id=None):
+    day=attendance_date_from_value(day)
+    if status=='Closed':
+        execute("INSERT INTO attendance_days(attendance_date,status,closed_at,closed_by) VALUES(?, 'Closed', CURRENT_TIMESTAMP, ?) ON CONFLICT(attendance_date) DO UPDATE SET status='Closed',closed_at=CURRENT_TIMESTAMP,closed_by=excluded.closed_by",(day,actor_id))
+    else:
+        execute("INSERT INTO attendance_days(attendance_date,status,closed_at,closed_by) VALUES(?, 'Open', NULL, NULL) ON CONFLICT(attendance_date) DO UPDATE SET status='Open',closed_at=NULL,closed_by=NULL",(day,))
+
+def next_attendance_action(user_id):
+    today=datetime.now().date().isoformat()
+    row=q("SELECT action,event_at FROM attendance_events WHERE user_id=? AND substr(event_at,1,10)=? ORDER BY event_at DESC,id DESC LIMIT 1",(user_id,today),one=True)
+    return 'OUT' if row and row['action']=='IN' else 'IN'
+
+def _payload_float(payload,key):
+    raw=payload.get(key) if hasattr(payload,'get') else None
+    try: return float(raw) if raw not in (None,'') else None
+    except (TypeError,ValueError): return None
+
+def record_account_attendance(user,action,event_at=None,source='online',method='QR',latitude=None,longitude=None,accuracy=None,device_note='',location_label=''):
+    action=str(action or '').upper()
+    if action not in {'IN','OUT'}: return {'ok':False,'message':'Invalid attendance action.'}
+    stamp=event_at or datetime.utcnow().isoformat(timespec='seconds')
+    if attendance_day_is_closed(stamp): return {'ok':False,'message':f'Attendance for {attendance_date_from_value(stamp)} is closed by the school.','closed':True}
+    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(user['id'],action,method,'',stamp,source,latitude,longitude,None,device_note,location_label))
+    position=user['title'] or user['role'] or 'Staff'
+    notify_users(reception_admin_ids(),f'Attendance: {user["full_name"]} checked {"IN" if action=="IN" else "OUT"}',f'{user["full_name"]} ({position}) checked {"in" if action=="IN" else "out"} at {stamp}. Location: {location_label or "Not captured"}.',url_for('admin_attendance'))
+    return {'ok':True,'message':f'{user["full_name"]} checked {"in" if action=="IN" else "out"}.','action':action,'event_at':stamp,'dashboard':specialized_dashboard_for(user)}
+
 @app.route("/attendance")
 @login_required
 def attendance_center():
@@ -2712,8 +2754,11 @@ def attendance_rotate():
 def attendance_record():
     token=(request.form.get('token') or '').strip(); action=(request.form.get('action') or '').upper(); event_at=(request.form.get('event_at') or '').strip() or None; office=q("SELECT token FROM attendance_qr_settings WHERE id=1",one=True)
     if action not in {'IN','OUT'} or not office or token!=office['token']: return jsonify({'ok':False,'message':'Invalid institution attendance QR.'}),400
-    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note,location_label) VALUES(?,?,?,?,COALESCE(?,CURRENT_TIMESTAMP),?,?,?,?,?,?)",(current_user()['id'],action,'QR',token,event_at,request.form.get('source','online'),request.form.get('latitude',type=float),request.form.get('longitude',type=float),request.form.get('speed_kph',type=float),request.form.get('device_note',''),request.form.get('location_label','').strip()))
-    return jsonify({'ok':True,'message':f'Checked {"in" if action=="IN" else "out"}.','event_at':event_at or datetime.utcnow().isoformat()+'Z'})
+    stamp=event_at or datetime.utcnow().isoformat(timespec='seconds')
+    if attendance_day_is_closed(stamp): return jsonify({'ok':False,'message':f'Attendance for {attendance_date_from_value(stamp)} is closed by the school.'}),409
+    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(current_user()['id'],action,'QR',token,stamp,request.form.get('source','online'),request.form.get('latitude',type=float),request.form.get('longitude',type=float),request.form.get('speed_kph',type=float),request.form.get('device_note',''),request.form.get('location_label','').strip()))
+    notify_users(reception_admin_ids(),f'Attendance: {current_user()["full_name"]} checked {"IN" if action=="IN" else "OUT"}',f'{current_user()["full_name"]} checked {"in" if action=="IN" else "out"} at {stamp}. Location: {request.form.get("location_label") or "Not captured"}.',url_for('admin_attendance'))
+    return jsonify({'ok':True,'message':f'Checked {"in" if action=="IN" else "out"}.','event_at':stamp})
 
 @app.route("/attendance/sync",methods=['POST'])
 @login_required
@@ -2723,17 +2768,30 @@ def attendance_sync():
     saved=0
     for item in events[:100]:
         if item.get('token')!=office['token'] or str(item.get('action','')).upper() not in {'IN','OUT'}: continue
+        if attendance_day_is_closed(item.get('event_at')): continue
         execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(current_user()['id'],str(item['action']).upper(),'QR',office['token'],item.get('event_at') or None,'offline-sync',item.get('latitude'),item.get('longitude'),item.get('speed_kph'),item.get('device_note',''),item.get('location_label',''))); saved+=1
     return jsonify({'ok':True,'saved':saved})
 
-@app.route("/admin/attendance")
+@app.route("/admin/attendance", methods=["GET","POST"])
 @login_required
 @role_required('Admin','ICT')
 def admin_attendance():
-    events=q("SELECT a.*,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS position,u.school_unit,u.school_location FROM attendance_events a JOIN users u ON u.id=a.user_id ORDER BY a.event_at DESC,a.id DESC LIMIT 300")
-    visits=q("SELECT * FROM reception_visits ORDER BY COALESCE(check_out,check_in) DESC,id DESC LIMIT 300")
+    day=attendance_date_from_value(request.values.get('date'))
+    if request.method=='POST':
+        day=attendance_date_from_value(request.form.get('attendance_date') or day)
+        action=request.form.get('day_action','').strip().lower()
+        if action in {'close','open'}:
+            set_attendance_day(day,'Closed' if action=='close' else 'Open',current_user()['id'])
+            audit(current_user()['id'],current_user()['full_name'],f'Attendance Day {action.title()}',f'Attendance day {day} set to {"Closed" if action=="close" else "Open"}.')
+            flash(f'Attendance for {day} is now {"closed" if action=="close" else "open"}.','success')
+        return redirect(url_for('admin_attendance',date=day))
+    events=q("SELECT a.*,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS position,u.school_unit,u.school_location FROM attendance_events a JOIN users u ON u.id=a.user_id WHERE substr(a.event_at,1,10)=? ORDER BY a.event_at ASC,a.id ASC",(day,))
+    visits=q("SELECT * FROM reception_visits WHERE substr(COALESCE(check_in,check_out),1,10)=? ORDER BY COALESCE(check_out,check_in) DESC,id DESC",(day,))
     office=q("SELECT * FROM attendance_qr_settings WHERE id=1",one=True)
-    return render_template('admin_attendance.html',settings=school_settings(),events=events,visits=visits,office=office,actor_name=current_user()['full_name'],role=current_user()['role'])
+    day_row=q("SELECT * FROM attendance_days WHERE attendance_date=?",(day,),one=True)
+    summary=q("SELECT COUNT(*) AS total_events,COUNT(DISTINCT user_id) AS people,SUM(CASE WHEN action='IN' THEN 1 ELSE 0 END) AS checkins,SUM(CASE WHEN action='OUT' THEN 1 ELSE 0 END) AS checkouts,COUNT(DISTINCT CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL THEN user_id END) AS located_people FROM attendance_events WHERE substr(event_at,1,10)=?",(day,),one=True)
+    latest_by_user=q("SELECT a.*,u.full_name,u.username,u.role,COALESCE(u.title,u.role) AS position,u.school_unit,u.school_location FROM attendance_events a JOIN users u ON u.id=a.user_id WHERE substr(a.event_at,1,10)=? AND a.id=(SELECT MAX(a2.id) FROM attendance_events a2 WHERE a2.user_id=a.user_id AND substr(a2.event_at,1,10)=?) ORDER BY u.full_name",(day,day))
+    return render_template('admin_attendance.html',settings=school_settings(),events=events,visits=visits,office=office,actor_name=current_user()['full_name'],role=current_user()['role'],selected_date=day,day_status=(day_row['status'] if day_row else 'Open'),summary=summary,latest_by_user=latest_by_user)
 
 @app.route("/teacher/assignments",methods=['POST'])
 @login_required
@@ -5188,15 +5246,34 @@ def staff_attendance_qr(user_id:int):
 @app.route("/qr/<token>")
 def qr_landing(token:str):
     user=q("SELECT * FROM users WHERE qr_access_token=? AND active=1 AND role NOT IN ('Student','Parent','System')",(token,),one=True)
-    if not user:
-        return render_template('error.html',message='This QR code is not linked to an active staff account.'),404
-    if not qr_login_allowed(user):
-        return render_template('error.html',message='QR sign-in is not enabled for this staff account yet. Use your normal username and password first.'),403
-    login_id=record_login_event(user,'QR')
+    if not user: return render_template('error.html',message='This QR code is not linked to an active staff account.'),404
+    if not qr_login_allowed(user): return render_template('error.html',message='QR sign-in is not enabled for this staff account yet. Use your normal username and password first.'),403
+    return render_template('qr_staff_landing.html',user_name=user['full_name'],token=token,dashboard_url=specialized_dashboard_for(user),next_action=next_attendance_action(user['id']))
+
+@app.route("/qr/<token>/consume",methods=['POST'])
+def qr_consume(token:str):
+    user=q("SELECT * FROM users WHERE qr_access_token=? AND active=1 AND role NOT IN ('Student','Parent','System')",(token,),one=True)
+    if not user or not qr_login_allowed(user): return jsonify({'ok':False,'message':'This staff QR is no longer valid.'}),403
+    payload=request.get_json(silent=True) or request.form
+    action=str(payload.get('action') or next_attendance_action(user['id'])).upper()
+    result=record_account_attendance(user,action,payload.get('event_at') or None,payload.get('source','online'),'QR',_payload_float(payload,'latitude'),_payload_float(payload,'longitude'),_payload_float(payload,'accuracy'),payload.get('device_note',''),payload.get('location_label',''))
+    if not result['ok']: return jsonify(result),409
+    login_id=record_login_event(user,'QR',_payload_float(payload,'latitude'),_payload_float(payload,'longitude'),_payload_float(payload,'accuracy'))
     session.clear(); session.permanent=True
-    session["user_id"]=user["id"]; session["active_portal_role"]=user["role"]; session["login_event_id"]=login_id; session["login_location_pending"]=1
-    audit(user["id"],user["full_name"],"QR Login",f"{user['full_name']} signed in with personal staff QR.")
-    return redirect(specialized_dashboard_for(user))
+    session['user_id']=user['id']; session['active_portal_role']=user['role']; session['login_event_id']=login_id; session['login_location_pending']=1
+    audit(user['id'],user['full_name'],'QR Login + Attendance',f'{user["full_name"]} signed in with personal staff QR and was marked {action}.')
+    return jsonify({'ok':True,'message':result['message'],'dashboard':result['dashboard'],'action':action})
+
+@app.route("/qr/offline-sync",methods=['POST'])
+def qr_offline_sync():
+    payload=request.get_json(silent=True) or {}; token=str(payload.get('token') or '').strip()
+    user=q("SELECT * FROM users WHERE qr_access_token=? AND active=1 AND role NOT IN ('Student','Parent','System')",(token,),one=True)
+    if not user or not qr_login_allowed(user): return jsonify({'ok':False,'message':'Invalid staff QR.'}),403
+    saved=0
+    for item in (payload.get('events') or [])[:20]:
+        result=record_account_attendance(user,str(item.get('action') or next_attendance_action(user['id'])).upper(),item.get('event_at'),'offline-sync','QR',item.get('latitude'),item.get('longitude'),item.get('accuracy'),item.get('device_note','offline qr'),item.get('location_label',''))
+        if result.get('ok'): saved+=1
+    return jsonify({'ok':True,'saved':saved,'dashboard':specialized_dashboard_for(user)})
 
 @app.route("/finance/ledger", methods=["POST"])
 @login_required
