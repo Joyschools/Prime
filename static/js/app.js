@@ -12,6 +12,24 @@
 
   const panels = Array.from(document.querySelectorAll(".workspace-panel"));
 
+  // On phones only, give every workspace a compact identity heading. This is
+  // injected once and does not alter desktop layout.
+  function ensureMobilePageHeading(){
+    if (!isPhoneLayout() || document.querySelector(".mobile-page-heading")) return;
+    const brand=document.querySelector(".brand-name")?.textContent?.trim();
+    const sub=document.querySelector(".brand-subtitle")?.textContent?.trim() || document.querySelector(".topbar h1")?.textContent?.trim();
+    const topTitle=document.querySelector(".topbar h1")?.textContent?.trim() || sub || "Dashboard";
+    const person=(document.querySelector(".topbar-subtitle")?.textContent || "").split("·")[0].replace(/^Welcome,\s*/i,"").trim();
+    if(!brand && !topTitle) return;
+    const el=document.createElement("div"); el.className="mobile-page-heading";
+    el.innerHTML=`<div class="institution"></div><div class="workspace"></div><div class="person"></div>`;
+    el.querySelector(".institution").textContent=brand || "Institution";
+    el.querySelector(".workspace").textContent=topTitle || "Dashboard";
+    if(person) el.querySelector(".person").textContent=person;
+    const content=document.querySelector("main.content") || document.body;
+    content.prepend(el);
+  }
+
   function pad(n) { return String(n).padStart(2, "0"); }
   function renderClock() {
     if (!clock) return;
@@ -66,6 +84,12 @@
   });
   window.addEventListener("resize", () => {
     if (!isPhoneLayout()) document.body.classList.remove("mobile-nav-open");
+  });
+  ensureMobilePageHeading();
+  window.addEventListener("resize", () => {
+    const existing=document.querySelector(".mobile-page-heading");
+    if (isPhoneLayout()) { if(!existing) ensureMobilePageHeading(); }
+    else existing?.remove();
   });
 
   // Mobile drawer: tapping outside closes it; page navigation closes it automatically.

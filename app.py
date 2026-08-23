@@ -1859,15 +1859,23 @@ def navigation_items(role: str, settings):
         "Navigation order": "Navigation order",
         "Members": "Members",
     }
-    allowed={
+    # Admin is the reference ordering for management workspaces. ICT mirrors that
+    # order for shared capabilities but receives only the management features it
+    # is actually cleared to use. ICT-only presentation controls are then added
+    # in a stable block rather than scrambling the common order.
+    management_order=["Home","Finance","Elections","Library","Institution","Members"]
+    role_allowed={
         "Teacher": ["Home","Assignments","Submissions","Online classes","Elections","Library","Institution"],
         "Student": ["Home","Assignments","Results","Online classes","Elections","Library","Institution"],
         "Parent": ["Home","My children","Results & fees","Teacher communication","Library","Institution"],
         "Finance": ["Home","Finance","Payments","Library","Institution"],
-        "ICT": ["Home","Branding","Theme","Navigation order","Elections","Library","Institution","Members"],
+        "ICT": ["Home","Elections","Library","Institution","Members","Branding","Theme","Navigation order"],
         "Librarian": ["Home","Library","Institution"],
         "Admin": ["Home","Finance","Elections","Library","Institution","Members"],
-    }.get(role, ["Home","Institution"])
+    }
+    allowed=role_allowed.get(role, ["Home","Institution"])
+    if role in {"Admin","ICT"}:
+        allowed=[k for k in management_order if k in allowed] + [k for k in ("Branding","Theme","Navigation order") if k in allowed]
     if not int(settings["elections_enabled"] or 0) and role not in {"Admin","ICT"}:
         allowed=[x for x in allowed if x!="Elections"]
     if not int(settings["library_enabled"] or 0) and role not in {"Admin","ICT","Librarian"}:
@@ -4212,10 +4220,12 @@ def save_settings():
     return redirect(url_for("admin_dashboard"))
 
 
-@app.route("/students/add", methods=["POST"])
+@app.route("/students/add", methods=["GET", "POST"])
 @login_required
 @role_required("Admin", "ICT")
 def add_student():
+    if request.method == "GET":
+        return redirect((url_for("ict_dashboard") if current_user()["role"] == "ICT" else url_for("admin_dashboard")) + "#admin-add-student")
     admission_no = request.form.get("admission_no", "").strip()
     full_name = request.form.get("full_name", "").strip()
     grade = request.form.get("grade", "").strip()
@@ -4957,11 +4967,50 @@ def guardian_link(user_id:int):
     flash("Guardian link saved.","success")
     return redirect(url_for("admin_dashboard"))
 
-# Backward-compatible endpoint: disable/archiving instead of destructive deletion.
 @app.route("/users/<int:user_id>/delete", methods=["POST"])
 @login_required
 def delete_user(user_id: int):
-    return archive_user(user_id)
+    actor=current_user()
+    if actor["role"] != "Admin": abort(403)
+    user=q("SELECT * FROM users WHERE id=? AND role!=?",(user_id,SYSTEM_ROLE),one=True)
+    if not user: abort(404)
+    if user["id"] == actor["id"]:
+        flash("You cannot delete your own Administrator account.","warning")
+        return redirect(url_for("admin_dashboard"))
+    if user["role"] == "Admin" and q("SELECT COUNT(*) AS c FROM users WHERE role='Admin' AND active=1",one=True)["c"] <= 1:
+        flash("The last active Administrator cannot be deleted.","warning")
+        return redirect(url_for("admin_dashboard"))
+    try:
+        conn=get_db()
+        # Preserve nullable historical references; remove dependent records that
+        # cannot survive an account deletion. SQLite then performs normal CASCADEs.
+        refs=[]
+        tables=conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
+        for row in tables:
+            table=row[0]
+            for fk in conn.execute(f"PRAGMA foreign_key_list([{table}])").fetchall():
+                if fk[2] != "users": continue
+                refs.append((table,fk[3],fk[6]))
+        for table,col,on_delete in refs:
+            if table in {"users"}: continue
+            try:
+                notnull=next((r[3] for r in conn.execute(f"PRAGMA table_info([{table}])").fetchall() if r[1]==col),0)
+                if str(on_delete).upper() in {"SET NULL","CASCADE"}:
+                    continue
+                # RESTRICT/NO ACTION on a non-nullable child must be removed.
+                conn.execute(f"DELETE FROM [{table}] WHERE [{col}]=?",(user_id,))
+            except Exception:
+                pass
+        conn.execute("DELETE FROM users WHERE id=?",(user_id,))
+        conn.commit()
+    except Exception as exc:
+        try: conn.rollback()
+        except Exception: pass
+        flash(f"The account could not be deleted safely: {exc}","danger")
+        return redirect(url_for("admin_dashboard"))
+    audit(actor["id"],actor["full_name"],"Delete User",f"Permanently deleted {user['username']} ({user['role']}).")
+    flash("Account permanently deleted.","success")
+    return redirect(url_for("admin_dashboard"))
 
 @app.route("/export/<kind>")
 @login_required
@@ -5208,7 +5257,7 @@ def restore_previous_theme(snapshot_type):
 
 @app.route("/admin/theme", methods=["POST"])
 @login_required
-@role_required("Admin")
+@role_required("Admin", "ICT")
 def admin_theme():
     return ict_settings()
 
