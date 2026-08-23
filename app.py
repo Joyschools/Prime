@@ -2366,9 +2366,32 @@ def login():
         # account when its stored role is authoritative. After credentials are
         # verified, the account's own role determines the dashboard and permissions.
         user = q("SELECT * FROM users WHERE lower(username)=? AND active=1", (username,), one=True)
+        # Student-friendly login: the learner may type their exact two/three-name
+        # name as the username and their generated admission number as the password.
+        # We verify all matching student accounts so duplicate names remain safe.
+        if not user:
+            student_candidates = q("""
+                SELECT u.* FROM users u
+                JOIN students s ON s.id=u.student_id
+                WHERE u.active=1 AND u.role='Student' AND lower(trim(s.full_name))=?
+                ORDER BY u.id DESC
+            """, (username,),)
+            for candidate in student_candidates:
+                student = q("SELECT admission_no FROM students WHERE id=? AND active=1", (candidate["student_id"],), one=True)
+                if student and str(password).strip().lower() == str(student["admission_no"] or "").strip().lower():
+                    user = candidate
+                    break
         if not user or not check_password_hash(user["password_hash"], password):
-            flash("Invalid username or password.", "danger")
-            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
+            # Some older student accounts may already have admission-number-based
+            # usernames/passwords. Keep them fully compatible.
+            if user and user["role"] == "Student":
+                student = q("SELECT admission_no FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
+                if not student or str(password).strip().lower() != str(student["admission_no"] or "").strip().lower():
+                    flash("Invalid student name/admission number or password.", "danger")
+                    return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid student name/admission number or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
+            else:
+                flash("Invalid username or password.", "danger")
+                return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
         # A selected portal role can never override the account's stored role.
         # This is especially important for Admin vs ICT separation.
         role = user["role"]
@@ -3661,6 +3684,48 @@ def teacher_dashboard():
             summaries[cls]=markbook_class_summary(cls,teacher_subject['subject']) if teacher_subject else []
     return render_template("teacher_dashboard_pro.html",settings=settings,school_settings=settings,actor_name=user["full_name"],role=user["role"],assignments=assignments,classes=classes,students=students,latest_marks=latest_marks,events=events,workspace_type=workspace_type_for_user(user),upcoming=upcoming,schemes=schemes,class_teacher_classes=class_teacher_classes,mark_summaries=summaries,nav_items=navigation_items("Teacher",settings))
 
+@app.route("/teacher/scheme-of-work", methods=["GET", "POST"])
+@login_required
+@role_required("Teacher", "Admin")
+def teacher_scheme_of_work():
+    user=current_user(); settings=school_settings()
+    if user["role"] == "Teacher":
+        assignments=q("SELECT class_name,subject,unit_code FROM teacher_assignments WHERE teacher_user_id=? AND active=1 ORDER BY class_name,subject", (user["id"],))
+        # Never dead-end a teacher simply because the requested class/subject has
+        # not yet been formalized in an assignment. Use the supplied values and
+        # allow the teacher to save a plan; the planner itself remains private to
+        # that teacher.
+    else:
+        assignments=q("SELECT class_name,subject,unit_code FROM teacher_assignments WHERE active=1 ORDER BY class_name,subject")
+
+    selected_class=(request.args.get("class_name") or request.form.get("class_name") or "").strip()
+    selected_subject=(request.args.get("subject") or request.form.get("subject") or "").strip()
+    if request.method == "POST":
+        term=(request.form.get("term") or "Current Term").strip() or "Current Term"
+        try: week_no=max(1,int(request.form.get("week_no") or 1))
+        except ValueError: week_no=1
+        topic=(request.form.get("topic") or "").strip()
+        if not selected_class or not selected_subject or not topic:
+            flash("Class, subject and topic are required.", "danger")
+            return redirect(url_for("teacher_scheme_of_work", class_name=selected_class, subject=selected_subject))
+        owner_id=user["id"] if user["role"] == "Teacher" else int(request.form.get("teacher_user_id") or user["id"])
+        existing=q("SELECT id FROM scheme_of_work WHERE teacher_user_id=? AND class_name=? AND subject=? AND term=? AND week_no=? LIMIT 1", (owner_id,selected_class,selected_subject,term,week_no), one=True)
+        values=(topic,request.form.get("objectives","").strip(),request.form.get("activities","").strip(),request.form.get("resources","").strip(),request.form.get("assessment","").strip(),request.form.get("status","Planned").strip() or "Planned")
+        if existing:
+            execute("UPDATE scheme_of_work SET topic=?,objectives=?,activities=?,resources=?,assessment=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (*values,existing["id"]))
+        else:
+            execute("INSERT INTO scheme_of_work(teacher_user_id,class_name,subject,term,week_no,topic,objectives,activities,resources,assessment,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (owner_id,selected_class,selected_subject,term,week_no,*values))
+        audit(user["id"],user["full_name"],"Scheme of Work",f"{selected_class} / {selected_subject} / Week {week_no}")
+        flash("Scheme of Work week saved.", "success")
+        return redirect(url_for("teacher_scheme_of_work", class_name=selected_class, subject=selected_subject))
+
+    if user["role"] == "Teacher":
+        rows=q("SELECT * FROM scheme_of_work WHERE teacher_user_id=? AND (?='' OR class_name=?) AND (?='' OR subject=?) ORDER BY term,week_no,id", (user["id"],selected_class,selected_class,selected_subject,selected_subject))
+    else:
+        rows=q("SELECT s.*,u.full_name AS teacher_name FROM scheme_of_work s JOIN users u ON u.id=s.teacher_user_id WHERE (?='' OR s.class_name=?) AND (?='' OR s.subject=?) ORDER BY s.term,s.class_name,s.subject,s.week_no,s.id", (selected_class,selected_class,selected_subject,selected_subject))
+    return render_template("scheme_of_work.html", settings=settings, assignments=assignments, rows=rows, selected_class=selected_class, selected_subject=selected_subject, theme_style="", theme_preset_style="")
+
+
 @app.route("/student-dashboard")
 @login_required
 def student_dashboard():
@@ -4649,18 +4714,15 @@ def add_student():
                 starting_balance,
             ),
         )
-        # Optional learner login is created at the same time so students can use their own password.
-        create_account = request.form.get("create_student_account") in {"1","on","yes","true"}
-        student_username = (request.form.get("student_username") or admission_no).strip().lower()
-        student_password = request.form.get("student_password") or ""
-        if create_account and len(student_password) < 4:
-            raise ValueError("Student password must be at least 4 characters.")
-        if create_account:
-            existing=q("SELECT id FROM users WHERE lower(username)=? LIMIT 1",(student_username,),one=True)
-            if existing: raise ValueError("Student username already exists.")
-            execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active,workspace_type,school_unit,qr_access_token,qr_login_enabled) VALUES(?,?,?,?,?,1,'Learning',?,lower(hex(randomblob(16))),0)",(full_name,student_username,generate_password_hash(student_password),"Student",student_id,school_settings()["school_name"],))
-        audit(current_user()["id"], current_user()["full_name"], "Add Student", f"{full_name} ({admission_no}) created.")
-        flash("Student added" + (" with login credentials." if create_account else "."), "success")
+        # Every student receives a portal account automatically.  The admission
+        # number is the initial password, while the student's exact full name is
+        # accepted as the login identity.  The stored username remains unique and
+        # stable for system integrations.
+        existing_student_user = q("SELECT id FROM users WHERE student_id=? AND role='Student' AND active=1 LIMIT 1", (student_id,), one=True)
+        if not existing_student_user:
+            execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active,workspace_type,school_unit,qr_access_token,qr_login_enabled) VALUES(?,?,?,?,?,1,'Learning',?,lower(hex(randomblob(16))),0)",(full_name,admission_no,generate_password_hash(admission_no),"Student",student_id,school_settings()["school_name"],))
+        audit(current_user()["id"], current_user()["full_name"], "Add Student", f"{full_name} ({admission_no}) created; portal password initialized to admission number.")
+        flash("Student added. Their portal login is their full name and admission number.", "success")
     except (sqlite3.IntegrityError, ValueError) as exc:
         flash(str(exc) if isinstance(exc, ValueError) else "Admission number already exists.", "danger")
     return redirect(request.referrer or url_for("dashboard"))
@@ -5184,9 +5246,15 @@ def add_user():
     if role not in allowed or (actor["role"]=="ICT" and role in {"Admin","ICT"}):
         flash("This account type cannot be created by your role.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
-    if not full_name or not username or len(password)<4:
-        flash("Name, username, and a password of at least 4 characters are required.", "danger")
+    if not full_name or (role != "Student" and (not username or len(password)<4)):
+        flash("Name is required. Staff/portal accounts need a username and password of at least 4 characters.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
+    if role == "Student":
+        # Student accounts use the generated/supplied admission number internally.
+        # The login screen additionally accepts the exact full student name.
+        provisional_admission = (request.form.get("admission_no") or "").strip() or next_admission_no()
+        username = provisional_admission.lower()
+        password = provisional_admission
     if role in {"Student","Parent"} and student_id:
         try: student_id=int(student_id)
         except ValueError: student_id=None
@@ -5216,6 +5284,10 @@ def add_user():
         uid=execute("""INSERT INTO users(full_name, username, password_hash, role, student_id, active, title, department, phone, email, date_of_birth, gender, id_reference, address, emergency_contact, blood_group, medical_notes, accountability_notes, workspace_type, school_unit, school_location, reception_enabled, position_code, staff_code, qr_access_token, qr_login_enabled)
                       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, lower(hex(randomblob(16))), 0)""",
                    (full_name,username,generate_password_hash(password),role,student_id,title,department,request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),workspace_type,school_unit,school_location,reception_enabled,position_code,position_code))
+        if role=="Student" and student_id:
+            student_row=q("SELECT admission_no,full_name FROM students WHERE id=?", (student_id,), one=True)
+            if student_row:
+                execute("UPDATE users SET username=?, password_hash=?, full_name=? WHERE id=?", (student_row["admission_no"].strip().lower(), generate_password_hash(student_row["admission_no"]), student_row["full_name"], uid))
         if role=="Parent" and student_id:
             execute("INSERT OR IGNORE INTO guardian_links(guardian_user_id, student_id, relationship, is_primary) VALUES(?,?,?,?)", (uid,student_id,request.form.get("relationship","Guardian").strip() or "Guardian",1))
         audit(actor["id"],actor["full_name"],"Add User",f"{full_name} ({username}) added as {role}; title={title or '—'}; department={department or '—'}.")
