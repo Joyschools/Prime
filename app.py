@@ -5066,11 +5066,18 @@ def admin_login_access():
     flash(f"Login page is now {state}.", "success")
     return redirect(url_for("admin_dashboard"))
 
-@app.route("/users/add", methods=["POST"])
+@app.route("/users/add", methods=["GET", "POST"])
 @login_required
 def add_user():
     actor=current_user()
     if actor["role"] not in {"Admin","ICT"}: abort(403)
+    # GET is an entry point used by the People & Access directory.
+    # Keep the actual form in the role dashboard so permissions and fields
+    # stay centralized, but never expose a dead /users/add URL.
+    if request.method == "GET":
+        if actor["role"] == "Admin":
+            return redirect(url_for("admin_dashboard") + "#admin-add-user")
+        return redirect(url_for("ict_dashboard") + "#ict-add-user")
     full_name=request.form.get("full_name", "").strip()
     username=request.form.get("username", "").strip().lower()
     password=request.form.get("password", "")
