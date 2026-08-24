@@ -5015,8 +5015,8 @@ def add_student():
         )
         student_id_row=q("SELECT id FROM students WHERE admission_no=? LIMIT 1",(admission_no,),one=True)
         student_id=student_id_row["id"] if student_id_row else None
-        # Every student receives a portal account automatically. The admission
-        # number is the initial password; exact full name is accepted at login.
+        # Every student receives a portal account automatically.
+        # Admission number is the initial password; exact full name is accepted at login.
         existing_student_user = q("SELECT id FROM users WHERE student_id=? AND role='Student' AND active=1 LIMIT 1", (student_id,), one=True)
         if not existing_student_user and student_id:
             execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active,workspace_type,school_unit,qr_access_token,qr_login_enabled) VALUES(?,?,?,?,?,1,'Learning',?,lower(hex(randomblob(16))),0)",(full_name,admission_no,generate_password_hash(admission_no),"Student",student_id,school_settings()["school_name"],))
@@ -5571,6 +5571,9 @@ def add_user():
     username=request.form.get("username", "").strip().lower()
     password=request.form.get("password", "")
     role=request.form.get("role", "Teacher")
+    if role in {"Student", "Parent", "System"}:
+        flash("Use Add Student for learners. Staff and operational accounts belong here.", "warning")
+        return redirect(request.referrer or url_for("admin_dashboard"))
     title=request.form.get("title", "").strip()
     leadership_role=request.form.get("leadership_role", "").strip()
     department=request.form.get("department", "").strip()
