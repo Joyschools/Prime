@@ -12,9 +12,9 @@
 </head>
 <body class="app-body">
 <main class="content" style="max-width:1500px;margin:auto;width:100%">
-<header class="topbar glass"><div><div class="eyebrow">Teacher · Attendance</div><h1>Class register</h1><div class="topbar-subtitle">Mark each learner, undo mistakes, add an optional reason, then submit when the register is final.</div></div><div class="top-actions"><a class="btn btn-ghost" href="/teacher-dashboard">Teacher dashboard</a><a class="btn btn-ghost" href="/logout">Logout</a></div></header>
+<header class="topbar glass"><div><div class="eyebrow">Teacher · Attendance</div><h1>Class register</h1><div class="topbar-subtitle">Mark each learner, undo mistakes, add an optional reason, then submit when the register is final.</div></div><div class="top-actions"><a class="btn btn-ghost" href="{{ url_for("teacher_dashboard") }}">Teacher dashboard</a><a class="btn btn-ghost" href="/logout">Logout</a></div></header>
 {% if not assigned_classes %}
-<section class="panel glass"><h2>Register access is not assigned</h2><p class="muted">An Administrator must assign you as the class teacher before the complete learner list becomes available.</p><a class="btn btn-primary" href="/teacher-dashboard">Back to Teacher Dashboard</a></section>
+<section class="panel glass"><h2>Register access is not assigned</h2><p class="muted">An Administrator must assign you as the class teacher before the complete learner list becomes available.</p><a class="btn btn-primary" href="{{ url_for("teacher_dashboard") }}">Back to Teacher Dashboard</a></section>
 {% else %}
 <section class="panel glass">
 <div class="register-head">

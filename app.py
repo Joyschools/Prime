@@ -873,6 +873,48 @@ def _init_db_once() -> None:
         CREATE TABLE IF NOT EXISTS teacher_assignments (id INTEGER PRIMARY KEY AUTOINCREMENT,teacher_user_id INTEGER NOT NULL,class_name TEXT NOT NULL,subject TEXT NOT NULL,unit_code TEXT,active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS communication_messages (id INTEGER PRIMARY KEY AUTOINCREMENT,sender_user_id INTEGER NOT NULL,recipient_user_id INTEGER NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,read_at TEXT,FOREIGN KEY(sender_user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(recipient_user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS class_attendance (id INTEGER PRIMARY KEY AUTOINCREMENT,teacher_user_id INTEGER NOT NULL,student_id INTEGER NOT NULL,class_name TEXT NOT NULL,subject TEXT NOT NULL,attendance_date TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('Present','Absent','Late','Excused')),note TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(teacher_user_id,student_id,class_name,subject,attendance_date),FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS flashcard_decks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT 'General',
+            class_name TEXT NOT NULL DEFAULT '',
+            owner_user_id INTEGER NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_flashcard_decks_owner ON flashcard_decks(owner_user_id, active);
+        CREATE INDEX IF NOT EXISTS idx_flashcard_decks_scope ON flashcard_decks(class_name, subject, active);
+        CREATE TABLE IF NOT EXISTS flashcards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            deck_id INTEGER NOT NULL,
+            front TEXT NOT NULL,
+            back TEXT NOT NULL,
+            hint TEXT NOT NULL DEFAULT '',
+            position INTEGER NOT NULL DEFAULT 0,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(deck_id) REFERENCES flashcard_decks(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_flashcards_deck ON flashcards(deck_id, active, position);
+        CREATE TABLE IF NOT EXISTS flashcard_progress (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            card_id INTEGER NOT NULL,
+            rating INTEGER NOT NULL DEFAULT 0 CHECK(rating BETWEEN 0 AND 3),
+            correct_count INTEGER NOT NULL DEFAULT 0,
+            review_count INTEGER NOT NULL DEFAULT 0,
+            next_review_at TEXT,
+            last_reviewed_at TEXT,
+            UNIQUE(user_id, card_id),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(card_id) REFERENCES flashcards(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_flashcard_progress_user ON flashcard_progress(user_id, next_review_at);
+
         CREATE TABLE IF NOT EXISTS fee_structures (id INTEGER PRIMARY KEY AUTOINCREMENT,class_level TEXT NOT NULL,item_name TEXT NOT NULL,amount REAL NOT NULL CHECK(amount >= 0),period TEXT NOT NULL DEFAULT 'Term 1',active INTEGER NOT NULL DEFAULT 1,created_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL);
         CREATE TABLE IF NOT EXISTS fee_charges (id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER NOT NULL,fee_structure_id INTEGER,amount REAL NOT NULL,description TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Posted',created_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE,FOREIGN KEY(fee_structure_id) REFERENCES fee_structures(id) ON DELETE SET NULL,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL);
         CREATE TABLE IF NOT EXISTS payment_integrations (id INTEGER PRIMARY KEY CHECK(id=1),provider TEXT NOT NULL DEFAULT 'Manual',account_name TEXT NOT NULL DEFAULT '',collection_account TEXT NOT NULL DEFAULT '',callback_secret TEXT NOT NULL DEFAULT '',auto_match INTEGER NOT NULL DEFAULT 0,notes TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -1973,20 +2015,21 @@ def navigation_items(role: str, settings):
         "Theme": "Theme",
         "Navigation order": "Navigation order",
         "Members": "Members",
+        "Flashcards": "Flashcards",
     }
     # Admin is the reference ordering for management workspaces. ICT mirrors that
     # order for shared capabilities but receives only the management features it
     # is actually cleared to use. ICT-only presentation controls are then added
     # in a stable block rather than scrambling the common order.
-    management_order=["Home","Finance","Elections","Library","Institution","Members"]
+    management_order=["Home","Finance","Flashcards","Elections","Library","Institution","Members"]
     role_allowed={
-        "Teacher": ["Home","Assignments","Submissions","Online classes","Elections","Library","Institution"],
-        "Student": ["Home","Assignments","Results","Online classes","Elections","Library","Institution"],
+        "Teacher": ["Home","Assignments","Submissions","Flashcards","Online classes","Elections","Library","Institution"],
+        "Student": ["Home","Assignments","Results","Flashcards","Online classes","Elections","Library","Institution"],
         "Parent": ["Home","My children","Results & fees","Teacher communication","Library","Institution"],
         "Finance": ["Home","Finance","Payments","Library","Institution"],
         "ICT": ["Home","Elections","Library","Institution","Members","Branding","Theme","Navigation order"],
         "Librarian": ["Home","Library","Institution"],
-        "Admin": ["Home","Finance","Elections","Library","Institution","Members"],
+        "Admin": ["Home","Finance","Flashcards","Elections","Library","Institution","Members"],
     }
     allowed=role_allowed.get(role, ["Home","Institution"])
     if role in {"Admin","ICT"}:
@@ -1995,7 +2038,7 @@ def navigation_items(role: str, settings):
         allowed=[x for x in allowed if x!="Elections"]
     if not int(settings["library_enabled"] or 0) and role not in {"Admin","ICT","Librarian"}:
         allowed=[x for x in allowed if x!="Library"]
-    anchor_map={"Home":"home","Assignments":"assignments","Submissions":"submissions","Online classes":"classes","Results":"results","My children":"children","Results & fees":"results","Teacher communication":"messages","Finance":"finance","Payments":"payments","Branding":"branding","Theme":"theme","Navigation order":"navigation","Elections":"elections","Library":"library","Institution":"institution","Members":"users"}
+    anchor_map={"Home":"home","Assignments":"assignments","Submissions":"submissions","Flashcards":"flashcards","Online classes":"classes","Results":"results","My children":"children","Results & fees":"results","Teacher communication":"messages","Finance":"finance","Payments":"payments","Branding":"branding","Theme":"theme","Navigation order":"navigation","Elections":"elections","Library":"library","Institution":"institution","Members":"users"}
     result=[]
     for key in order:
         if key in allowed and key not in [r["key"] for r in result]:
@@ -2630,12 +2673,24 @@ def communication_read(message_id:int):
 @role_required('Teacher')
 def teacher_class_attendance():
     user=current_user()
-    assigned=[r['class_name'] for r in q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=? ORDER BY class_name",(user['id'],))]
+    class_rows=q("""SELECT DISTINCT class_name FROM (
+        SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=?
+        UNION ALL
+        SELECT class_name FROM student_teacher_assignments WHERE teacher_user_id=? AND active=1 AND class_name!=''
+        UNION ALL
+        SELECT s.grade AS class_name FROM student_teacher_assignments sta JOIN students s ON s.id=sta.student_id WHERE sta.teacher_user_id=? AND sta.active=1
+    ) WHERE TRIM(COALESCE(class_name,''))!='' ORDER BY class_name""",(user['id'],user['id'],user['id']))
+    assigned=[r['class_name'] for r in class_rows]
+    subject_rows=q("""SELECT DISTINCT subject FROM (
+        SELECT subject FROM teacher_assignments WHERE teacher_user_id=? AND active=1
+        UNION ALL SELECT subject FROM student_teacher_assignments WHERE teacher_user_id=? AND active=1
+    ) WHERE TRIM(COALESCE(subject,''))!='' ORDER BY subject""",(user['id'],user['id']))
+    subject_options=[r['subject'] for r in subject_rows]
     cls=request.values.get('class_name','').strip()
     if cls and cls not in assigned:
-        flash('That class register is available from your Admin-assigned classes.','warning')
+        flash('That class register is available from your Admin-assigned learners and classes.','warning')
         return redirect(url_for('teacher_dashboard'))
-    subject=request.values.get('subject','').strip() or 'General'
+    subject=request.values.get('subject','').strip() or (subject_options[0] if subject_options else 'General')
     date=request.values.get('attendance_date','').strip() or datetime.utcnow().strftime('%Y-%m-%d')
     students=[]
     if cls:
@@ -2669,7 +2724,7 @@ def teacher_class_attendance():
             saved+=1
         flash(f'{saved} class attendance records saved.','success')
         return redirect(url_for('teacher_class_attendance',class_name=cls,subject=subject,attendance_date=date))
-    return render_template('teacher_class_attendance.html',settings=school_settings(),actor_name=user['full_name'],assigned_classes=assigned,classes=assigned,students=students,selected_class=cls,subject=subject,attendance_date=date,existing=existing,role=user['role'])
+    return render_template('teacher_class_attendance.html',settings=school_settings(),actor_name=user['full_name'],assigned_classes=assigned,classes=assigned,subject_options=subject_options,students=students,selected_class=cls,subject=subject,attendance_date=date,existing=existing,role=user['role'])
 
 @app.route("/finance/external/<int:event_id>/match",methods=['POST'])
 @login_required
@@ -2787,6 +2842,97 @@ def admin_class_teachers():
     teachers=q("SELECT id,full_name,title,department FROM users WHERE active=1 AND role='Teacher' ORDER BY full_name")
     assignments=q("SELECT a.*,u.full_name AS teacher_name,u.title,u.department FROM class_teacher_assignments a JOIN users u ON u.id=a.teacher_user_id ORDER BY a.class_name")
     return render_template('admin_class_teachers.html',settings=school_settings(),classes=classes,teachers=teachers,assignments=assignments)
+
+
+# -------------------------------------------------------------------
+# Flashcards: a small, canonical learning service shared by Teacher/Admin/Student
+# -------------------------------------------------------------------
+def _flashcard_role_scope(user):
+    return user and user["role"] in {"Teacher", "Admin", "ICT", "Student"}
+
+def _teacher_has_student(user_id, student_id):
+    return bool(q("""SELECT 1 FROM student_teacher_assignments WHERE teacher_user_id=? AND student_id=? AND active=1
+                   UNION SELECT 1 FROM class_teacher_assignments c JOIN students s ON s.grade=c.class_name WHERE c.teacher_user_id=? AND s.id=?""",
+                  (user_id, student_id, user_id, student_id), one=True))
+
+def _flashcard_deck_visible(deck, user):
+    if not deck or not user:
+        return False
+    if user["role"] in {"Admin", "ICT"} or deck["owner_user_id"] == user["id"]:
+        return True
+    if user["role"] == "Student":
+        student_id=user["student_id"]
+        if not student_id: return False
+        student=q("SELECT grade FROM students WHERE id=? AND active=1", (student_id,), one=True)
+        return bool(student and (not deck["class_name"] or deck["class_name"].lower() == (student["grade"] or "").lower()))
+    return False
+
+@app.route("/flashcards", methods=["GET","POST"])
+@login_required
+def flashcards_workspace():
+    user=current_user()
+    if not _flashcard_role_scope(user): abort(403)
+    if request.method == "POST":
+        action=(request.form.get("action") or "").strip()
+        if action == "create_deck" and user["role"] in {"Teacher","Admin","ICT"}:
+            title=(request.form.get("title") or "").strip()
+            subject=(request.form.get("subject") or "General").strip() or "General"
+            class_name=(request.form.get("class_name") or "").strip()
+            description=(request.form.get("description") or "").strip()
+            if not title:
+                flash("Deck title is required.","danger")
+            else:
+                execute("INSERT INTO flashcard_decks(title,description,subject,class_name,owner_user_id) VALUES(?,?,?,?,?)",(title,description,subject,class_name,user["id"]))
+                flash("Flashcard deck created.","success")
+            return redirect(url_for("flashcards_workspace"))
+        if action == "create_card" and user["role"] in {"Teacher","Admin","ICT"}:
+            deck_id=request.form.get("deck_id",type=int)
+            deck=q("SELECT * FROM flashcard_decks WHERE id=? AND active=1",(deck_id,),one=True) if deck_id else None
+            if not deck or not _flashcard_deck_visible(deck,user): abort(403)
+            front=(request.form.get("front") or "").strip(); back=(request.form.get("back") or "").strip(); hint=(request.form.get("hint") or "").strip()
+            if not front or not back: flash("Both the question and answer are required.","danger")
+            else:
+                pos=q("SELECT COALESCE(MAX(position),0)+1 AS n FROM flashcards WHERE deck_id=?",(deck_id,),one=True)["n"]
+                execute("INSERT INTO flashcards(deck_id,front,back,hint,position) VALUES(?,?,?,?,?)",(deck_id,front,back,hint,pos))
+                execute("UPDATE flashcard_decks SET updated_at=CURRENT_TIMESTAMP WHERE id=?",(deck_id,))
+                flash("Flashcard added.","success")
+            return redirect(url_for("flashcards_workspace",deck_id=deck_id))
+        if action == "delete_deck" and user["role"] in {"Teacher","Admin","ICT"}:
+            deck_id=request.form.get("deck_id",type=int); deck=q("SELECT * FROM flashcard_decks WHERE id=? AND active=1",(deck_id,),one=True)
+            if deck and _flashcard_deck_visible(deck,user): execute("UPDATE flashcard_decks SET active=0,updated_at=CURRENT_TIMESTAMP WHERE id=?",(deck_id,)); flash("Deck archived.","success")
+            return redirect(url_for("flashcards_workspace"))
+    decks=q("""SELECT d.*,u.full_name AS owner_name,COUNT(f.id) AS card_count
+                FROM flashcard_decks d JOIN users u ON u.id=d.owner_user_id
+                LEFT JOIN flashcards f ON f.deck_id=d.id AND f.active=1
+                WHERE d.active=1 GROUP BY d.id ORDER BY d.updated_at DESC,d.id DESC""")
+    visible=[d for d in decks if _flashcard_deck_visible(d,user)]
+    selected_id=request.args.get("deck_id",type=int) or (visible[0]["id"] if visible else None)
+    selected=q("SELECT * FROM flashcard_decks WHERE id=? AND active=1",(selected_id,),one=True) if selected_id else None
+    if selected and not _flashcard_deck_visible(selected,user): selected=None
+    cards=q("SELECT * FROM flashcards WHERE deck_id=? AND active=1 ORDER BY position,id",(selected["id"],)) if selected else []
+    progress={r["card_id"]:r for r in q("SELECT * FROM flashcard_progress WHERE user_id=?",(user["id"],))}
+    return render_template("flashcards.html",settings=school_settings(),role=user["role"],actor_name=user["full_name"],decks=visible,selected=selected,cards=cards,progress=progress,today=datetime.utcnow().strftime("%Y-%m-%d"))
+
+@app.route("/flashcards/<int:deck_id>/review", methods=["GET","POST"])
+@login_required
+def flashcards_review(deck_id:int):
+    user=current_user(); deck=q("SELECT * FROM flashcard_decks WHERE id=? AND active=1",(deck_id,),one=True)
+    if not deck or not _flashcard_deck_visible(deck,user): abort(404)
+    cards=q("SELECT * FROM flashcards WHERE deck_id=? AND active=1 ORDER BY position,id",(deck_id,))
+    if not cards: return redirect(url_for("flashcards_workspace",deck_id=deck_id))
+    idx=max(0,min(request.values.get("index",0,type=int),len(cards)-1))
+    card=cards[idx]
+    if request.method=="POST":
+        rating=request.form.get("rating",type=int)
+        if rating not in {0,1,2,3}: abort(400)
+        gap={0:0,1:1,2:3,3:7}[rating]
+        execute("""INSERT INTO flashcard_progress(user_id,card_id,rating,correct_count,review_count,next_review_at,last_reviewed_at)
+                   VALUES(?,?,?,?,?,datetime('now',?),CURRENT_TIMESTAMP)
+                   ON CONFLICT(user_id,card_id) DO UPDATE SET rating=excluded.rating,correct_count=flashcard_progress.correct_count+CASE WHEN excluded.rating>=2 THEN 1 ELSE 0 END,review_count=flashcard_progress.review_count+1,next_review_at=excluded.next_review_at,last_reviewed_at=CURRENT_TIMESTAMP""",
+                (user["id"],card["id"],rating,1 if rating>=2 else 0,1,f"+{gap} day"))
+        if idx+1 < len(cards): return redirect(url_for("flashcards_review",deck_id=deck_id,index=idx+1))
+        return redirect(url_for("flashcards_workspace",deck_id=deck_id))
+    return render_template("flashcard_review.html",settings=school_settings(),role=user["role"],actor_name=user["full_name"],deck=deck,card=card,index=idx,total=len(cards))
 
 @app.route("/admin/subjects", methods=["GET","POST"])
 @login_required
@@ -3609,175 +3755,10 @@ def dashboard():
     return redirect(specialized_dashboard_for(current_user()))
 
 
-@app.route("/teacher/home")
-@app.route("/teacher/dashboard")
-@app.route("/teacher/")
-@login_required
-@role_required("Teacher", "Admin")
-def teacher_dashboard_alias():
-    return redirect(url_for("teacher_dashboard"))
-
-
-@app.route("/student/home")
-@app.route("/student/dashboard")
-@app.route("/student/")
-@login_required
-def student_dashboard_alias():
-    if current_user()["role"] != "Student":
-        return redirect(specialized_dashboard_for(current_user()))
-    return redirect(url_for("student_dashboard"))
-
-
 # Legacy teacher implementation retained below for compatibility with existing
 # links/bookmarks; /dashboard itself is now only the role dispatcher.
-def teacher_legacy_dashboard():
-    user = current_user()
-    settings = school_settings()
-    selected_grade = request.args.get("grade", "").strip() or None
-    grade_params = (selected_grade,) if selected_grade else ()
-    student_where = "WHERE grade = ?" if selected_grade else ""
-    payment_where = "WHERE s.grade = ?" if selected_grade else ""
 
-    students = q(f"SELECT * FROM students {student_where} ORDER BY created_at DESC, id DESC LIMIT 24", grade_params)
-    available_students = q("SELECT * FROM students WHERE active = 1 ORDER BY created_at DESC, id DESC LIMIT 24")
-    payments = q(
-        f"""
-        SELECT p.*, s.full_name AS student_name, s.admission_no, u.full_name AS recorded_by_name
-        FROM payments p
-        JOIN students s ON s.id = p.student_id
-        JOIN users u ON u.id = p.recorded_by
-        {payment_where}
-        ORDER BY p.created_at DESC, p.id DESC
-        LIMIT 24
-        """,
-        grade_params,
-    )
-    audits = q("SELECT * FROM audit_log ORDER BY created_at DESC, id DESC LIMIT 12")
-    available_grades = [row["grade"] for row in q("SELECT DISTINCT grade FROM students ORDER BY grade")]
-
-    summary_students = q(f"SELECT COUNT(*) AS c FROM students {student_where}", grade_params, one=True)["c"]
-    summary_active = q("SELECT COUNT(*) AS c FROM students WHERE grade = ? AND active = 1" if selected_grade else "SELECT COUNT(*) AS c FROM students WHERE active = 1", grade_params if selected_grade else (), one=True)["c"]
-    summary_paid = q("SELECT COUNT(*) AS c FROM students WHERE grade = ? AND payment_status = 'Paid'" if selected_grade else "SELECT COUNT(*) AS c FROM students WHERE payment_status = 'Paid'", grade_params if selected_grade else (), one=True)["c"]
-    summary_pending = q("SELECT COUNT(*) AS c FROM students WHERE grade = ? AND payment_status = 'Pending'" if selected_grade else "SELECT COUNT(*) AS c FROM students WHERE payment_status = 'Pending'", grade_params if selected_grade else (), one=True)["c"]
-    summary_collections = q("SELECT COALESCE(SUM(amount), 0) AS total FROM payments p JOIN students s ON s.id = p.student_id WHERE p.status = 'Posted' AND s.grade = ?" if selected_grade else "SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'Posted'", grade_params if selected_grade else (), one=True)["total"]
-    total_balance = q("SELECT COALESCE(SUM(balance), 0) AS total FROM students WHERE active = 1", one=True)["total"]
-
-    summary = {
-        "students": summary_students,
-        "active_students": summary_active,
-        "collections": summary_collections,
-        "paid": summary_paid,
-        "pending": summary_pending,
-        "balance": total_balance,
-    }
-
-    exam_grade = request.args.get("exam_grade", "").strip() or selected_grade or (available_grades[0] if available_grades else "")
-    exam_term = request.args.get("exam_term", "").strip() or "Term 1"
-    exam_students = q(
-        "SELECT id, full_name, admission_no, grade FROM students WHERE active = 1 AND grade = ? ORDER BY full_name",
-        (exam_grade,),
-    ) if exam_grade else []
-    exam_subjects = [row["subject"] for row in q("SELECT DISTINCT subject FROM exam_results WHERE grade = ? ORDER BY subject", (exam_grade,))] if exam_grade else []
-    if not exam_subjects:
-        exam_subjects = ["Math", "English", "Science"]
-
-    selected_student_id = request.args.get("student_id", type=int)
-    selected_student = None
-    student_payments = []
-    if selected_student_id:
-        selected_student = q("SELECT * FROM students WHERE id = ?", (selected_student_id,), one=True)
-        if selected_grade and selected_student and selected_student["grade"] != selected_grade:
-            selected_student = None
-        if selected_student:
-            student_payments = q(
-                """
-                SELECT p.*, u.full_name AS recorded_by_name
-                FROM payments p
-                JOIN users u ON u.id = p.recorded_by
-                WHERE p.student_id = ?
-                ORDER BY p.created_at DESC, p.id DESC
-                """,
-                (selected_student_id,),
-            )
-    if not selected_student and students:
-        selected_student = students[0]
-        student_payments = q(
-            """
-            SELECT p.*, u.full_name AS recorded_by_name
-            FROM payments p
-            JOIN users u ON u.id = p.recorded_by
-            WHERE p.student_id = ?
-            ORDER BY p.created_at DESC, p.id DESC
-            """,
-            (students[0]["id"],),
-        )
-
-    exam_batches = q(
-        """
-        SELECT b.*, u.full_name AS submitted_by_name, COUNT(r.id) AS entries, ROUND(AVG(r.mark), 1) AS mean_mark
-        FROM exam_batches b
-        LEFT JOIN exam_results r ON r.batch_id = b.id
-        JOIN users u ON u.id = b.submitted_by
-        WHERE b.grade = ?
-        GROUP BY b.id
-        ORDER BY b.created_at DESC, b.id DESC
-        LIMIT 8
-        """,
-        (exam_grade,),
-    ) if exam_grade else []
-    exam_summary = q(
-        """
-        SELECT grade,
-               COUNT(DISTINCT student_id) AS pupils,
-               COUNT(DISTINCT subject) AS subjects,
-               COUNT(DISTINCT batch_id) AS batches,
-               ROUND(AVG(mark), 1) AS mean_score,
-               ROUND(MAX(mark), 1) AS highest_score,
-               ROUND(MIN(mark), 1) AS lowest_score
-        FROM exam_results
-        GROUP BY grade
-        ORDER BY grade
-        """
-    )
-    exam_subject_summary = q(
-        """
-        SELECT subject,
-               COUNT(*) AS entries,
-               ROUND(AVG(mark), 1) AS mean_score,
-               ROUND(MAX(mark), 1) AS highest_score,
-               ROUND(MIN(mark), 1) AS lowest_score
-        FROM exam_results
-        GROUP BY subject
-        ORDER BY mean_score DESC, subject
-        """
-    )
-
-    return render_template(
-        "dashboard.html",
-        role=user["role"],
-        workspace=workspace_for(user["role"]),
-        summary=summary,
-        students=students,
-        payments=payments,
-        audits=audits,
-        selected_student=selected_student,
-        selected_student_payments=student_payments,
-        selected_grade=selected_grade,
-        available_grades=available_grades,
-        available_students=available_students,
-        settings=settings,
-        exam_grade=exam_grade,
-        exam_term=exam_term,
-        exam_students=exam_students,
-        exam_subjects=exam_subjects,
-        exam_batches=exam_batches,
-        exam_summary=exam_summary,
-        exam_subject_summary=exam_subject_summary,
-        user_students=q("SELECT id, full_name, admission_no FROM students ORDER BY full_name"),
-    )
-
-
-@app.route("/admin-dashboard")
+@app.route("/admin/dashboard")
 @login_required
 @role_required("Admin")
 def admin_dashboard():
@@ -3941,7 +3922,7 @@ def admin_dashboard():
     )
 
 
-@app.route("/teacher-dashboard")
+@app.route("/teacher/dashboard")
 @login_required
 def teacher_dashboard():
     if current_user()["role"] not in {"Teacher", "Admin"}:
@@ -4023,7 +4004,7 @@ def teacher_scheme_of_work():
     return render_template("scheme_of_work.html", settings=settings, assignments=assignments, rows=rows, selected_class=selected_class, selected_subject=selected_subject, theme_style="", theme_preset_style="")
 
 
-@app.route("/student-dashboard")
+@app.route("/student/dashboard")
 @login_required
 def student_dashboard():
     user=current_user()
