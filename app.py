@@ -2434,6 +2434,13 @@ def login():
                 return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid student name/admission number or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
             flash("Invalid username or password.", "danger")
             return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
+        # A student-linked account is always a Student account. This repairs any
+        # legacy/migrated record that accidentally retained a staff role and prevents
+        # student credentials from ever entering the Teacher workspace.
+        if user and user["student_id"]:
+            if user["role"] != "Student":
+                execute("UPDATE users SET role='Student', workspace_type='Student' WHERE id=?", (user["id"],))
+                user = q("SELECT * FROM users WHERE id=? AND active=1", (user["id"],), one=True)
         # A selected portal role can never override the account's stored role.
         # This is especially important for Admin vs ICT separation.
         role = user["role"]
@@ -3483,8 +3490,35 @@ def service_worker():
 
 @app.route("/dashboard")
 @login_required
-@role_required("Teacher")
 def dashboard():
+    # Canonical dashboard entry: always dispatch to the authenticated account's
+    # own workspace. This route must never be a Teacher-only dashboard because
+    # global navigation uses /dashboard.
+    return redirect(specialized_dashboard_for(current_user()))
+
+
+@app.route("/teacher/home")
+@app.route("/teacher/dashboard")
+@app.route("/teacher/")
+@login_required
+@role_required("Teacher", "Admin")
+def teacher_dashboard_alias():
+    return redirect(url_for("teacher_dashboard"))
+
+
+@app.route("/student/home")
+@app.route("/student/dashboard")
+@app.route("/student/")
+@login_required
+def student_dashboard_alias():
+    if current_user()["role"] != "Student":
+        return redirect(specialized_dashboard_for(current_user()))
+    return redirect(url_for("student_dashboard"))
+
+
+# Legacy teacher implementation retained below for compatibility with existing
+# links/bookmarks; /dashboard itself is now only the role dispatcher.
+def teacher_legacy_dashboard():
     user = current_user()
     settings = school_settings()
     selected_grade = request.args.get("grade", "").strip() or None
