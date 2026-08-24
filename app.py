@@ -1631,15 +1631,24 @@ def record_reception_scan(action, token='', device_token='', full_name='', phone
     return {'ok':True,'visit_id':vid,'name':full_name or 'Unregistered person','message':f'{full_name or "Unregistered person"} checked in at {now}.','registered':False}
 
 def specialized_dashboard_for(user) -> str:
-    # Institutional role is authoritative. A stale workspace value must not
-    # reroute ICT/Finance/Librarian/Admin to a generic workforce screen.
+    # One account -> one operational destination. Student linkage always wins
+    # over stale legacy role/workspace data.
     role=(user.get("role") if hasattr(user, "get") else user["role"]) or ""
-    if role in ALL_PORTAL_ROLES and role in {"Admin","ICT","Finance","Teacher","Student","Parent","Librarian"}:
+    try:
+        if user.get("student_id"):
+            linked = q("SELECT id FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
+            if linked:
+                role = "Student"
+    except Exception:
+        pass
+    if role in {"Admin","ICT","Finance","Teacher","Student","Parent","Librarian"}:
         return role_target(role)
     wt=workspace_type_for_user(user)
     if wt=="Driver": return url_for("driver_dashboard")
     if wt in {"Guard","Cook","Other Staff"}: return url_for("workforce_dashboard", kind=wt)
-    return role_target(role)
+    # Unknown/legacy staff is sent to the generic dashboard dispatcher rather
+    # than generating a Not Found page.
+    return url_for("dashboard")
 
 def enter_role_without_login(role: str):
     if role == "Parent" and not parent_portal_enabled():
@@ -2438,9 +2447,8 @@ def login():
         # legacy/migrated record that accidentally retained a staff role and prevents
         # student credentials from ever entering the Teacher workspace.
         if user and user["student_id"]:
-            if user["role"] != "Student":
-                execute("UPDATE users SET role='Student', workspace_type='Student' WHERE id=?", (user["id"],))
-                user = q("SELECT * FROM users WHERE id=? AND active=1", (user["id"],), one=True)
+            execute("UPDATE users SET role='Student', workspace_type='Student' WHERE id=?", (user["id"],))
+            user = q("SELECT * FROM users WHERE id=? AND active=1", (user["id"],), one=True)
         # A selected portal role can never override the account's stored role.
         # This is especially important for Admin vs ICT separation.
         role = user["role"]
@@ -2479,20 +2487,24 @@ def register_admin():
 
 
 def enter_role(role: str):
+    """Enter a role portal without ever guessing or swapping identities.
+
+    Public role launchers (/teacher and /student) are login entry points when no
+    account is authenticated. Once logged in, the account's stored role is the
+    only authority and the launcher redirects to that account's own dashboard.
+    """
     if role not in ALL_PORTAL_ROLES:
         abort(404)
     existing=current_user()
-    # Never silently switch a logged-in account into another workspace. Admin and
-    # ICT in particular are separate security domains; a user must explicitly
-    # log out and authenticate as the other role.
-    if existing and existing["role"] != role:
-        # Never cross roles inside an authenticated session. Return the user to
-        # their own workspace rather than presenting an unnecessary Access denied
-        # dead-end.
+    if not existing:
+        # Never fabricate a user here. The old implementation could fall into
+        # presentation/demo selection and make one role appear as another.
+        return redirect(url_for("login", role=role))
+    if existing["role"] != role:
         if existing["role"] in ALL_PORTAL_ROLES:
             return redirect(role_target(existing["role"]))
         abort(403)
-    return enter_role_without_login(role)
+    return redirect(role_target(role))
 
 
 @app.route("/admin")
@@ -3831,8 +3843,9 @@ def admin_dashboard():
 
 @app.route("/teacher-dashboard")
 @login_required
-@role_required("Teacher", "Admin")
 def teacher_dashboard():
+    if current_user()["role"] not in {"Teacher", "Admin"}:
+        return redirect(specialized_dashboard_for(current_user()))
     settings=school_settings(); user=current_user()
     assignments=q("SELECT * FROM teacher_assignments WHERE teacher_user_id=? AND active=1 ORDER BY class_name,subject",(user["id"],)) if user["role"]=="Teacher" else q("SELECT a.*,u.full_name AS teacher_name FROM teacher_assignments a JOIN users u ON u.id=a.teacher_user_id WHERE a.active=1 ORDER BY a.class_name,a.subject")
     classes=sorted({r["class_name"] for r in assignments} | {r["class_name"] for r in q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=?",(user["id"],))})
@@ -3909,7 +3922,8 @@ def teacher_scheme_of_work():
 @login_required
 def student_dashboard():
     user=current_user()
-    if user["role"] != "Student" and not DEMO_AUTH_BYPASS: abort(403)
+    if user["role"] != "Student" and not DEMO_AUTH_BYPASS:
+        return redirect(specialized_dashboard_for(user))
     student=portal_student(request.args.get("student_id", type=int))
     if user["role"]=="Student":
         student=q("SELECT * FROM students WHERE id=? AND active=1", (user["student_id"],), one=True) if user["student_id"] else None
