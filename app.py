@@ -79,6 +79,7 @@ DEFAULT_DEPARTMENTS = ("Communications", "Computer Studies")
 _PORTAL_ROLE_COOKIE = "school_portal_role"
 _AUTH_COOKIE = "school_auth_token"
 _AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
+_AUTH_TICKET_COOKIE = "school_auth_ticket"
 _PORTAL_CONTEXT_MAX_AGE = 60 * 60 * 12
 _PORTAL_CONTEXT_SALT = "school-portal-context-v1"
 
@@ -182,6 +183,17 @@ def get_db() -> sqlite3.Connection:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("""CREATE TABLE IF NOT EXISTS auth_sessions (
+            token_hash TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL,
+            revoked INTEGER NOT NULL DEFAULT 0,
+            last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id, revoked, expires_at)")
+        conn.commit()
         g.db = conn
     return g.db
 
@@ -1377,6 +1389,35 @@ def _portal_context_id(token: str):
     except Exception:
         return None
 
+def _auth_ticket_hash(token: str) -> str:
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+def _issue_auth_ticket(user_id: int) -> str:
+    raw = secrets.token_urlsafe(48)
+    token_hash = _auth_ticket_hash(raw)
+    expires = datetime.utcnow() + timedelta(seconds=_AUTH_COOKIE_MAX_AGE)
+    execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at,revoked) VALUES(?,?,?,0)", (token_hash, int(user_id), expires.isoformat(timespec="seconds")))
+    return raw
+
+def _user_from_auth_ticket(token: str):
+    if not token:
+        return None
+    row = q("""SELECT u.id, u.full_name, u.username, u.role, u.student_id, u.active, u.title, u.department,
+                     u.leadership_role, u.leadership_level, u.workspace_type, u.school_unit, u.school_location,
+                     u.position_code, u.staff_code, u.reception_enabled, u.qr_access_token, u.profile_photo,
+                     a.expires_at
+              FROM auth_sessions a JOIN users u ON u.id=a.user_id
+              WHERE a.token_hash=? AND a.revoked=0 AND u.active=1 AND u.role!='System'
+                AND datetime(a.expires_at) > datetime('now') LIMIT 1""", (_auth_ticket_hash(token),), one=True)
+    if row:
+        execute("UPDATE auth_sessions SET last_seen_at=CURRENT_TIMESTAMP WHERE token_hash=?", (_auth_ticket_hash(token),))
+    return row
+
+def _revoke_auth_ticket(token: str) -> None:
+    if token:
+        execute("UPDATE auth_sessions SET revoked=1 WHERE token_hash=?", (_auth_ticket_hash(token),))
+
+
 @app.before_request
 def load_current_user() -> None:
     g.user = None
@@ -1396,6 +1437,18 @@ def load_current_user() -> None:
                 session["user_id"] = contextual["id"]
                 session["active_portal_role"] = contextual["role"]
             return
+    # Server-backed auth ticket is the primary identity source. The signed
+    # Flask session remains a convenience layer, but losing it can never log
+    # the person out as long as their account is still active.
+    ticket = request.cookies.get(_AUTH_TICKET_COOKIE, "")
+    recovered = _user_from_auth_ticket(ticket)
+    if recovered:
+        g.user = recovered
+        session.permanent = True
+        session["user_id"] = recovered["id"]
+        session["active_portal_role"] = recovered["role"]
+        g.portal_context = None
+        return
     user_id = session.get("user_id")
     if user_id:
         g.user = q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token, profile_photo FROM users WHERE id = ? AND active = 1 AND role != 'System'", (user_id,), one=True)
@@ -1416,6 +1469,12 @@ def load_current_user() -> None:
 def persist_auth_cookie(response):
     user = getattr(g, "user", None)
     if user and not getattr(g, "logging_out", False):
+        # Keep a durable server-backed identity ticket independent of Flask
+        # session mutations performed by unrelated Admin operations.
+        ticket = request.cookies.get(_AUTH_TICKET_COOKIE, "")
+        if not _user_from_auth_ticket(ticket):
+            ticket = _issue_auth_ticket(user["id"])
+        response.set_cookie(_AUTH_TICKET_COOKIE, ticket, max_age=_AUTH_COOKIE_MAX_AGE, httponly=True, secure=app.config.get("SESSION_COOKIE_SECURE", False), samesite="Lax", path="/")
         # Do not replace the administrator's persistent auth cookie while a
         # direct-access portal context is being viewed. The Admin session remains
         # the source of truth for the original command-centre tab.
@@ -2460,6 +2519,7 @@ def login():
         login_id=record_login_event(user,'Password')
         session.clear(); session.permanent=True
         session["user_id"]=user["id"]; session["active_portal_role"]=user["role"]; session["login_event_id"]=login_id; session["login_location_pending"]=1
+        session["auth_ticket"] = _issue_auth_ticket(user["id"])
         return redirect(specialized_dashboard_for(user))
     return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
 
@@ -3483,12 +3543,12 @@ def logout():
     if tid:
         _ensure_portal_context_table()
         execute("UPDATE portal_contexts SET revoked=1 WHERE token_id=?", (tid,))
+    _revoke_auth_ticket(request.cookies.get(_AUTH_TICKET_COOKIE, ""))
     session.clear()
     response=redirect(url_for("index"))
+    response.delete_cookie(_AUTH_TICKET_COOKIE, path="/")
     response.delete_cookie(_AUTH_COOKIE, path="/")
-    response.headers["Cache-Control"]="no-store"
     return response
-
 
 @app.route("/favicon.ico")
 def favicon():
@@ -5585,6 +5645,9 @@ def edit_user(user_id:int):
     if actor["role"]=="ICT" and user["role"] in {"Admin","ICT"}: abort(403)
     if request.method=="POST":
         role=request.form.get("role",user["role"])
+        if user["id"] == actor["id"] and role != actor["role"]:
+            flash("The currently signed-in Administrator account cannot be changed into another role. Create or edit another account instead.", "warning")
+            return redirect(url_for("edit_user", user_id=user_id))
         workspace_type=request.form.get("workspace_type", user["workspace_type"] if "workspace_type" in user.keys() else "Teaching").strip() or "Teaching"
         if workspace_type not in {"Teaching","Driver","Reception","Guard","Cook","Other Staff"}: workspace_type="Teaching"
         if actor["role"]=="ICT" and role in {"Admin","ICT"}: abort(403)
