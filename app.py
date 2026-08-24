@@ -57,6 +57,7 @@ else:
     DATA_DIR = INSTANCE_DIR
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "school.db"
+STUDENT_DB_PATH = DATA_DIR / "students.db"
 SECRET_FILE = DATA_DIR / "secret.key"
 UPLOAD_DIR = DATA_DIR / "uploads"
 PERSISTENT_STORAGE = DATA_DIR != INSTANCE_DIR
@@ -203,6 +204,151 @@ def close_db(_: Any) -> None:
     db = g.pop("db", None)
     if db is not None:
         db.close()
+    student_db = g.pop("student_db", None)
+    if student_db is not None:
+        student_db.close()
+
+
+def get_student_db() -> sqlite3.Connection:
+    """Dedicated learner store. The school DB keeps the compatibility index used by legacy modules."""
+    if "student_db" not in g:
+        conn = sqlite3.connect(STUDENT_DB_PATH, timeout=30)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = FULL")
+        conn.execute("PRAGMA busy_timeout = 30000")
+        g.student_db = conn
+    return g.student_db
+
+
+def init_student_store() -> None:
+    STUDENT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if STUDENT_DB_PATH.exists() and not _sqlite_integrity_ok(STUDENT_DB_PATH):
+        _quarantine_corrupt_db(STUDENT_DB_PATH)
+    with sqlite3.connect(STUDENT_DB_PATH, timeout=30) as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = FULL")
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.executescript("""
+        CREATE TABLE IF NOT EXISTS students (
+            id INTEGER PRIMARY KEY,
+            admission_no TEXT NOT NULL UNIQUE,
+            full_name TEXT NOT NULL,
+            grade TEXT NOT NULL,
+            grade_category TEXT NOT NULL DEFAULT '',
+            age TEXT NOT NULL DEFAULT '',
+            guardian_name TEXT NOT NULL DEFAULT '',
+            guardian_phone TEXT NOT NULL DEFAULT '',
+            guardian_email TEXT NOT NULL DEFAULT '',
+            alt_guardian_name TEXT NOT NULL DEFAULT '',
+            alt_guardian_phone TEXT NOT NULL DEFAULT '',
+            alt_guardian_email TEXT NOT NULL DEFAULT '',
+            student_phone TEXT NOT NULL DEFAULT '',
+            student_email TEXT NOT NULL DEFAULT '',
+            medical_condition TEXT NOT NULL DEFAULT '',
+            allergies TEXT NOT NULL DEFAULT '',
+            special_info TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_student_store_grade ON students(active, grade_category, full_name);
+        CREATE INDEX IF NOT EXISTS idx_student_store_admission ON students(admission_no);
+        """)
+        # Backfill the dedicated store from the existing compatibility table.
+        try:
+            rows = conn.execute("SELECT id,admission_no,full_name,grade,guardian_name,guardian_phone,guardian_email,alt_guardian_name,alt_guardian_phone,alt_guardian_email,student_phone,student_email,medical_condition,allergies,special_info,notes,active,created_at,updated_at FROM main_school_students").fetchall()
+        except sqlite3.DatabaseError:
+            rows = []
+        if not rows and DB_PATH.exists():
+            try:
+                with sqlite3.connect(DB_PATH, timeout=30) as source:
+                    source.row_factory = sqlite3.Row
+                    cols = {r[1] for r in source.execute("PRAGMA table_info(students)").fetchall()}
+                    if "students" in {r[0] for r in source.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}:
+                        select_cols = [c for c in ("id","admission_no","full_name","grade","guardian_name","guardian_phone","guardian_email","alt_guardian_name","alt_guardian_phone","alt_guardian_email","student_phone","student_email","medical_condition","allergies","special_info","notes","active","created_at","updated_at") if c in cols]
+                        src_rows = source.execute(f"SELECT {','.join(select_cols)} FROM students").fetchall()
+                        for r in src_rows:
+                            data = {c: (r[c] if c in r.keys() else '') for c in select_cols}
+                            grade = str(data.get('grade') or '').strip()
+                            conn.execute("""INSERT OR IGNORE INTO students(
+                                id,admission_no,full_name,grade,grade_category,age,guardian_name,guardian_phone,guardian_email,
+                                alt_guardian_name,alt_guardian_phone,alt_guardian_email,student_phone,student_email,medical_condition,allergies,
+                                special_info,notes,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            """, (data.get('id'),data.get('admission_no',''),data.get('full_name',''),grade,grade,data.get('age',''),data.get('guardian_name','') or '',data.get('guardian_phone','') or '',data.get('guardian_email','') or '',data.get('alt_guardian_name','') or '',data.get('alt_guardian_phone','') or '',data.get('alt_guardian_email','') or '',data.get('student_phone','') or '',data.get('student_email','') or '',data.get('medical_condition','') or '',data.get('allergies','') or '',data.get('special_info','') or '',data.get('notes','') or '',1 if data.get('active',1) else 0,data.get('created_at'),data.get('updated_at')))
+            except sqlite3.DatabaseError:
+                pass
+        conn.commit()
+
+
+def student_store_execute(sql: str, params=()) -> int:
+    db = get_student_db()
+    cur = db.execute(sql, tuple(params))
+    db.commit()
+    return cur.lastrowid
+
+
+def student_store_q(sql: str, params=(), one=False):
+    cur = get_student_db().execute(sql, tuple(params))
+    rows = cur.fetchall()
+    cur.close()
+    return rows[0] if one and rows else (None if one else rows)
+
+
+def normalize_grade(value: str) -> str:
+    value = re.sub(r"\s+", " ", (value or "").strip())
+    if not value:
+        return ""
+    m = re.fullmatch(r"(?:grade\s*)?(\d+)", value, re.I)
+    if m:
+        return f"Grade {int(m.group(1))}"
+    return value.title() if value.islower() else value
+
+
+def auto_place_new_student(student_id: int, grade: str, actor_id: int) -> dict:
+    """Enroll configured subjects for a class and attach its class/subject teachers."""
+    summary = {"class_teacher": None, "subjects": 0, "subject_teachers": 0}
+    class_name = normalize_grade(grade)
+    class_teacher = q("SELECT teacher_user_id FROM class_teacher_assignments WHERE lower(class_name)=lower(?)", (class_name,), one=True)
+    if class_teacher:
+        teacher = q("SELECT id,full_name FROM users WHERE id=? AND role='Teacher' AND active=1", (class_teacher['teacher_user_id'],), one=True)
+        if teacher:
+            execute("INSERT OR IGNORE INTO student_teacher_assignments(student_id,teacher_user_id,class_name,subject,scope,assigned_by,active) VALUES(?,?,?,'General','Class Teacher',?,1)", (student_id,teacher['id'],class_name,actor_id))
+            summary['class_teacher'] = teacher['full_name']
+    subject_rows = q("""SELECT subject FROM compulsory_subjects WHERE active=1 AND lower(class_name)=lower(?)
+                        UNION SELECT subject FROM teacher_assignments WHERE active=1 AND lower(class_name)=lower(?)
+                        ORDER BY subject""", (class_name,class_name))
+    for row in subject_rows:
+        subject = str(row['subject']).strip()
+        if not subject:
+            continue
+        cat = q("SELECT id FROM subjects_catalog WHERE lower(subject)=lower(?) AND active=1", (subject,), one=True)
+        if cat:
+            execute("INSERT INTO student_subjects(student_id,subject_id,status,selected_by) VALUES(?,?, 'Approved', ?) ON CONFLICT(student_id,subject_id) DO UPDATE SET status='Approved',selected_by=excluded.selected_by,updated_at=CURRENT_TIMESTAMP", (student_id,cat['id'],actor_id))
+            summary['subjects'] += 1
+        teacher_row = q("SELECT teacher_user_id FROM teacher_assignments WHERE active=1 AND lower(class_name)=lower(?) AND lower(subject)=lower(?) ORDER BY id LIMIT 1", (class_name,subject), one=True)
+        if teacher_row:
+            teacher = q("SELECT id,full_name FROM users WHERE id=? AND role='Teacher' AND active=1", (teacher_row['teacher_user_id'],), one=True)
+            if teacher:
+                execute("INSERT OR IGNORE INTO student_teacher_assignments(student_id,teacher_user_id,class_name,subject,scope,assigned_by,active) VALUES(?,?,?,?, 'Subject',?,1)", (student_id,teacher['id'],class_name,subject,actor_id))
+                summary['subject_teachers'] += 1
+    return summary
+
+
+def backfill_student_allocations() -> None:
+    """Bring existing learners into the canonical grade/class/subject allocation model."""
+    actor = q("SELECT id FROM users WHERE active=1 AND role IN ('Admin','ICT') ORDER BY CASE role WHEN 'Admin' THEN 0 ELSE 1 END, id LIMIT 1", one=True)
+    if not actor:
+        return
+    students = q("SELECT id,grade FROM students WHERE active=1 AND TRIM(COALESCE(grade,''))!=''")
+    for st in students:
+        try:
+            auto_place_new_student(st['id'], normalize_grade(st['grade']), actor['id'])
+        except sqlite3.DatabaseError:
+            # A single malformed legacy relationship must never stop startup.
+            continue
 
 
 def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -2734,6 +2880,13 @@ def finance_match_external(event_id:int):
     if not event or not student: flash('Payment event or student was not found.','danger'); return redirect(url_for('finance_dashboard'))
     poster=current_user()['id']; pid=execute("INSERT INTO payments(student_id,amount,method,reference_no,recorded_by,status) VALUES(?,?,?,?,?,'Posted')",(sid,event['amount'],event['provider'],event['external_reference'],poster)); new_balance=max(0,float(student['balance'] or 0)-float(event['amount'])); execute("UPDATE students SET balance=?,payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(new_balance,'Paid' if new_balance==0 else 'Pending',sid)); execute("UPDATE external_payment_events SET status='Matched',matched_student_id=?,processed_at=CURRENT_TIMESTAMP WHERE id=?",(sid,event_id)); audit(current_user()['id'],current_user()['full_name'],'Match External Payment',f'External payment {event["external_reference"]} matched to {student["admission_no"]}.'); flash('External payment matched and posted.','success'); return redirect(url_for('finance_dashboard'))
 
+@app.route("/allocate", methods=["GET","POST"])
+@login_required
+@role_required("Admin","ICT")
+def allocate_canonical():
+    """Canonical short path for the People → Allocate workspace."""
+    return admin_student_allocation()
+
 @app.route("/admin/student-allocation", methods=["GET","POST"])
 @login_required
 @role_required("Admin","ICT")
@@ -2818,11 +2971,12 @@ def admin_student_allocation():
                      FROM student_teacher_assignments sta JOIN students s ON s.id=sta.student_id JOIN users t ON t.id=sta.teacher_user_id
                      WHERE sta.active=1 ORDER BY s.grade,s.full_name,t.full_name,sta.subject""")
     class_teachers=q("""SELECT cta.class_name,u.full_name AS teacher_name,u.department FROM class_teacher_assignments cta JOIN users u ON u.id=cta.teacher_user_id ORDER BY cta.class_name""")
+    class_teacher_map={r["class_name"]: r["teacher_name"] for r in class_teachers}
     leadership=q("""SELECT d.id,d.name,du.full_name AS dean_name,pu.full_name AS deputy_name
                     FROM departments d LEFT JOIN department_leadership dl ON dl.department_id=d.id
                     LEFT JOIN users du ON du.id=dl.dean_user_id LEFT JOIN users pu ON pu.id=dl.deputy_user_id
                     WHERE d.active=1 ORDER BY d.name""")
-    return render_template("admin_student_allocation.html",settings=school_settings(),actor_name=user["full_name"],role=user["role"],students=students,teachers=teachers,departments=departments,grades=grades,subjects=subjects,allocations=allocations,class_teachers=class_teachers,leadership=leadership)
+    return render_template("admin_student_allocation.html",settings=school_settings(),actor_name=user["full_name"],role=user["role"],students=students,teachers=teachers,departments=departments,grades=grades,subjects=subjects,allocations=allocations,class_teachers=class_teachers,class_teacher_map=class_teacher_map,leadership=leadership)
 
 @app.route("/admin/class-teachers", methods=["GET","POST"])
 @login_required
@@ -2834,8 +2988,12 @@ def admin_class_teachers():
         if not class_name or not teacher:
             flash("Choose a class and an active Teacher.","danger")
         else:
-            execute("INSERT INTO class_teacher_assignments(class_name,teacher_user_id,assigned_by) VALUES(?,?,?) ON CONFLICT(class_name) DO UPDATE SET teacher_user_id=excluded.teacher_user_id,assigned_by=excluded.assigned_by",(class_name,teacher_id,current_user()['id']))
-            audit(current_user()['id'],current_user()['full_name'],'Class Teacher Assignment',f'{class_name} assigned to {teacher["full_name"]}.')
+            actor_id=current_user()['id']
+            execute("INSERT INTO class_teacher_assignments(class_name,teacher_user_id,assigned_by) VALUES(?,?,?) ON CONFLICT(class_name) DO UPDATE SET teacher_user_id=excluded.teacher_user_id,assigned_by=excluded.assigned_by",(class_name,teacher_id,actor_id))
+            for st in q("SELECT id FROM students WHERE active=1 AND lower(grade)=lower(?)", (class_name,)):
+                execute("INSERT OR IGNORE INTO student_teacher_assignments(student_id,teacher_user_id,class_name,subject,scope,assigned_by,active) VALUES(?,?,?,'General','Class Teacher',?,1)",(st['id'],teacher_id,class_name,actor_id))
+                auto_place_new_student(st['id'], class_name, actor_id)
+            audit(actor_id,current_user()['full_name'],'Class Teacher Assignment',f'{class_name} assigned to {teacher["full_name"]}; existing learners were routed automatically.')
             flash("Class teacher assignment saved.","success")
         return redirect(url_for('admin_class_teachers'))
     classes=q("SELECT DISTINCT grade AS class_name FROM students WHERE active=1 AND grade!='' ORDER BY grade")
@@ -4948,39 +5106,22 @@ def save_settings():
 
 
 @app.route("/students/add", methods=["GET", "POST"])
-@app.route("/student/add", methods=["GET", "POST"])
-@app.route("/admin/students/add", methods=["GET", "POST"])
 @login_required
 @role_required("Admin", "ICT")
 def add_student():
-    """Create a learner and its portal account as one dependable workflow.
-
-    The learner record is authoritative.  The portal account uses only the
-    guaranteed core users columns at creation time, then optional profile
-    columns are enriched separately.  This prevents a missing legacy column
-    or an old migration from turning a perfectly valid student addition into
-    a 500 error.
-    """
+    """Canonical learner intake. Dedicated students.db is authoritative for the profile."""
     if request.method == "GET":
         target = url_for("ict_dashboard") if current_user()["role"] == "ICT" else url_for("admin_dashboard")
-        return redirect(target + "#admin-add-student")
+        return redirect(target + ("#ict-add-student" if current_user()["role"] == "ICT" else "#admin-add-student"))
 
-    admission_no = request.form.get("admission_no", "").strip()
-    full_name = request.form.get("full_name", "").strip()
-    grade = request.form.get("grade", "").strip()
-    age = request.form.get("age", "").strip()
-    guardian_name = request.form.get("guardian_name", "").strip()
-    guardian_phone = request.form.get("guardian_phone", "").strip()
-    guardian_email = request.form.get("guardian_email", "").strip()
-    alt_guardian_name = request.form.get("alt_guardian_name", "").strip()
-    alt_guardian_phone = request.form.get("alt_guardian_phone", "").strip()
-    alt_guardian_email = request.form.get("alt_guardian_email", "").strip()
-    student_phone = request.form.get("student_phone", "").strip()
-    student_email = request.form.get("student_email", "").strip()
-    medical_condition = request.form.get("medical_condition", "").strip()
-    allergies = request.form.get("allergies", "").strip()
-    special_info = request.form.get("special_info", "").strip()
-    notes = request.form.get("notes", "").strip()
+    actor = current_user()
+    admission_no = (request.form.get("admission_no") or "").strip()
+    full_name = (request.form.get("full_name") or "").strip()
+    grade = normalize_grade(request.form.get("grade") or "")
+    age = (request.form.get("age") or "").strip()
+    fields = {name: (request.form.get(name) or "").strip() for name in (
+        "guardian_name","guardian_phone","guardian_email","alt_guardian_name","alt_guardian_phone","alt_guardian_email",
+        "student_phone","student_email","medical_condition","allergies","special_info","notes")}
 
     if not full_name or not grade:
         flash("Student name and grade are required.", "danger")
@@ -4994,91 +5135,69 @@ def add_student():
     if settings["student_name_suffix"]:
         full_name = f"{full_name} {settings['student_name_suffix']}".strip()
 
+    # Validate both stores before writing anything.
+    if q("SELECT id FROM students WHERE admission_no=?", (admission_no,), one=True) or student_store_q("SELECT id FROM students WHERE admission_no=?", (admission_no,), one=True):
+        flash("That admission number already exists. Open the existing learner instead of creating a duplicate.", "danger")
+        return redirect(url_for("ict_dashboard" if actor["role"] == "ICT" else "admin_dashboard") + ("#ict-add-student" if actor["role"] == "ICT" else "#admin-add-student"))
+
+    starting_balance = float(settings["school_fee"] or 0)
+    student_id = None
     try:
-        starting_balance = float(settings["school_fee"] or 0)
+        # Authoritative write: dedicated student database.
+        student_id = student_store_execute("""INSERT INTO students(
+            admission_no,full_name,grade,grade_category,age,guardian_name,guardian_phone,guardian_email,
+            alt_guardian_name,alt_guardian_phone,alt_guardian_email,student_phone,student_email,medical_condition,allergies,
+            special_info,notes,active) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)""",
+            (admission_no,full_name,grade,grade,age,fields["guardian_name"],fields["guardian_phone"],fields["guardian_email"],
+             fields["alt_guardian_name"],fields["alt_guardian_phone"],fields["alt_guardian_email"],fields["student_phone"],fields["student_email"],
+             fields["medical_condition"],fields["allergies"],fields["special_info"],fields["notes"]))
 
-        # 1) Create the actual learner record first and keep its id directly.
-        student_id = execute(
-            """
-            INSERT INTO students(
-                admission_no, full_name, grade, age,
-                guardian_name, guardian_phone, guardian_email,
-                alt_guardian_name, alt_guardian_phone, alt_guardian_email,
-                student_phone, student_email, medical_condition, allergies, special_info, notes,
-                payment_status, balance, active
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?, 1)
-            """,
-            (
-                admission_no, full_name, grade, age,
-                guardian_name, guardian_phone, guardian_email,
-                alt_guardian_name, alt_guardian_phone, alt_guardian_email,
-                student_phone, student_email, medical_condition, allergies, special_info, notes,
-                starting_balance,
-            ),
-        )
-        if not student_id:
-            raise RuntimeError("The student record was not assigned an ID.")
+        # Compatibility index: retain the same ID so every existing module keeps working.
+        execute("""INSERT INTO students(id,admission_no,full_name,grade,age,grade_category,guardian_name,guardian_phone,guardian_email,
+            alt_guardian_name,alt_guardian_phone,alt_guardian_email,student_phone,student_email,medical_condition,allergies,special_info,notes,
+            payment_status,balance,active) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)""",
+            (student_id,admission_no,full_name,grade,age,grade,fields["guardian_name"],fields["guardian_phone"],fields["guardian_email"],
+             fields["alt_guardian_name"],fields["alt_guardian_phone"],fields["alt_guardian_email"],fields["student_phone"],fields["student_email"],
+             fields["medical_condition"],fields["allergies"],fields["special_info"],fields["notes"],"Pending",starting_balance))
 
-        # 2) Always create the portal account using only columns that exist in
-        # the original users schema. Use an internal username so an admission
-        # number can safely change later without breaking account uniqueness.
         internal_username = f"student-{student_id}"
-        existing = q("SELECT id FROM users WHERE student_id=? AND role='Student' LIMIT 1", (student_id,), one=True)
-        if existing:
-            portal_user_id = existing["id"]
-            execute(
-                "UPDATE users SET full_name=?, username=?, password_hash=?, role='Student', active=1 WHERE id=?",
-                (full_name, internal_username, generate_password_hash(admission_no), portal_user_id),
-            )
-        else:
-            portal_user_id = execute(
-                "INSERT INTO users(full_name,username,password_hash,role,student_id,active) VALUES(?,?,?,?,?,1)",
-                (full_name, internal_username, generate_password_hash(admission_no), "Student", student_id),
-            )
-        if not portal_user_id:
-            raise RuntimeError("The student portal account could not be created.")
+        portal_user_id = execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active) VALUES(?,?,?,?,?,1)",
+                                 (full_name,internal_username,generate_password_hash(admission_no),"Student",student_id))
+        # Optional profile columns are updated only if the deployed schema has them.
+        available = table_columns(get_db(), "users")
+        optional = [("workspace_type","Student"),("school_unit",settings["school_name"]),("title","Student"),("department","")]
+        updates=[]; params=[]
+        for col,val in optional:
+            if col in available:
+                updates.append(f"{col}=?"); params.append(val)
+        if updates:
+            execute(f"UPDATE users SET {','.join(updates)} WHERE id=?", (*params,portal_user_id))
 
-        # 3) Enrich optional user-profile columns only when they are available.
-        # Any failure here must not undo the learner/account creation.
-        optional_updates = []
-        optional_params = []
-        for column, value in (
-            ("workspace_type", "Student"),
-            ("school_unit", settings["school_name"]),
-            ("title", "Student"),
-            ("department", ""),
-        ):
+        placement = auto_place_new_student(student_id, grade, actor["id"])
+        details = f"{full_name} ({admission_no}) created in dedicated students.db; grade={grade}; class_teacher={placement['class_teacher'] or 'pending'}; subjects={placement['subjects']}; subject_teachers={placement['subject_teachers']}."
+        audit(actor["id"], actor["full_name"], "Add Student", details)
+        flash("Student added successfully. Grade recorded, student portal created, and any configured class/subject allocations were applied automatically.", "success")
+    except sqlite3.IntegrityError:
+        if student_id:
             try:
-                get_db().execute(f"SELECT {column} FROM users WHERE id=?", (portal_user_id,)).fetchone()
-                optional_updates.append(f"{column}=?")
-                optional_params.append(value)
+                execute("DELETE FROM users WHERE student_id=? AND role='Student'", (student_id,))
+                execute("DELETE FROM students WHERE id=?", (student_id,))
+                get_student_db().execute("DELETE FROM students WHERE id=?", (student_id,)); get_student_db().commit()
             except sqlite3.DatabaseError:
                 pass
-        if optional_updates:
+        flash("Student could not be added because a unique learner or account record already exists. No partial student was left behind.", "danger")
+    except Exception as exc:
+        if student_id:
             try:
-                execute(f"UPDATE users SET {', '.join(optional_updates)} WHERE id=?", (*optional_params, portal_user_id))
+                execute("DELETE FROM users WHERE student_id=? AND role='Student'", (student_id,))
+                execute("DELETE FROM students WHERE id=?", (student_id,))
+                get_student_db().execute("DELETE FROM students WHERE id=?", (student_id,)); get_student_db().commit()
             except sqlite3.DatabaseError:
                 pass
+        flash(f"Student could not be added safely: {type(exc).__name__}. No partial student was left behind.", "danger")
 
-        audit(
-            current_user()["id"], current_user()["full_name"], "Add Student",
-            f"{full_name} ({admission_no}) created; student portal account created automatically; admission number initialized as password."
-        )
-        flash("Student added successfully. Their portal account is ready; login uses their full name and admission number.", "success")
-
-    except sqlite3.IntegrityError as exc:
-        # Keep the page usable and explain the common real-world case clearly.
-        message = "That admission number already exists. Please use the existing student's record or choose another admission number."
-        if "username" in str(exc).lower():
-            message = "That student account already exists. Please open the student's record instead of creating a duplicate account."
-        flash(message, "danger")
-    except (ValueError, RuntimeError, sqlite3.DatabaseError) as exc:
-        flash(f"Student could not be added: {str(exc) or 'database error'}. No staff account was created.", "danger")
-
-    ref = request.referrer or ""
-    if current_user()["role"] == "ICT":
-        return redirect(url_for("ict_dashboard") + "#ict-add-student")
-    return redirect(url_for("admin_dashboard") + "#admin-add-student")
+    target = url_for("ict_dashboard") if actor["role"] == "ICT" else url_for("admin_dashboard")
+    return redirect(target + ("#ict-add-student" if actor["role"] == "ICT" else "#admin-add-student"))
 
 
 @app.route("/students/<int:student_id>/subjects", methods=["GET","POST"])
@@ -5238,7 +5357,7 @@ def update_student(student_id: int):
     execute(
         """
         UPDATE students SET
-            admission_no = ?, full_name = ?, grade = ?, guardian_name = ?, guardian_phone = ?, guardian_email = ?,
+            admission_no = ?, full_name = ?, grade = ?, age = ?, grade_category = ?, guardian_name = ?, guardian_phone = ?, guardian_email = ?,
             alt_guardian_name = ?, alt_guardian_phone = ?, alt_guardian_email = ?, student_phone = ?, student_email = ?,
             medical_condition = ?, allergies = ?, special_info = ?, notes = ?,
             payment_status = ?, balance = ?, active = ?, updated_at = CURRENT_TIMESTAMP
@@ -5247,6 +5366,8 @@ def update_student(student_id: int):
         (
             fields["admission_no"],
             fields["full_name"],
+            fields["grade"],
+            fields["age"],
             fields["grade"],
             fields["guardian_name"],
             fields["guardian_phone"],
@@ -5275,6 +5396,9 @@ def update_student(student_id: int):
             execute("UPDATE users SET username=?, full_name=?, password_hash=? WHERE id=?", (fields["admission_no"], fields["full_name"], generate_password_hash(fields["admission_no"]), linked_student_user["id"]))
         else:
             execute("UPDATE users SET full_name=? WHERE id=?", (fields["full_name"], linked_student_user["id"]))
+    get_student_db().execute("""UPDATE students SET admission_no=?,full_name=?,grade=?,grade_category=?,age=?,guardian_name=?,guardian_phone=?,guardian_email=?,alt_guardian_name=?,alt_guardian_phone=?,alt_guardian_email=?,student_phone=?,student_email=?,medical_condition=?,allergies=?,special_info=?,notes=?,active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+        (fields["admission_no"],fields["full_name"],fields["grade"],fields["grade"],fields["age"],fields["guardian_name"],fields["guardian_phone"],fields["guardian_email"],fields["alt_guardian_name"],fields["alt_guardian_phone"],fields["alt_guardian_email"],fields["student_phone"],fields["student_email"],fields["medical_condition"],fields["allergies"],fields["special_info"],fields["notes"],fields["active"],student_id))
+    get_student_db().commit()
     audit(current_user()["id"], current_user()["full_name"], "Edit Student", f"Student {student['admission_no']} updated.")
     flash("Student updated.", "success")
     return redirect(request.referrer or url_for("dashboard", student_id=student_id))
@@ -5288,6 +5412,8 @@ def delete_student(student_id: int):
     if not student:
         abort(404)
     execute("DELETE FROM students WHERE id = ?", (student_id,))
+    get_student_db().execute("DELETE FROM students WHERE id=?", (student_id,))
+    get_student_db().commit()
     audit(current_user()["id"], current_user()["full_name"], "Delete Student", f"Student {student['admission_no']} deleted.")
     flash("Pupil deleted.", "success")
     return redirect(request.referrer or url_for("admin_dashboard"))
@@ -6320,6 +6446,14 @@ def backup_json_restore():
         conn.isolation_level=old_autocommit
     return redirect(request.referrer or url_for('admin_dashboard'))
 
+@app.route("/backup/students")
+@login_required
+@admin_root_required
+def student_backup_download():
+    init_student_store()
+    return send_file(STUDENT_DB_PATH, as_attachment=True, download_name="students_backup.sqlite3")
+
+
 @app.route("/backup/download")
 @login_required
 @admin_root_required
@@ -6449,6 +6583,12 @@ def forbidden(_):
     return render_template("error.html", title="Access denied", message="You do not have permission to access this area."), 403
 
 
+@app.errorhandler(500)
+def internal_error(error):
+    app.logger.exception("Unhandled Prime application error: %s", error)
+    return render_template("error.html", title="Something went wrong", message="The request could not be completed safely. No partial learner record should have been created."), 500
+
+
 @app.errorhandler(404)
 def not_found(_):
     return render_template("error.html", title="Not found", message="The page you requested could not be found."), 404
@@ -6461,6 +6601,8 @@ def too_large(_):
 
 with app.app_context():
     init_db()
+    init_student_store()
+    backfill_student_allocations()
 
 
 if __name__ == "__main__":
