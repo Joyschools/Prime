@@ -1168,6 +1168,12 @@ def _init_db_once() -> None:
                     uname='demo.'+adm.lower().replace('-','')
                     if not conn.execute("SELECT 1 FROM users WHERE username=?",(uname,)).fetchone():
                         ensure_user(name,uname,demo_student_pw,"Student",sid,'','','Student')
+                # Keep the demo student usable through both the named demo credentials and the same bootstrap convention used for normal learners.
+                for _adm, _name, _grade, _guardian, _phone, _balance, _status in demo_students:
+                    _sid=student_rows[_adm]["id"]
+                    _u=conn.execute("SELECT id,username FROM users WHERE student_id=? AND role='Student' AND active=1 LIMIT 1",(_sid,)).fetchone()
+                    if _u and _u["username"] != "demo.student":
+                        conn.execute("UPDATE users SET password_hash=? WHERE id=?",(generate_password_hash(_adm),_u["id"]))
                 # Teaching load and class-teacher authority.
                 for cls,subj,unit in [("Grade 4","Mathematics","MAT-G4"),("Grade 4","Integrated Science","SCI-G4"),("Grade 5","Mathematics","MAT-G5")]:
                     conn.execute("INSERT OR IGNORE INTO teacher_assignments(teacher_user_id,class_name,subject,unit_code,active) VALUES(?,?,?,?,1)",(teacher_id,cls,subj,unit))
@@ -2562,34 +2568,77 @@ def admin_student_allocation():
     if request.method=="POST":
         action=(request.form.get("action") or "allocation").strip()
         if action=="leadership":
-            department_id=request.form.get("department_id",type=int); dean_id=request.form.get("dean_user_id",type=int) or None; deputy_id=request.form.get("deputy_user_id",type=int) or None
+            department_id=request.form.get("department_id",type=int)
+            dean_id=request.form.get("dean_user_id",type=int) or None
+            deputy_id=request.form.get("deputy_user_id",type=int) or None
             dept=q("SELECT id,name FROM departments WHERE id=? AND active=1",(department_id,),one=True) if department_id else None
             for uid in [dean_id,deputy_id]:
-                if uid and not q("SELECT 1 FROM users WHERE id=? AND active=1 AND leadership_role IN ('Dean','Deputy','Deputy Principal','Deputy Head','Principal','Teacher')",(uid,),one=True):
-                    uid=None
+                if uid and not q("SELECT 1 FROM users WHERE id=? AND active=1 AND role IN ('Teacher','Admin','ICT')",(uid,),one=True):
+                    if dean_id==uid: dean_id=None
+                    if deputy_id==uid: deputy_id=None
             if dept:
                 execute("INSERT INTO department_leadership(department_id,dean_user_id,deputy_user_id) VALUES(?,?,?) ON CONFLICT(department_id) DO UPDATE SET dean_user_id=excluded.dean_user_id,deputy_user_id=excluded.deputy_user_id,updated_at=CURRENT_TIMESTAMP",(department_id,dean_id,deputy_id))
-                audit(user["id"],user["full_name"],"Department Leadership",f"{dept['name']} leadership updated."); flash("Department leadership saved.","success")
-            else: flash("Choose a valid department.","danger")
-            return redirect(url_for("admin_student_allocation"))
-        student_id=request.form.get("student_id",type=int); teacher_id=request.form.get("teacher_user_id",type=int)
-        class_name=(request.form.get("class_name") or "").strip(); subject=(request.form.get("subject") or "").strip() or "General"
-        scope=(request.form.get("scope") or "Subject").strip()
-        student=q("SELECT id,full_name,grade FROM students WHERE id=? AND active=1",(student_id,),one=True) if student_id else None
-        teacher=q("SELECT id,full_name FROM users WHERE id=? AND active=1 AND role='Teacher'",(teacher_id,),one=True) if teacher_id else None
-        if not student or not teacher:
-            flash("Choose a valid student and teacher.","danger")
-        else:
-            class_name=class_name or student["grade"]
-            if scope=="Class Teacher":
-                execute("INSERT INTO class_teacher_assignments(class_name,teacher_user_id,assigned_by) VALUES(?,?,?) ON CONFLICT(class_name) DO UPDATE SET teacher_user_id=excluded.teacher_user_id,assigned_by=excluded.assigned_by",(class_name,teacher_id,user["id"]))
+                audit(user["id"],user["full_name"],"Department Leadership",f"{dept['name']} leadership updated.")
+                flash("Department leadership saved.","success")
             else:
-                execute("INSERT OR IGNORE INTO student_teacher_assignments(student_id,teacher_user_id,class_name,subject,scope,assigned_by) VALUES(?,?,?,?,?,?)",(student_id,teacher_id,class_name,subject,scope,user["id"]))
-            audit(user["id"],user["full_name"],"Student Teacher Allocation",f"{student['full_name']} → {teacher['full_name']} ({class_name} / {subject} / {scope}).")
-            flash("Student/teacher allocation saved.","success")
+                flash("Choose a valid department.","danger")
+            return redirect(url_for("admin_student_allocation"))
+        if action=="teacher_profile":
+            teacher_id=request.form.get("teacher_user_id",type=int)
+            teacher=q("SELECT id,full_name,role FROM users WHERE id=? AND active=1 AND role='Teacher'",(teacher_id,),one=True) if teacher_id else None
+            department=(request.form.get("teacher_department") or "").strip()
+            title=(request.form.get("teacher_title") or "").strip()
+            leadership_role=(request.form.get("leadership_role") or "").strip()
+            if teacher and department and q("SELECT 1 FROM departments WHERE active=1 AND name=?",(department,),one=True):
+                execute("UPDATE users SET department=?,title=?,leadership_role=?,leadership_level=? WHERE id=?",(department,title,leadership_role,1 if leadership_role in {'Dean','Deputy','Deputy Principal','HOD','Head of Department'} else 0,teacher_id))
+                audit(user["id"],user["full_name"],"Teacher Placement",f"{teacher['full_name']} placed in {department} as {leadership_role or title or 'Teacher'}.")
+                flash("Teacher department and role saved.","success")
+            else:
+                flash("Choose a valid teacher and department.","danger")
+            return redirect(url_for("admin_student_allocation"))
+
+        teacher_id=request.form.get("teacher_user_id",type=int)
+        scope=(request.form.get("scope") or "Subject").strip()
+        subject=(request.form.get("subject") or "General").strip() or "General"
+        selected_ids=[]
+        for raw in request.form.getlist("student_ids"):
+            try: selected_ids.append(int(raw))
+            except Exception: pass
+        selected_ids=list(dict.fromkeys(selected_ids))
+        grades=[]
+        for raw in request.form.getlist("grade_names"):
+            value=(raw or "").strip()
+            if value: grades.append(value)
+        if grades:
+            marks=','.join('?'*len(grades))
+            rows=q(f"SELECT id FROM students WHERE active=1 AND grade IN ({marks})",tuple(grades))
+            selected_ids.extend(int(r['id']) for r in rows)
+        selected_ids=list(dict.fromkeys(selected_ids))
+        teacher=q("SELECT id,full_name FROM users WHERE id=? AND active=1 AND role='Teacher'",(teacher_id,),one=True) if teacher_id else None
+        if not teacher:
+            flash("Choose a valid teacher.","danger")
+            return redirect(url_for("admin_student_allocation"))
+        students=q(f"SELECT id,full_name,grade FROM students WHERE active=1 AND id IN ({','.join('?'*len(selected_ids))})",tuple(selected_ids)) if selected_ids else []
+        if not students:
+            flash("Select at least one student or one grade/class.","danger")
+            return redirect(url_for("admin_student_allocation"))
+        class_name=(request.form.get("class_name") or "").strip()
+        saved=0
+        for student in students:
+            this_class=class_name or student['grade']
+            if scope=="Class Teacher":
+                execute("INSERT INTO class_teacher_assignments(class_name,teacher_user_id,assigned_by) VALUES(?,?,?) ON CONFLICT(class_name) DO UPDATE SET teacher_user_id=excluded.teacher_user_id,assigned_by=excluded.assigned_by",(this_class,teacher_id,user["id"]))
+            else:
+                execute("INSERT OR IGNORE INTO student_teacher_assignments(student_id,teacher_user_id,class_name,subject,scope,assigned_by) VALUES(?,?,?,?,?,?)",(student['id'],teacher_id,this_class,subject,scope,user['id']))
+            saved+=1
+        audit(user["id"],user["full_name"],"Student Teacher Allocation",f"{saved} learners allocated to {teacher['full_name']} ({subject} / {scope}).")
+        flash(f"{saved} learner{'s' if saved != 1 else ''} allocated to {teacher['full_name']}.","success")
         return redirect(url_for("admin_student_allocation"))
+
     students=q("SELECT id,full_name,admission_no,grade FROM students WHERE active=1 ORDER BY grade,full_name")
-    teachers=q("SELECT id,full_name,title,department FROM users WHERE active=1 AND role='Teacher' ORDER BY full_name")
+    teachers=q("SELECT id,full_name,title,department,leadership_role FROM users WHERE active=1 AND role='Teacher' ORDER BY full_name")
+    departments=q("SELECT id,name,category FROM departments WHERE active=1 ORDER BY name")
+    grades=q("SELECT DISTINCT grade FROM students WHERE active=1 AND TRIM(COALESCE(grade,''))!='' ORDER BY grade")
     subjects=q("SELECT subject,department FROM subjects_catalog WHERE active=1 ORDER BY department,subject")
     allocations=q("""SELECT sta.*,s.full_name AS student_name,s.admission_no,t.full_name AS teacher_name,t.department
                      FROM student_teacher_assignments sta JOIN students s ON s.id=sta.student_id JOIN users t ON t.id=sta.teacher_user_id
@@ -2599,7 +2648,7 @@ def admin_student_allocation():
                     FROM departments d LEFT JOIN department_leadership dl ON dl.department_id=d.id
                     LEFT JOIN users du ON du.id=dl.dean_user_id LEFT JOIN users pu ON pu.id=dl.deputy_user_id
                     WHERE d.active=1 ORDER BY d.name""")
-    return render_template("admin_student_allocation.html",settings=school_settings(),actor_name=user["full_name"],role=user["role"],students=students,teachers=teachers,subjects=subjects,allocations=allocations,class_teachers=class_teachers,leadership=leadership)
+    return render_template("admin_student_allocation.html",settings=school_settings(),actor_name=user["full_name"],role=user["role"],students=students,teachers=teachers,departments=departments,grades=grades,subjects=subjects,allocations=allocations,class_teachers=class_teachers,leadership=leadership)
 
 @app.route("/admin/class-teachers", methods=["GET","POST"])
 @login_required
@@ -3828,19 +3877,39 @@ def student_dashboard():
     user=current_user()
     if user["role"] != "Student" and not DEMO_AUTH_BYPASS: abort(403)
     student=portal_student(request.args.get("student_id", type=int))
-    if not student and user["student_id"]: student=q("SELECT * FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
-    if not student and user["full_name"]: student=q("SELECT * FROM students WHERE lower(full_name)=lower(?) AND active=1 ORDER BY id DESC LIMIT 1", (user["full_name"],), one=True)
-    if not student and DEMO_AUTH_BYPASS: student=q("SELECT * FROM students WHERE active=1 ORDER BY grade,full_name LIMIT 1", one=True)
+    if user["role"]=="Student":
+        student=q("SELECT * FROM students WHERE id=? AND active=1", (user["student_id"],), one=True) if user["student_id"] else None
+    elif not student and user["student_id"]:
+        student=q("SELECT * FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
     if not student: abort(404)
-    assignments=assignment_rows(student["grade"]); submissions=q("SELECT * FROM submissions WHERE student_id=? ORDER BY submitted_at DESC", (student["id"],)); results=q("SELECT subject, term, mark, max_mark FROM exam_results WHERE student_id=? ORDER BY term DESC, subject", (student["id"],)); result_releases=result_release_info(student["id"])
-    messages=q("SELECT * FROM portal_messages WHERE recipient_student_id=? OR (recipient_role='Student' AND recipient_student_id IS NULL) ORDER BY created_at DESC LIMIT 30", (student["id"],))
-    elections=q("SELECT * FROM elections WHERE visible=1 ORDER BY created_at DESC") if school_settings()["elections_enabled"] else []
-    election_candidates={e["id"]:q("SELECT * FROM election_candidates WHERE election_id=? AND active=1 ORDER BY position,name",(e["id"],)) for e in elections}; voted_positions={(r["election_id"], r["position"]) for r in q("SELECT election_id, position FROM election_votes WHERE voter_user_id=?",(current_user()["id"],))}
-    library_items=q("SELECT * FROM library_items WHERE active=1 ORDER BY category,title LIMIT 80") if school_settings()["library_enabled"] else []
-    student_subjects=q("SELECT sc.id,sc.subject,sc.department,ss.status FROM student_subjects ss JOIN subjects_catalog sc ON sc.id=ss.subject_id WHERE ss.student_id=? AND ss.status!='Dropped' ORDER BY sc.department,sc.subject",(student['id'],))
-    online_classes=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.active=1 AND lower(cs.class_name)=lower(?) AND (cs.starts_at>=datetime('now','-1 day') OR cs.ends_at>=datetime('now','-1 day') OR cs.ends_at IS NULL) ORDER BY cs.starts_at",(student["grade"],))
-    mark_rows=markbook_class_summary(student['grade'])
-    my_rank=next((r for r in mark_rows if r['student_id']==student['id']),None)
+    # Optional learner panels should never take down the whole portal. A partially
+    # migrated school database can still open the Student dashboard while a single
+    # secondary feature is repaired.
+    assignments=[]; submissions=[]; results=[]; result_releases={}; messages=[]; elections=[]; election_candidates={}; voted_positions=set(); library_items=[]; student_subjects=[]; online_classes=[]; mark_rows=[]; my_rank=None
+    try: assignments=assignment_rows(student["grade"])
+    except Exception: assignments=[]
+    try: submissions=q("SELECT * FROM submissions WHERE student_id=? ORDER BY submitted_at DESC", (student["id"],))
+    except Exception: submissions=[]
+    try: results=q("SELECT subject, term, mark, max_mark FROM exam_results WHERE student_id=? ORDER BY term DESC, subject", (student["id"],))
+    except Exception: results=[]
+    try: result_releases=result_release_info(student["id"])
+    except Exception: result_releases={}
+    try: messages=q("SELECT * FROM portal_messages WHERE recipient_student_id=? OR (recipient_role='Student' AND recipient_student_id IS NULL) ORDER BY created_at DESC LIMIT 30", (student["id"],))
+    except Exception: messages=[]
+    try:
+        elections=q("SELECT * FROM elections WHERE visible=1 ORDER BY created_at DESC") if school_settings()["elections_enabled"] else []
+        election_candidates={e["id"]:q("SELECT * FROM election_candidates WHERE election_id=? AND active=1 ORDER BY position,name",(e["id"],)) for e in elections}
+        voted_positions={(r["election_id"], r["position"]) for r in q("SELECT election_id, position FROM election_votes WHERE voter_user_id=?",(current_user()["id"],))}
+    except Exception:
+        elections=[]; election_candidates={}; voted_positions=set()
+    try: library_items=q("SELECT * FROM library_items WHERE active=1 ORDER BY category,title LIMIT 80") if school_settings()["library_enabled"] else []
+    except Exception: library_items=[]
+    try: student_subjects=q("SELECT sc.id,sc.subject,sc.department,ss.status FROM student_subjects ss JOIN subjects_catalog sc ON sc.id=ss.subject_id WHERE ss.student_id=? AND ss.status!='Dropped' ORDER BY sc.department,sc.subject",(student['id'],))
+    except Exception: student_subjects=[]
+    try: online_classes=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.active=1 AND lower(cs.class_name)=lower(?) AND (cs.starts_at>=datetime('now','-1 day') OR cs.ends_at>=datetime('now','-1 day') OR cs.ends_at IS NULL) ORDER BY cs.starts_at",(student["grade"],))
+    except Exception: online_classes=[]
+    try: mark_rows=markbook_class_summary(student['grade']); my_rank=next((r for r in mark_rows if r['student_id']==student['id']),None)
+    except Exception: mark_rows=[]; my_rank=None
     settings=school_settings(); nav_items=navigation_items("Student",settings)
     return render_template("student_dashboard.html",school_settings=settings,settings=settings,role="Student",workspace=workspace_for("Student"),student=student,assignments=assignments,submissions=submissions,results=results,result_releases=result_releases,messages=messages,elections=elections,election_candidates=election_candidates,voted_positions=voted_positions,library_items=library_items,online_classes=online_classes,student_subjects=student_subjects,actor_name=student["full_name"],nav_items=nav_items,my_rank=my_rank,mark_rows=mark_rows)
 
@@ -5370,6 +5439,7 @@ def add_user():
     password=request.form.get("password", "")
     role=request.form.get("role", "Teacher")
     title=request.form.get("title", "").strip()
+    leadership_role=request.form.get("leadership_role", "").strip()
     department=request.form.get("department", "").strip()
     workspace_type=request.form.get("workspace_type", "Teaching").strip() or "Teaching"
     if workspace_type not in {"Teaching","Driver","Reception","Guard","Cook","Other Staff"}: workspace_type="Teaching"
@@ -5417,6 +5487,8 @@ def add_user():
         uid=execute("""INSERT INTO users(full_name, username, password_hash, role, student_id, active, title, department, phone, email, date_of_birth, gender, id_reference, address, emergency_contact, blood_group, medical_notes, accountability_notes, workspace_type, school_unit, school_location, reception_enabled, position_code, staff_code, qr_access_token, qr_login_enabled)
                       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, lower(hex(randomblob(16))), 0)""",
                    (full_name,username,generate_password_hash(password),role,student_id,title,department,request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),workspace_type,school_unit,school_location,reception_enabled,position_code,position_code))
+        if leadership_role and role not in {"Student","Parent","System"}:
+            execute("UPDATE users SET leadership_role=?,leadership_level=? WHERE id=?",(leadership_role,1 if leadership_role in {"Dean","Deputy","Deputy Principal","HOD","Head of Department"} else 0,uid))
         if role=="Student" and student_id:
             student_row=q("SELECT admission_no,full_name FROM students WHERE id=?", (student_id,), one=True)
             if student_row:
@@ -5479,10 +5551,10 @@ def edit_user(user_id:int):
         if conflict:
             flash("Username already exists. Choose a different username.", "danger")
             return redirect(url_for("edit_user", user_id=user_id))
-        new_title=request.form.get("title","").strip(); school_unit=request.form.get("school_unit","").strip() or school_settings()["school_name"]; school_location=request.form.get("school_location","").strip(); reception_enabled=1 if workspace_type==RECEPTION_WORKSPACE else 0
+        new_title=request.form.get("title","").strip(); leadership_role=request.form.get("leadership_role","").strip(); leadership_level=1 if leadership_role in {"Dean","Deputy","Deputy Principal","HOD","Head of Department"} else 0; school_unit=request.form.get("school_unit","").strip() or school_settings()["school_name"]; school_location=request.form.get("school_location","").strip(); reception_enabled=1 if workspace_type==RECEPTION_WORKSPACE else 0
         existing_code=user["position_code"] or user["staff_code"] or (staff_code_for(role,workspace_type) if role not in {"Student","Parent","System"} else "")
-        execute("""UPDATE users SET full_name=?, username=?, role=?, student_id=?, title=?, department=?, phone=?, email=?, date_of_birth=?, gender=?, id_reference=?, address=?, emergency_contact=?, blood_group=?, medical_notes=?, accountability_notes=?, workspace_type=?, school_unit=?, school_location=?, reception_enabled=?, position_code=?, staff_code=? WHERE id=?""",
-               (request.form.get("full_name","").strip(),new_username,role,student_id,new_title,request.form.get("department","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),workspace_type,school_unit,school_location,reception_enabled,existing_code,existing_code,user_id))
+        execute("""UPDATE users SET full_name=?, username=?, role=?, student_id=?, title=?, department=?, phone=?, email=?, date_of_birth=?, gender=?, id_reference=?, address=?, emergency_contact=?, blood_group=?, medical_notes=?, accountability_notes=?, workspace_type=?, school_unit=?, school_location=?, leadership_role=?, leadership_level=?, reception_enabled=?, position_code=?, staff_code=? WHERE id=?""",
+               (request.form.get("full_name","").strip(),new_username,role,student_id,new_title,request.form.get("department","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),workspace_type,school_unit,school_location,leadership_role,leadership_level,reception_enabled,existing_code,existing_code,user_id))
         if role=="Parent" and student_id:
             execute("INSERT OR IGNORE INTO guardian_links(guardian_user_id,student_id,relationship,is_primary) VALUES(?,?,?,?)",(user_id,student_id,request.form.get("relationship","Guardian").strip() or "Guardian",1))
         audit(actor["id"],actor["full_name"],"Edit User",f"Updated {user['username']} ({user['role']}) -> {request.form.get('username','').strip()} ({role}).")
