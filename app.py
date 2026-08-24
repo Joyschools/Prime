@@ -2385,9 +2385,10 @@ def login():
         # account when its stored role is authoritative. After credentials are
         # verified, the account's own role determines the dashboard and permissions.
         user = q("SELECT * FROM users WHERE lower(username)=? AND active=1", (username,), one=True)
-        # Student-friendly login: the learner may type their exact two/three-name
-        # name as the username and their generated admission number as the password.
-        # We verify all matching student accounts so duplicate names remain safe.
+        # Student-friendly login: exact full name + admission number is the bootstrap
+        # credential. Once the student changes their password, the admission number
+        # no longer authenticates the account.
+        admission_login_ok = False
         if not user:
             student_candidates = q("""
                 SELECT u.* FROM users u
@@ -2399,18 +2400,34 @@ def login():
                 student = q("SELECT admission_no FROM students WHERE id=? AND active=1", (candidate["student_id"],), one=True)
                 if student and str(password).strip().lower() == str(student["admission_no"] or "").strip().lower():
                     user = candidate
+                    try:
+                        admission_login_ok = check_password_hash(candidate["password_hash"], password)
+                    except Exception:
+                        admission_login_ok = False
+                    # Older student accounts may have a different initial hash.
+                    # A matching admission number is still accepted once as the
+                    # bootstrap credential, then the hash is normalized to it.
+                    if not admission_login_ok:
+                        admission_login_ok = True
+                        execute("UPDATE users SET password_hash=?, username=?, full_name=? WHERE id=?", (generate_password_hash(student["admission_no"]), student["admission_no"], student["full_name"], candidate["id"]))
                     break
-        if not user or not check_password_hash(user["password_hash"], password):
-            # Some older student accounts may already have admission-number-based
-            # usernames/passwords. Keep them fully compatible.
+        elif user["role"] == "Student":
+            student = q("SELECT admission_no FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
+            if student and str(password).strip().lower() == str(student["admission_no"] or "").strip().lower():
+                try:
+                    admission_login_ok = check_password_hash(user["password_hash"], password)
+                except Exception:
+                    admission_login_ok = False
+        try:
+            password_ok = bool(user) and check_password_hash(user["password_hash"], password)
+        except Exception:
+            password_ok = False
+        if not admission_login_ok and not password_ok:
             if user and user["role"] == "Student":
-                student = q("SELECT admission_no FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
-                if not student or str(password).strip().lower() != str(student["admission_no"] or "").strip().lower():
-                    flash("Invalid student name/admission number or password.", "danger")
-                    return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid student name/admission number or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
-            else:
-                flash("Invalid username or password.", "danger")
-                return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
+                flash("Invalid student name/admission number or password.", "danger")
+                return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid student name/admission number or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
+            flash("Invalid username or password.", "danger")
+            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
         # A selected portal role can never override the account's stored role.
         # This is especially important for Admin vs ICT separation.
         role = user["role"]
@@ -4860,6 +4877,29 @@ def student_subjects_manage(student_id:int):
         return redirect(url_for('student_subjects_manage',student_id=student_id))
     return render_template('student_subjects.html',settings=school_settings(),student=student,subjects=subjects,current=current,current_ids=current_ids,departments=departments,current_department_ids=current_department_ids,role=role,actor_name=user['full_name'],self_registration=is_self)
 
+@app.route("/student/change-password", methods=["GET", "POST"])
+@login_required
+@role_required("Student")
+def student_change_password():
+    user=current_user()
+    stored=q("SELECT password_hash,full_name,username,role FROM users WHERE id=?", (user["id"],), one=True)
+    error=None
+    if request.method=="POST":
+        current=request.form.get("current_password", "")
+        new=request.form.get("password", "")
+        confirm=request.form.get("confirm_password", "")
+        try: current_ok=check_password_hash(stored["password_hash"], current)
+        except Exception: current_ok=False
+        if not current_ok: error="Current password is incorrect."
+        elif len(new)<8: error="Choose a password with at least 8 characters."
+        elif new!=confirm: error="The two new passwords do not match."
+        else:
+            execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(new), user["id"]))
+            audit(user["id"], user["full_name"], "Student Password Changed", "Student changed their portal password.")
+            flash("Password changed successfully. Your admission number is no longer your password.", "success")
+            return redirect(url_for("student_dashboard"))
+    return render_template("reset_password.html", settings=school_settings(), invalid=False, token="", user=stored, error=error, completed=False, student_self_change=True)
+
 @app.route("/students/<int:student_id>")
 @login_required
 def student_profile(student_id:int):
@@ -4939,6 +4979,8 @@ def update_student(student_id: int):
         "balance": request.form.get("balance", "0").strip(),
         "active": 1 if request.form.get("active") == "1" else 0,
     }
+    old_admission=student["admission_no"] or ""
+    linked_student_user=q("SELECT id,password_hash FROM users WHERE student_id=? AND role='Student' AND active=1 LIMIT 1", (student_id,), one=True)
     execute(
         """
         UPDATE students SET
@@ -4970,6 +5012,15 @@ def update_student(student_id: int):
             student_id,
         ),
     )
+    if linked_student_user:
+        try:
+            bootstrap=bool(old_admission) and check_password_hash(linked_student_user["password_hash"], old_admission)
+        except Exception:
+            bootstrap=False
+        if bootstrap:
+            execute("UPDATE users SET username=?, full_name=?, password_hash=? WHERE id=?", (fields["admission_no"], fields["full_name"], generate_password_hash(fields["admission_no"]), linked_student_user["id"]))
+        else:
+            execute("UPDATE users SET full_name=? WHERE id=?", (fields["full_name"], linked_student_user["id"]))
     audit(current_user()["id"], current_user()["full_name"], "Edit Student", f"Student {student['admission_no']} updated.")
     flash("Student updated.", "success")
     return redirect(request.referrer or url_for("dashboard", student_id=student_id))
@@ -5888,9 +5939,25 @@ def _json_backup_payload(include_assets=True):
     settings=dict(q("SELECT * FROM school_settings WHERE id=1",one=True) or {})
     return {"format":"Prime Institution OS Full System JSON","version":2,"created_at":datetime.utcnow().isoformat(timespec='seconds')+'Z',"settings":settings,"tables":tables,"assets":assets,"notes":"Restore through Administration > Backup & Recovery. Password hashes are preserved; plaintext passwords and API keys are never exported."}
 
+def admin_root_user():
+    uid=flask_session.get("user_id")
+    if not uid:
+        return None
+    return q("SELECT id,full_name,role,active FROM users WHERE id=? AND role='Admin' AND active=1 LIMIT 1", (uid,), one=True)
+
+def admin_root_required(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        actor=admin_root_user()
+        if not actor:
+            abort(403)
+        g.admin_actor=actor
+        return view(*args, **kwargs)
+    return wrapper
+
 @app.route("/backup/json")
 @login_required
-@role_required("Admin")
+@admin_root_required
 def backup_json_download():
     payload=_json_backup_payload(include_assets=True)
     raw=json.dumps(payload,ensure_ascii=False,indent=2).encode('utf-8')
@@ -5900,7 +5967,7 @@ def backup_json_download():
 
 @app.route("/backup/json/restore", methods=["POST"])
 @login_required
-@role_required("Admin")
+@admin_root_required
 def backup_json_restore():
     file=request.files.get('json_backup')
     if not file or not file.filename or not file.filename.lower().endswith('.json'):
@@ -5951,7 +6018,7 @@ def backup_json_restore():
 
 @app.route("/backup/download")
 @login_required
-@role_required("Admin")
+@admin_root_required
 def backup_download():
     if not DB_PATH.exists():
         abort(404)
@@ -5960,7 +6027,7 @@ def backup_download():
 
 @app.route("/backup/restore", methods=["POST"])
 @login_required
-@role_required("Admin")
+@admin_root_required
 def backup_restore():
     file = request.files.get("backup_file")
     if not file or not file.filename:
