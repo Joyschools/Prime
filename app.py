@@ -2617,7 +2617,16 @@ def teacher_class_attendance():
         return redirect(url_for('teacher_dashboard'))
     subject=request.values.get('subject','').strip() or 'General'
     date=request.values.get('attendance_date','').strip() or datetime.utcnow().strftime('%Y-%m-%d')
-    students=q('SELECT id,full_name,admission_no FROM students WHERE active=1 AND grade=? ORDER BY full_name',(cls,)) if cls else []
+    students=[]
+    if cls:
+        # Class teachers get the full class plus any individually allocated
+        # learners in that class. Subject teachers do not receive this route.
+        students=q("""SELECT DISTINCT s.id,s.full_name,s.admission_no
+                     FROM students s
+                     LEFT JOIN class_teacher_assignments cta ON cta.class_name=s.grade AND cta.teacher_user_id=?
+                     LEFT JOIN student_teacher_assignments sta ON sta.student_id=s.id AND sta.teacher_user_id=? AND sta.active=1 AND (sta.class_name='' OR sta.class_name=s.grade)
+                     WHERE s.active=1 AND s.grade=? AND (cta.id IS NOT NULL OR sta.id IS NOT NULL)
+                     ORDER BY s.full_name""",(user['id'],user['id'],cls))
     existing={r['student_id']:r for r in q('SELECT * FROM class_attendance WHERE teacher_user_id=? AND class_name=? AND subject=? AND attendance_date=?',(user['id'],cls,subject,date))} if cls else {}
     if request.method=='POST':
         saved=0
@@ -2626,7 +2635,18 @@ def teacher_class_attendance():
             note=request.form.get(f"note_{st['id']}",'').strip()
             if status not in {'Present','Absent','Late','Excused'}:
                 execute("DELETE FROM class_attendance WHERE teacher_user_id=? AND student_id=? AND class_name=? AND subject=? AND attendance_date=?",(user['id'],st['id'],cls,subject,date)); continue
-            execute("INSERT INTO class_attendance(teacher_user_id,student_id,class_name,subject,attendance_date,status,note) VALUES(?,?,?,?,?,?,?) ON CONFLICT(teacher_user_id,student_id,class_name,subject,attendance_date) DO UPDATE SET status=excluded.status,note=excluded.note",(user['id'],st['id'],cls,subject,date,status,note)); saved+=1
+            execute("INSERT INTO class_attendance(teacher_user_id,student_id,class_name,subject,attendance_date,status,note) VALUES(?,?,?,?,?,?,?) ON CONFLICT(teacher_user_id,student_id,class_name,subject,attendance_date) DO UPDATE SET status=excluded.status,note=excluded.note",(user['id'],st['id'],cls,subject,date,status,note))
+            # An absence reason is a permanent student record. Keep one
+            # attendance-reason record per learner/day/subject and update it
+            # when the teacher changes the reason.
+            if status == 'Absent' and note:
+                title=f'Attendance absence — {date}'
+                existing_record=q("SELECT id FROM student_records WHERE student_id=? AND author_user_id=? AND category='Attendance' AND title=? ORDER BY id DESC LIMIT 1",(st['id'],user['id'],title),one=True)
+                if existing_record:
+                    execute("UPDATE student_records SET content=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(note,existing_record['id']))
+                else:
+                    execute("INSERT INTO student_records(student_id,author_user_id,category,title,content,visible_to_parent) VALUES(?,?,?,?,?,?)",(st['id'],user['id'],'Attendance',title,note,0))
+            saved+=1
         flash(f'{saved} class attendance records saved.','success')
         return redirect(url_for('teacher_class_attendance',class_name=cls,subject=subject,attendance_date=date))
     return render_template('teacher_class_attendance.html',settings=school_settings(),actor_name=user['full_name'],assigned_classes=assigned,classes=assigned,students=students,selected_class=cls,subject=subject,attendance_date=date,existing=existing,role=user['role'])
@@ -3908,7 +3928,12 @@ def teacher_dashboard():
         return redirect(specialized_dashboard_for(current_user()))
     settings=school_settings(); user=current_user()
     assignments=q("SELECT * FROM teacher_assignments WHERE teacher_user_id=? AND active=1 ORDER BY class_name,subject",(user["id"],)) if user["role"]=="Teacher" else q("SELECT a.*,u.full_name AS teacher_name FROM teacher_assignments a JOIN users u ON u.id=a.teacher_user_id WHERE a.active=1 ORDER BY a.class_name,a.subject")
-    classes=sorted({r["class_name"] for r in assignments} | {r["class_name"] for r in q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=?",(user["id"],))})
+    # A teacher can receive learners directly from Admin even when the
+    # teacher has not created a separate teaching assignment. Include those
+    # allocated class names in the workspace so the learners actually appear.
+    allocated_class_rows=q("SELECT DISTINCT COALESCE(NULLIF(class_name,''), (SELECT grade FROM students WHERE id=student_id)) AS class_name FROM student_teacher_assignments WHERE teacher_user_id=? AND active=1 ORDER BY class_name",(user["id"],)) if user["role"]=="Teacher" else []
+    allocated_classes={r["class_name"] for r in allocated_class_rows if r["class_name"]}
+    classes=sorted({r["class_name"] for r in assignments} | {r["class_name"] for r in q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=?",(user["id"],))} | allocated_classes)
     assigned_class_rows=q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=? ORDER BY class_name",(user['id'],)) if user['role']=='Teacher' else q("SELECT class_name FROM class_teacher_assignments ORDER BY class_name")
     class_teacher_classes=[r['class_name'] for r in assigned_class_rows]
     students=[]

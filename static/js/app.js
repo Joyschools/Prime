@@ -73,15 +73,18 @@
     }
   }
 
-  document.addEventListener("click", (event) => {
-    if (!isPhoneLayout()) return;
-    if (!document.body.classList.contains("mobile-nav-open")) return;
-    if (event.target.closest(".sidebar") || event.target.closest(".sidebar-toggle") || event.target.closest("#prime-mobile-nav")) {
-      if (event.target.closest(".sidebar a")) window.setTimeout(() => document.body.classList.remove("mobile-nav-open"), 80);
+  function closeMobileOnOutside(event) {
+    if (!isPhoneLayout() || !document.body.classList.contains("mobile-nav-open")) return;
+    const target = event.target;
+    if (target?.closest?.(".sidebar") || target?.closest?.(".sidebar-toggle") || target?.closest?.("#prime-mobile-nav")) {
+      if (target?.closest?.(".sidebar a")) window.setTimeout(() => document.body.classList.remove("mobile-nav-open"), 60);
       return;
     }
     document.body.classList.remove("mobile-nav-open");
-  });
+  }
+  document.addEventListener("click", closeMobileOnOutside, true);
+  document.addEventListener("pointerdown", closeMobileOnOutside, true);
+  document.addEventListener("touchstart", closeMobileOnOutside, {passive:true, capture:true});
   window.addEventListener("resize", () => {
     if (!isPhoneLayout()) document.body.classList.remove("mobile-nav-open");
   });
