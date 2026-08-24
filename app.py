@@ -4952,9 +4952,18 @@ def save_settings():
 @login_required
 @role_required("Admin", "ICT")
 def add_student():
+    """Create a learner and its portal account as one dependable workflow.
+
+    The learner record is authoritative.  The portal account uses only the
+    guaranteed core users columns at creation time, then optional profile
+    columns are enriched separately.  This prevents a missing legacy column
+    or an old migration from turning a perfectly valid student addition into
+    a 500 error.
+    """
     if request.method == "GET":
         target = url_for("ict_dashboard") if current_user()["role"] == "ICT" else url_for("admin_dashboard")
         return redirect(target + "#admin-add-student")
+
     admission_no = request.form.get("admission_no", "").strip()
     full_name = request.form.get("full_name", "").strip()
     grade = request.form.get("grade", "").strip()
@@ -4970,6 +4979,7 @@ def add_student():
     allergies = request.form.get("allergies", "").strip()
     special_info = request.form.get("special_info", "").strip()
     notes = request.form.get("notes", "").strip()
+
     if not full_name or not grade:
         flash("Student name and grade are required.", "danger")
         return redirect(request.referrer or url_for("dashboard"))
@@ -4984,7 +4994,9 @@ def add_student():
 
     try:
         starting_balance = float(settings["school_fee"] or 0)
-        execute(
+
+        # 1) Create the actual learner record first and keep its id directly.
+        student_id = execute(
             """
             INSERT INTO students(
                 admission_no, full_name, grade,
@@ -4995,38 +5007,76 @@ def add_student():
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?, 1)
             """,
             (
-                admission_no,
-                full_name,
-                grade,
-                guardian_name,
-                guardian_phone,
-                guardian_email,
-                alt_guardian_name,
-                alt_guardian_phone,
-                alt_guardian_email,
-                student_phone,
-                student_email,
-                medical_condition,
-                allergies,
-                special_info,
-                notes,
+                admission_no, full_name, grade,
+                guardian_name, guardian_phone, guardian_email,
+                alt_guardian_name, alt_guardian_phone, alt_guardian_email,
+                student_phone, student_email, medical_condition, allergies, special_info, notes,
                 starting_balance,
             ),
         )
-        student_id_row=q("SELECT id FROM students WHERE admission_no=? LIMIT 1",(admission_no,),one=True)
-        student_id=student_id_row["id"] if student_id_row else None
-        # Every student receives a portal account automatically.
-        # Admission number is the initial password; exact full name is accepted at login.
-        existing_student_user = q("SELECT id FROM users WHERE student_id=? AND role='Student' AND active=1 LIMIT 1", (student_id,), one=True)
-        if not existing_student_user and student_id:
-            execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active,workspace_type,school_unit,qr_access_token,qr_login_enabled) VALUES(?,?,?,?,?,1,'Learning',?,lower(hex(randomblob(16))),0)",(full_name,admission_no,generate_password_hash(admission_no),"Student",student_id,school_settings()["school_name"],))
-        elif existing_student_user:
-            execute("UPDATE users SET full_name=?, username=?, password_hash=? WHERE id=?",(full_name,admission_no,generate_password_hash(admission_no),existing_student_user["id"]))
-        audit(current_user()["id"], current_user()["full_name"], "Add Student", f"{full_name} ({admission_no}) created; portal password initialized to admission number.")
-        flash("Student added. Their portal login is their full name and admission number.", "success")
-    except (sqlite3.IntegrityError, ValueError) as exc:
-        flash(str(exc) if isinstance(exc, ValueError) else "Admission number already exists.", "danger")
-    return redirect(request.referrer or url_for("dashboard"))
+        if not student_id:
+            raise RuntimeError("The student record was not assigned an ID.")
+
+        # 2) Always create the portal account using only columns that exist in
+        # the original users schema. Use an internal username so an admission
+        # number can safely change later without breaking account uniqueness.
+        internal_username = f"student-{student_id}"
+        existing = q("SELECT id FROM users WHERE student_id=? AND role='Student' LIMIT 1", (student_id,), one=True)
+        if existing:
+            portal_user_id = existing["id"]
+            execute(
+                "UPDATE users SET full_name=?, username=?, password_hash=?, role='Student', active=1 WHERE id=?",
+                (full_name, internal_username, generate_password_hash(admission_no), portal_user_id),
+            )
+        else:
+            portal_user_id = execute(
+                "INSERT INTO users(full_name,username,password_hash,role,student_id,active) VALUES(?,?,?,?,?,1)",
+                (full_name, internal_username, generate_password_hash(admission_no), "Student", student_id),
+            )
+        if not portal_user_id:
+            raise RuntimeError("The student portal account could not be created.")
+
+        # 3) Enrich optional user-profile columns only when they are available.
+        # Any failure here must not undo the learner/account creation.
+        optional_updates = []
+        optional_params = []
+        for column, value in (
+            ("workspace_type", "Student"),
+            ("school_unit", settings["school_name"]),
+            ("title", "Student"),
+            ("department", ""),
+        ):
+            try:
+                get_db().execute(f"SELECT {column} FROM users WHERE id=?", (portal_user_id,)).fetchone()
+                optional_updates.append(f"{column}=?")
+                optional_params.append(value)
+            except sqlite3.DatabaseError:
+                pass
+        if optional_updates:
+            try:
+                execute(f"UPDATE users SET {', '.join(optional_updates)} WHERE id=?", (*optional_params, portal_user_id))
+            except sqlite3.DatabaseError:
+                pass
+
+        audit(
+            current_user()["id"], current_user()["full_name"], "Add Student",
+            f"{full_name} ({admission_no}) created; student portal account created automatically; admission number initialized as password."
+        )
+        flash("Student added successfully. Their portal account is ready; login uses their full name and admission number.", "success")
+
+    except sqlite3.IntegrityError as exc:
+        # Keep the page usable and explain the common real-world case clearly.
+        message = "That admission number already exists. Please use the existing student's record or choose another admission number."
+        if "username" in str(exc).lower():
+            message = "That student account already exists. Please open the student's record instead of creating a duplicate account."
+        flash(message, "danger")
+    except (ValueError, RuntimeError, sqlite3.DatabaseError) as exc:
+        flash(f"Student could not be added: {str(exc) or 'database error'}. No staff account was created.", "danger")
+
+    ref = request.referrer or ""
+    if current_user()["role"] == "ICT":
+        return redirect(url_for("ict_dashboard") + "#ict-add-student")
+    return redirect(url_for("admin_dashboard") + "#admin-add-student")
 
 
 @app.route("/students/<int:student_id>/subjects", methods=["GET","POST"])
