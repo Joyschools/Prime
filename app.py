@@ -84,7 +84,7 @@ _AUTH_TICKET_COOKIE = "school_auth_ticket"
 _PORTAL_CONTEXT_MAX_AGE = 60 * 60 * 12
 _PORTAL_CONTEXT_SALT = "school-portal-context-v1"
 
-app = Flask(__name__, instance_path=str(INSTANCE_DIR), instance_relative_config=True)
+app = Flask(__name__, instance_path=str(INSTANCE_DIR), instance_relative_config=True, static_folder=None)
 app.config.update(
     MAX_CONTENT_LENGTH=20 * 1024 * 1024,
     TEMPLATES_AUTO_RELOAD=True,
@@ -308,27 +308,62 @@ def normalize_grade(value: str) -> str:
 
 
 def auto_place_new_student(student_id: int, grade: str, actor_id: int) -> dict:
-    """Enroll configured subjects for a class and attach its class/subject teachers."""
+    """Enroll configured subjects for a grade and attach class/subject teachers.
+
+    Matching is deliberately tolerant of legacy labels such as ``8`` / ``Grade 8``
+    so old school configurations cannot strand a newly registered learner.
+    """
     summary = {"class_teacher": None, "subjects": 0, "subject_teachers": 0}
     class_name = normalize_grade(grade)
-    class_teacher = q("SELECT teacher_user_id FROM class_teacher_assignments WHERE lower(class_name)=lower(?)", (class_name,), one=True)
+    raw_grade = str(grade or "").strip()
+    grade_variants = [class_name]
+    if class_name.lower().startswith("grade "):
+        grade_variants.append(class_name[6:].strip())
+    if raw_grade and raw_grade not in grade_variants:
+        grade_variants.append(raw_grade)
+
+    class_teacher = None
+    for variant in grade_variants:
+        class_teacher = q("SELECT teacher_user_id,class_name FROM class_teacher_assignments WHERE lower(trim(class_name))=lower(trim(?)) ORDER BY id LIMIT 1", (variant,), one=True)
+        if class_teacher:
+            break
     if class_teacher:
         teacher = q("SELECT id,full_name FROM users WHERE id=? AND role='Teacher' AND active=1", (class_teacher['teacher_user_id'],), one=True)
         if teacher:
             execute("INSERT OR IGNORE INTO student_teacher_assignments(student_id,teacher_user_id,class_name,subject,scope,assigned_by,active) VALUES(?,?,?,'General','Class Teacher',?,1)", (student_id,teacher['id'],class_name,actor_id))
             summary['class_teacher'] = teacher['full_name']
-    subject_rows = q("""SELECT subject FROM compulsory_subjects WHERE active=1 AND lower(class_name)=lower(?)
-                        UNION SELECT subject FROM teacher_assignments WHERE active=1 AND lower(class_name)=lower(?)
-                        ORDER BY subject""", (class_name,class_name))
-    for row in subject_rows:
-        subject = str(row['subject']).strip()
-        if not subject:
-            continue
-        cat = q("SELECT id FROM subjects_catalog WHERE lower(subject)=lower(?) AND active=1", (subject,), one=True)
+    # Build the subject set from both compulsory-subject configuration and explicit
+    # teacher assignments. Resolve against every grade variant so older records work.
+    subjects = set()
+    for variant in grade_variants:
+        for row in q("SELECT subject FROM compulsory_subjects WHERE active=1 AND lower(trim(class_name))=lower(trim(?))", (variant,)):
+            subject = str(row["subject"] or "").strip()
+            if subject:
+                subjects.add(subject)
+        for row in q("SELECT subject FROM teacher_assignments WHERE active=1 AND lower(trim(class_name))=lower(trim(?))", (variant,)):
+            subject = str(row["subject"] or "").strip()
+            if subject:
+                subjects.add(subject)
+
+    for subject in sorted(subjects, key=str.casefold):
+        # Missing catalog rows must not stop registration. Create the catalog entry
+        # from the configured subject assignment and then enroll the learner.
+        cat = q("SELECT id FROM subjects_catalog WHERE lower(trim(subject))=lower(trim(?) ) LIMIT 1", (subject,), one=True)
+        if not cat:
+            try:
+                new_cat_id = execute("INSERT INTO subjects_catalog(subject,department,level_scope,description,active,created_by) VALUES(?,?,?,?,1,?)", (subject, "", class_name, "Auto-created from grade allocation", actor_id))
+                cat = {"id": new_cat_id}
+            except sqlite3.IntegrityError:
+                cat = q("SELECT id FROM subjects_catalog WHERE lower(trim(subject))=lower(trim(?) ) LIMIT 1", (subject,), one=True)
         if cat:
             execute("INSERT INTO student_subjects(student_id,subject_id,status,selected_by) VALUES(?,?, 'Approved', ?) ON CONFLICT(student_id,subject_id) DO UPDATE SET status='Approved',selected_by=excluded.selected_by,updated_at=CURRENT_TIMESTAMP", (student_id,cat['id'],actor_id))
             summary['subjects'] += 1
-        teacher_row = q("SELECT teacher_user_id FROM teacher_assignments WHERE active=1 AND lower(class_name)=lower(?) AND lower(subject)=lower(?) ORDER BY id LIMIT 1", (class_name,subject), one=True)
+
+        teacher_row = None
+        for variant in grade_variants:
+            teacher_row = q("SELECT teacher_user_id FROM teacher_assignments WHERE active=1 AND lower(trim(class_name))=lower(trim(?)) AND lower(trim(subject))=lower(trim(?)) ORDER BY id LIMIT 1", (variant,subject), one=True)
+            if teacher_row:
+                break
         if teacher_row:
             teacher = q("SELECT id,full_name FROM users WHERE id=? AND role='Teacher' AND active=1", (teacher_row['teacher_user_id'],), one=True)
             if teacher:
@@ -5153,12 +5188,23 @@ def add_student():
              fields["medical_condition"],fields["allergies"],fields["special_info"],fields["notes"]))
 
         # Compatibility index: retain the same ID so every existing module keeps working.
-        execute("""INSERT INTO students(id,admission_no,full_name,grade,age,grade_category,guardian_name,guardian_phone,guardian_email,
-            alt_guardian_name,alt_guardian_phone,alt_guardian_email,student_phone,student_email,medical_condition,allergies,special_info,notes,
-            payment_status,balance,active) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)""",
-            (student_id,admission_no,full_name,grade,age,grade,fields["guardian_name"],fields["guardian_phone"],fields["guardian_email"],
-             fields["alt_guardian_name"],fields["alt_guardian_phone"],fields["alt_guardian_email"],fields["student_phone"],fields["student_email"],
-             fields["medical_condition"],fields["allergies"],fields["special_info"],fields["notes"],"Pending",starting_balance))
+        # Never assume the persistent legacy DB has exactly today's column set.
+        compat_conn = get_db()
+        compat_cols = table_columns(compat_conn, "students")
+        compat_values = {
+            "id": student_id, "admission_no": admission_no, "full_name": full_name,
+            "grade": grade, "age": age, "grade_category": grade,
+            "guardian_name": fields["guardian_name"], "guardian_phone": fields["guardian_phone"],
+            "guardian_email": fields["guardian_email"], "alt_guardian_name": fields["alt_guardian_name"],
+            "alt_guardian_phone": fields["alt_guardian_phone"], "alt_guardian_email": fields["alt_guardian_email"],
+            "student_phone": fields["student_phone"], "student_email": fields["student_email"],
+            "medical_condition": fields["medical_condition"], "allergies": fields["allergies"],
+            "special_info": fields["special_info"], "notes": fields["notes"],
+            "payment_status": "Pending", "balance": starting_balance, "active": 1,
+        }
+        cols = [c for c in compat_values if c in compat_cols]
+        placeholders = ",".join("?" for _ in cols)
+        execute(f"INSERT INTO students({','.join(cols)}) VALUES({placeholders})", tuple(compat_values[c] for c in cols))
 
         internal_username = f"student-{student_id}"
         portal_user_id = execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active) VALUES(?,?,?,?,?,1)",
@@ -6532,6 +6578,19 @@ def backup_restore():
         if temp_path.exists(): temp_path.unlink(missing_ok=True)
         flash(f"Restore failed safely: {exc}", "danger")
     return redirect(request.referrer or url_for("admin_dashboard"))
+
+
+@app.route("/static/<path:filename>")
+def prime_static(filename: str):
+    """Explicit static serving for production diagnostics and reliable asset delivery."""
+    from flask import send_from_directory
+    target = (BASE_DIR / "static" / filename).resolve()
+    static_root = (BASE_DIR / "static").resolve()
+    if static_root not in target.parents and target != static_root:
+        abort(404)
+    if not target.exists() or not target.is_file():
+        abort(404)
+    return send_from_directory(static_root, filename, conditional=True, etag=True, max_age=3600)
 
 
 @app.route("/uploads/<path:filename>")
