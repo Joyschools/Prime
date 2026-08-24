@@ -581,6 +581,7 @@ def _init_db_once() -> None:
         ensure_column(conn, "school_settings", "landing_show_roles INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "school_settings", "theme_preset TEXT NOT NULL DEFAULT 'classic'")
 
+        ensure_column(conn, "students", "age TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "students", "guardian_name TEXT")
         ensure_column(conn, "students", "guardian_phone TEXT")
         ensure_column(conn, "students", "guardian_email TEXT")
@@ -1002,7 +1003,7 @@ def _init_db_once() -> None:
         if conn.execute("SELECT COUNT(*) FROM system_help").fetchone()[0] == 0:
             help_rows=[
                 ('Getting started','Getting Started','Use the navigation to open your workspace. Administrators manage people, institution settings, security, backups and permissions.','All',10),
-                ('Managing people','People & Access','Open People & Access to create, edit, archive and restore accounts. Role controls the security boundary; title and department describe institutional responsibility.','Admin',20),
+                ('Managing records','Staff & Learners','Use Staff for workforce accounts and Academics for learner and parent records. Role controls the security boundary; title and department describe institutional responsibility.','Admin',20),
                 ('Learner records','Learners','Learner profiles contain identity, class/grade, guardian links, contact details, accountability information, academic and finance references.','All',30),
                 ('Finance posting','Finance','Finance officers can post institutional income, expenses and payroll. Posted transactions are immutable; only an Administrator may reverse one.','Finance,Admin',40),
                 ('Library resources','Library','Library staff can catalogue books, past papers, notes, images, uploaded documents, YouTube resources and external websites and assign resources to classes or subjects.','Teacher,Student,Parent,Librarian,Admin,ICT',50),
@@ -1013,7 +1014,7 @@ def _init_db_once() -> None:
 
         guide_seed = [
             ("portal-user-guide", "Portal Guide", "A professional orientation to the institution portal: sign in through the appropriate role, use the workspace navigation to reach academic, communication, attendance and support services, review notifications and important dates routinely, protect your credentials, and use the institution help centre when a process requires assistance. Administrative, ICT and Finance procedures are intentionally kept within their restricted workspaces and are not published as public navigation links.", "All", 5),
-            ("admin-guide", "Administrator Guide", "Administrators manage institutional structure, accounts, permissions, security controls, backups, public-facing information and system-wide visual settings. Use People & Access for account lifecycle management; use institution and branding controls for public content; review audit and backup facilities regularly; and use direct account access only for legitimate support or oversight. Restricted administrator paths are deliberately omitted from public guides.", "Admin", 15),
+            ("admin-guide", "Administrator Guide", "Administrators manage institutional structure, accounts, permissions, security controls, backups, public-facing information and system-wide visual settings. Use Staff for workforce account lifecycle management and Academics for learner and parent records; use institution and branding controls for public content; review audit and backup facilities regularly; and use direct account access only for legitimate support or oversight. Restricted administrator paths are deliberately omitted from public guides.", "Admin", 15),
             ("ict-guide", "ICT Guide", "ICT personnel maintain technical operations, user support, attendance technology, device access, public landing-page presentation and institution-wide workspace settings. Use the ICT control deck for technical configuration and support tasks. Avoid exposing administrator-only security controls or finance processes to ordinary portal users.", "ICT", 25),
             ("finance-guide", "Finance Guide", "Finance personnel manage approved fee structures, payments, ledger entries, institutional income, expenditure, payroll and daily handovers. Post records against the correct category and reference, preserve supporting documentation, and escalate reversals or exceptional corrections to an Administrator. Financial controls are intentionally concealed from public and teaching workspaces.", "Finance", 35),
             ("driver-guide", "Driver Guide", "English: Start a trip with the assigned vehicle and route, keep the trip active only while operating the institution journey, share location only while on duty when enabled, use attendance check-in/out when required, review notifications and important dates, and stop the trip when the journey ends.\n\nKiswahili: Anzisha safari kwa gari na njia uliyopewa, acha safari ikiwa hai tu unapokuwa unaendesha safari ya taasisi, tumia ushiriki wa eneo ukiwa kazini unapowashwa, tumia kuingia/kutoka kazini inapohitajika, angalia taarifa na tarehe muhimu, kisha simamisha safari safari inapokamilika.", "Driver", 45),
@@ -2028,28 +2029,35 @@ def teacher_or_admin() -> bool:
     return bool(current_user() and current_user()["role"] in {"Teacher", "Admin"})
 
 def parent_children(user):
-    """Return children the authenticated Parent may legitimately switch to."""
-    if not user or user["role"] != "Parent" or not user["student_id"]:
+    """Return every learner explicitly linked to the authenticated Parent.
+
+    Explicit guardian_links are authoritative; legacy contact matching is only
+    a fallback for older records that predate the multi-child guardian links.
+    """
+    if not user or user["role"] != "Parent":
         return []
-    linked = q("SELECT * FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
-    if not linked:
+    linked = q("""SELECT s.*
+                 FROM guardian_links gl
+                 JOIN students s ON s.id=gl.student_id
+                 WHERE gl.guardian_user_id=? AND gl.active=1 AND s.active=1
+                 ORDER BY s.grade,s.full_name""", (user["id"],))
+    if linked:
+        return linked
+    if not user["student_id"]:
         return []
-    # Prefer stable guardian contact fields; names are a fallback for older records.
+    child = q("SELECT * FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
+    if not child:
+        return []
     filters=[]; params=[]
     for column in ("guardian_phone", "guardian_email", "alt_guardian_phone", "alt_guardian_email"):
-        value=linked[column]
+        value=child[column]
         if value:
             filters.append(f"{column}=?"); params.append(value)
-    if not filters and linked["guardian_name"]:
-        filters.append("guardian_name=?"); params.append(linked["guardian_name"])
+    if not filters and child["guardian_name"]:
+        filters.append("guardian_name=?"); params.append(child["guardian_name"])
     if not filters:
-        return [linked]
-    sql="SELECT * FROM students WHERE active=1 AND (" + " OR ".join(filters) + ") ORDER BY full_name"
-    children=q(sql, params)
-    # Always include the explicitly linked child even if legacy contact data is incomplete.
-    if not any(row["id"] == linked["id"] for row in children):
-        children=[linked, *children]
-    return children
+        return [child]
+    return q("SELECT * FROM students WHERE active=1 AND ("+" OR ".join(filters)+") ORDER BY full_name", params)
 
 
 def can_access_student(student_id: int, *, write: bool=False) -> bool:
@@ -2463,6 +2471,7 @@ def login():
         # credential. Once the student changes their password, the admission number
         # no longer authenticates the account.
         admission_login_ok = False
+        parent_name_login_ok = False
         if not user:
             student_candidates = q("""
                 SELECT u.* FROM users u
@@ -2485,6 +2494,17 @@ def login():
                         admission_login_ok = True
                         execute("UPDATE users SET password_hash=?, username=?, full_name=? WHERE id=?", (generate_password_hash(student["admission_no"]), student["admission_no"], student["full_name"], candidate["id"]))
                     break
+        if not user:
+            parent_candidates = q("SELECT * FROM users WHERE active=1 AND role='Parent' AND lower(trim(full_name))=? ORDER BY id DESC", (username,))
+            for candidate in parent_candidates:
+                try:
+                    if check_password_hash(candidate["password_hash"], password):
+                        user = candidate
+                        parent_name_login_ok = True
+                        break
+                except Exception:
+                    continue
+
         elif user["role"] == "Student":
             student = q("SELECT admission_no FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
             if student and str(password).strip().lower() == str(student["admission_no"] or "").strip().lower():
@@ -2496,7 +2516,7 @@ def login():
             password_ok = bool(user) and check_password_hash(user["password_hash"], password)
         except Exception:
             password_ok = False
-        if not admission_login_ok and not password_ok:
+        if not admission_login_ok and not parent_name_login_ok and not password_ok:
             if user and user["role"] == "Student":
                 flash("Invalid student name/admission number or password.", "danger")
                 return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid student name/admission number or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
@@ -4967,6 +4987,7 @@ def add_student():
     admission_no = request.form.get("admission_no", "").strip()
     full_name = request.form.get("full_name", "").strip()
     grade = request.form.get("grade", "").strip()
+    age = request.form.get("age", "").strip()
     guardian_name = request.form.get("guardian_name", "").strip()
     guardian_phone = request.form.get("guardian_phone", "").strip()
     guardian_email = request.form.get("guardian_email", "").strip()
@@ -4999,7 +5020,7 @@ def add_student():
         student_id = execute(
             """
             INSERT INTO students(
-                admission_no, full_name, grade,
+                admission_no, full_name, grade, age,
                 guardian_name, guardian_phone, guardian_email,
                 alt_guardian_name, alt_guardian_phone, alt_guardian_email,
                 student_phone, student_email, medical_condition, allergies, special_info, notes,
@@ -5007,7 +5028,7 @@ def add_student():
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?, 1)
             """,
             (
-                admission_no, full_name, grade,
+                admission_no, full_name, grade, age,
                 guardian_name, guardian_phone, guardian_email,
                 alt_guardian_name, alt_guardian_phone, alt_guardian_email,
                 student_phone, student_email, medical_condition, allergies, special_info, notes,
@@ -5605,18 +5626,59 @@ def admin_login_access():
     flash(f"Login page is now {state}.", "success")
     return redirect(url_for("admin_dashboard"))
 
+@app.route("/admin/parent/add", methods=["POST"])
+@login_required
+@role_required("Admin")
+def add_parent_account():
+    parent_name=request.form.get("parent_full_name", "").strip()
+    parent_email=request.form.get("parent_email", "").strip()
+    parent_phone=request.form.get("parent_phone", "").strip()
+    password=request.form.get("parent_password", "")
+    relationship=request.form.get("relationship", "Parent/Guardian").strip() or "Parent/Guardian"
+    enable_portal=bool(request.form.get("enable_parent_portal"))
+    student_ids=[]
+    for raw in request.form.getlist("student_ids"):
+        try: student_ids.append(int(raw))
+        except Exception: pass
+    student_ids=list(dict.fromkeys(student_ids))
+    students=q(f"SELECT id,full_name,admission_no,grade FROM students WHERE active=1 AND id IN ({','.join('?'*len(student_ids))}) ORDER BY grade,full_name", tuple(student_ids)) if student_ids else []
+    if not parent_name or not students:
+        flash("Enter the parent/guardian name and select at least one existing student.", "danger")
+        return redirect(url_for("admin_dashboard")+"#admin-add-student")
+    if enable_portal and len(password) < 4:
+        flash("A parent portal password must be at least 4 characters, or leave portal access disabled.", "danger")
+        return redirect(url_for("admin_dashboard")+"#admin-add-student")
+    try:
+        if enable_portal:
+            internal_username=f"parent-{uuid.uuid4().hex[:12]}"
+            uid=execute("""INSERT INTO users(full_name,username,password_hash,role,student_id,active,phone,email,title,workspace_type)
+                           VALUES(?,?,?,?,?,1,?,?,?,?)""",
+                        (parent_name,internal_username,generate_password_hash(password),"Parent",students[0]["id"],parent_phone,parent_email,"Parent / Guardian","Parent"))
+            for st in students:
+                execute("INSERT OR IGNORE INTO guardian_links(guardian_user_id,student_id,relationship,is_primary) VALUES(?,?,?,?)",(uid,st["id"],relationship,1 if st["id"]==students[0]["id"] else 0))
+                execute("UPDATE students SET guardian_name=COALESCE(NULLIF(guardian_name,''),?), guardian_phone=COALESCE(NULLIF(guardian_phone,''),?), guardian_email=COALESCE(NULLIF(guardian_email,''),?) WHERE id=?",(parent_name,parent_phone,parent_email,st["id"]))
+            audit(current_user()["id"],current_user()["full_name"],"Add Parent",f"Parent {parent_name} linked to {len(students)} learner(s). Portal enabled.")
+            flash(f"Parent account created and linked to {len(students)} student(s). Parent login uses the registered full name and password.","success")
+        else:
+            # Keep contact details on the selected learners without exposing a portal account.
+            for st in students:
+                execute("UPDATE students SET guardian_name=?,guardian_phone=?,guardian_email=? WHERE id=?",(parent_name,parent_phone,parent_email,st["id"]))
+            audit(current_user()["id"],current_user()["full_name"],"Add Parent Contact",f"Parent contact {parent_name} linked to {len(students)} learner(s); portal disabled.")
+            flash(f"Parent contact saved for {len(students)} student(s). Portal access was left disabled.","success")
+    except sqlite3.IntegrityError as exc:
+        flash(f"Parent could not be saved: {exc}","danger")
+    return redirect(url_for("admin_dashboard")+"#admin-add-student")
+
 @app.route("/users/add", methods=["GET", "POST"])
 @login_required
 def add_user():
     actor=current_user()
     if actor["role"] not in {"Admin","ICT"}: abort(403)
-    # GET is an entry point used by the People & Access directory.
+    # GET is an entry point retained for older Staff directory links.
     # Keep the actual form in the role dashboard so permissions and fields
     # stay centralized, but never expose a dead /users/add URL.
     if request.method == "GET":
-        if actor["role"] == "Admin":
-            return redirect(url_for("admin_dashboard") + "#admin-add-user")
-        return redirect(url_for("ict_dashboard") + "#ict-add-user")
+        return redirect(url_for("all_employees", add=1))
     full_name=request.form.get("full_name", "").strip()
     username=request.form.get("username", "").strip().lower()
     password=request.form.get("password", "")
@@ -6046,7 +6108,7 @@ def all_employees():
     for r in rows:
         r['check_in_local']=_local_iso(_parse_stored_event(r.get('check_in_at'))) if r.get('check_in_at') else None
         r['check_out_local']=_local_iso(_parse_stored_event(r.get('check_out_at'))) if r.get('check_out_at') else None
-    return render_template("directory.html", directory_type="Employees", rows=rows, settings=school_settings(), role=current_user()["role"], actor_name=current_user()["full_name"], guardian_map={}, today=today)
+    return render_template("directory.html", directory_type="Employees", rows=rows, settings=school_settings(), role=current_user()["role"], actor_name=current_user()["full_name"], guardian_map={}, today=today, add_mode=bool(request.args.get("add")), all_roles=ALL_PORTAL_ROLES, departments=q("SELECT id,name,category FROM departments WHERE active=1 ORDER BY name"))
 
 @app.route("/users/<int:user_id>/qr")
 @login_required
