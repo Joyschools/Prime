@@ -57,7 +57,6 @@ else:
     DATA_DIR = INSTANCE_DIR
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "school.db"
-STUDENT_DB_PATH = DATA_DIR / "students.db"
 SECRET_FILE = DATA_DIR / "secret.key"
 UPLOAD_DIR = DATA_DIR / "uploads"
 PERSISTENT_STORAGE = DATA_DIR != INSTANCE_DIR
@@ -84,7 +83,7 @@ _AUTH_TICKET_COOKIE = "school_auth_ticket"
 _PORTAL_CONTEXT_MAX_AGE = 60 * 60 * 12
 _PORTAL_CONTEXT_SALT = "school-portal-context-v1"
 
-app = Flask(__name__, instance_path=str(INSTANCE_DIR), instance_relative_config=True, static_folder=None)
+app = Flask(__name__, instance_path=str(INSTANCE_DIR), instance_relative_config=True, static_folder=str(BASE_DIR / "static"), static_url_path="/static")
 app.config.update(
     MAX_CONTENT_LENGTH=20 * 1024 * 1024,
     TEMPLATES_AUTO_RELOAD=True,
@@ -204,97 +203,67 @@ def close_db(_: Any) -> None:
     db = g.pop("db", None)
     if db is not None:
         db.close()
-    student_db = g.pop("student_db", None)
-    if student_db is not None:
-        student_db.close()
 
 
-def get_student_db() -> sqlite3.Connection:
-    """Dedicated learner store. The school DB keeps the compatibility index used by legacy modules."""
-    if "student_db" not in g:
-        conn = sqlite3.connect(STUDENT_DB_PATH, timeout=30)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = FULL")
-        conn.execute("PRAGMA busy_timeout = 30000")
-        g.student_db = conn
-    return g.student_db
+def migrate_legacy_student_store() -> None:
+    """One-time migration from the old standalone students.db into school.db.
 
-
-def init_student_store() -> None:
-    STUDENT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if STUDENT_DB_PATH.exists() and not _sqlite_integrity_ok(STUDENT_DB_PATH):
-        _quarantine_corrupt_db(STUDENT_DB_PATH)
-    with sqlite3.connect(STUDENT_DB_PATH, timeout=30) as conn:
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = FULL")
-        conn.execute("PRAGMA busy_timeout = 30000")
-        conn.executescript("""
-        CREATE TABLE IF NOT EXISTS students (
-            id INTEGER PRIMARY KEY,
-            admission_no TEXT NOT NULL UNIQUE,
-            full_name TEXT NOT NULL,
-            grade TEXT NOT NULL,
-            grade_category TEXT NOT NULL DEFAULT '',
-            age TEXT NOT NULL DEFAULT '',
-            guardian_name TEXT NOT NULL DEFAULT '',
-            guardian_phone TEXT NOT NULL DEFAULT '',
-            guardian_email TEXT NOT NULL DEFAULT '',
-            alt_guardian_name TEXT NOT NULL DEFAULT '',
-            alt_guardian_phone TEXT NOT NULL DEFAULT '',
-            alt_guardian_email TEXT NOT NULL DEFAULT '',
-            student_phone TEXT NOT NULL DEFAULT '',
-            student_email TEXT NOT NULL DEFAULT '',
-            medical_condition TEXT NOT NULL DEFAULT '',
-            allergies TEXT NOT NULL DEFAULT '',
-            special_info TEXT NOT NULL DEFAULT '',
-            notes TEXT NOT NULL DEFAULT '',
-            active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_student_store_grade ON students(active, grade_category, full_name);
-        CREATE INDEX IF NOT EXISTS idx_student_store_admission ON students(admission_no);
-        """)
-        # Backfill the dedicated store from the existing compatibility table.
+    The portal now has one authoritative database. If an older deployment still
+    has students.db, merge any learners not already present by admission number,
+    then remove the old file only after the school database transaction succeeds.
+    """
+    legacy = DATA_DIR / "students.db"
+    if not legacy.exists():
+        return
+    try:
+        if not _sqlite_integrity_ok(legacy):
+            app.logger.warning("Ignoring invalid legacy students.db; school.db remains authoritative.")
+            return
+        with sqlite3.connect(legacy, timeout=30) as src:
+            src.row_factory = sqlite3.Row
+            rows = src.execute("SELECT * FROM students ORDER BY id").fetchall()
+        db = get_db()
+        db.execute("BEGIN")
         try:
-            rows = conn.execute("SELECT id,admission_no,full_name,grade,guardian_name,guardian_phone,guardian_email,alt_guardian_name,alt_guardian_phone,alt_guardian_email,student_phone,student_email,medical_condition,allergies,special_info,notes,active,created_at,updated_at FROM main_school_students").fetchall()
-        except sqlite3.DatabaseError:
-            rows = []
-        if not rows and DB_PATH.exists():
+            main_cols = table_columns(db, "students")
+            for row in rows:
+                data = {k: row[k] for k in row.keys()}
+                admission = str(data.get("admission_no") or "").strip()
+                name = str(data.get("full_name") or "").strip()
+                grade = str(data.get("grade") or "").strip()
+                if not admission or not name or not grade:
+                    continue
+                existing = db.execute("SELECT id FROM students WHERE admission_no=?", (admission,)).fetchone()
+                if existing:
+                    continue
+                values = {
+                    "admission_no": admission, "full_name": name, "grade": grade,
+                    "guardian_name": data.get("guardian_name") or "",
+                    "guardian_phone": data.get("guardian_phone") or "",
+                    "guardian_email": data.get("guardian_email") or "",
+                    "alt_guardian_name": data.get("alt_guardian_name") or "",
+                    "alt_guardian_phone": data.get("alt_guardian_phone") or "",
+                    "alt_guardian_email": data.get("alt_guardian_email") or "",
+                    "student_phone": data.get("student_phone") or "", "student_email": data.get("student_email") or "",
+                    "medical_condition": data.get("medical_condition") or "", "allergies": data.get("allergies") or "",
+                    "special_info": data.get("special_info") or "", "notes": data.get("notes") or "",
+                    "payment_status": data.get("payment_status") or "Pending", "balance": data.get("balance") or 0,
+                    "active": 1 if data.get("active", 1) else 0, "age": data.get("age") or "",
+                }
+                cols=[c for c in values if c in main_cols]
+                db.execute(f"INSERT INTO students({','.join(cols)}) VALUES({','.join('?' for _ in cols)})", tuple(values[c] for c in cols))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        for suffix in ("", "-wal", "-shm"):
             try:
-                with sqlite3.connect(DB_PATH, timeout=30) as source:
-                    source.row_factory = sqlite3.Row
-                    cols = {r[1] for r in source.execute("PRAGMA table_info(students)").fetchall()}
-                    if "students" in {r[0] for r in source.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}:
-                        select_cols = [c for c in ("id","admission_no","full_name","grade","guardian_name","guardian_phone","guardian_email","alt_guardian_name","alt_guardian_phone","alt_guardian_email","student_phone","student_email","medical_condition","allergies","special_info","notes","active","created_at","updated_at") if c in cols]
-                        src_rows = source.execute(f"SELECT {','.join(select_cols)} FROM students").fetchall()
-                        for r in src_rows:
-                            data = {c: (r[c] if c in r.keys() else '') for c in select_cols}
-                            grade = str(data.get('grade') or '').strip()
-                            conn.execute("""INSERT OR IGNORE INTO students(
-                                id,admission_no,full_name,grade,grade_category,age,guardian_name,guardian_phone,guardian_email,
-                                alt_guardian_name,alt_guardian_phone,alt_guardian_email,student_phone,student_email,medical_condition,allergies,
-                                special_info,notes,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                            """, (data.get('id'),data.get('admission_no',''),data.get('full_name',''),grade,grade,data.get('age',''),data.get('guardian_name','') or '',data.get('guardian_phone','') or '',data.get('guardian_email','') or '',data.get('alt_guardian_name','') or '',data.get('alt_guardian_phone','') or '',data.get('alt_guardian_email','') or '',data.get('student_phone','') or '',data.get('student_email','') or '',data.get('medical_condition','') or '',data.get('allergies','') or '',data.get('special_info','') or '',data.get('notes','') or '',1 if data.get('active',1) else 0,data.get('created_at'),data.get('updated_at')))
-            except sqlite3.DatabaseError:
+                legacy.with_name(legacy.name + suffix).unlink(missing_ok=True)
+            except OSError:
                 pass
-        conn.commit()
-
-
-def student_store_execute(sql: str, params=()) -> int:
-    db = get_student_db()
-    cur = db.execute(sql, tuple(params))
-    db.commit()
-    return cur.lastrowid
-
-
-def student_store_q(sql: str, params=(), one=False):
-    cur = get_student_db().execute(sql, tuple(params))
-    rows = cur.fetchall()
-    cur.close()
-    return rows[0] if one and rows else (None if one else rows)
+        app.logger.info("Legacy students.db migrated and removed; school.db is now the only learner database.")
+    except Exception:
+        app.logger.exception("Legacy student database migration failed; leaving students.db untouched for safety.")
 
 
 def normalize_grade(value: str) -> str:
@@ -305,6 +274,27 @@ def normalize_grade(value: str) -> str:
     if m:
         return f"Grade {int(m.group(1))}"
     return value.title() if value.islower() else value
+
+
+def next_admission_no() -> str:
+    """Return the next collision-free admission number from school_settings."""
+    settings = school_settings()
+    prefix = str(settings["admission_prefix"] or "ADM-")
+    suffix = str(settings["admission_suffix"] or "")
+    rows = q("SELECT admission_no FROM students WHERE admission_no IS NOT NULL", one=False)
+    pattern = re.compile(r"^" + re.escape(prefix) + r"(\d+)" + re.escape(suffix) + r"$", re.I)
+    highest = 0
+    for row in rows:
+        value = str(row["admission_no"] or "").strip()
+        match = pattern.match(value)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    candidate = highest + 1
+    while True:
+        admission = f"{prefix}{candidate:03d}{suffix}"
+        if not q("SELECT id FROM students WHERE admission_no=?", (admission,), one=True):
+            return admission
+        candidate += 1
 
 
 def auto_place_new_student(student_id: int, grade: str, actor_id: int) -> dict:
@@ -3250,28 +3240,6 @@ def reception_checkout_visit(visit_id):
     notify_users(reception_admin_ids(),'Reception: person checked OUT',f"{visit['full_name']} left reception at {now}.",url_for('reception_dashboard'))
     flash(f"{visit['full_name']} checked out.",'success'); return redirect(url_for('reception_dashboard'))
 
-@app.route("/reception/student/register",methods=["POST"])
-@login_required
-def reception_register_student():
-    actor=current_user()
-    if not is_reception_user(actor): abort(403)
-    name=request.form.get('full_name','').strip(); grade=request.form.get('grade','').strip(); adm=request.form.get('admission_no','').strip() or next_admission_no()
-    if not name or not grade: flash('Student name and class/grade are required.','danger'); return redirect(url_for('reception_dashboard'))
-    try:
-        sid=execute("INSERT INTO students(admission_no,full_name,grade,student_phone,student_email,guardian_name,guardian_phone,balance,payment_status,active) VALUES(?,?,?,?,?,?,?,?,?,1)",(adm,name,grade,request.form.get('student_phone','').strip(),request.form.get('student_email','').strip(),request.form.get('guardian_name','').strip(),request.form.get('guardian_phone','').strip(),0,'Paid'))
-        for value in request.form.getlist('department_ids'):
-            try: execute("INSERT OR IGNORE INTO student_departments(student_id,department_id,status,selected_by) VALUES(?,?,?,?)",(sid,int(value),'Approved',actor['id']))
-            except Exception: pass
-        for value in request.form.getlist('subject_ids'):
-            try:
-                execute("INSERT OR IGNORE INTO student_subjects(student_id,subject_id,status,selected_by) VALUES(?,?,?,?)",(sid,int(value),'Approved',actor['id']))
-            except Exception: pass
-        audit(actor['id'],actor['full_name'],'Reception Student Registration',f'{name} registered as {adm} for {grade}.')
-        flash(f'{name} registered successfully. Admission: {adm}','success')
-    except sqlite3.IntegrityError:
-        flash('Admission number already exists.','danger')
-    return redirect(url_for('reception_dashboard'))
-
 @app.route("/reception/staff/register",methods=["POST"])
 @login_required
 def reception_register_staff():
@@ -5140,14 +5108,17 @@ def save_settings():
     return redirect(url_for("admin_dashboard"))
 
 
-@app.route("/students/add", methods=["GET", "POST"])
+@app.route("/admin/students/add", methods=["GET", "POST"])
 @login_required
-@role_required("Admin", "ICT")
+@role_required("Admin")
 def add_student():
-    """Canonical learner intake. Dedicated students.db is authoritative for the profile."""
+    """Single, administrator-only learner intake path.
+
+    Only the identity fields are required. Everything else is optional enrichment;
+    a missing optional field can never stop the learner from being created.
+    """
     if request.method == "GET":
-        target = url_for("ict_dashboard") if current_user()["role"] == "ICT" else url_for("admin_dashboard")
-        return redirect(target + ("#ict-add-student" if current_user()["role"] == "ICT" else "#admin-add-student"))
+        return redirect(url_for("admin_dashboard") + "#admin-add-student")
 
     actor = current_user()
     admission_no = (request.form.get("admission_no") or "").strip()
@@ -5159,8 +5130,8 @@ def add_student():
         "student_phone","student_email","medical_condition","allergies","special_info","notes")}
 
     if not full_name or not grade:
-        flash("Student name and grade are required.", "danger")
-        return redirect(request.referrer or url_for("dashboard"))
+        flash("Student name and grade are required. All other fields may be left blank.", "danger")
+        return redirect(url_for("admin_dashboard") + "#admin-add-student")
 
     settings = school_settings()
     if not admission_no:
@@ -5170,100 +5141,55 @@ def add_student():
     if settings["student_name_suffix"]:
         full_name = f"{full_name} {settings['student_name_suffix']}".strip()
 
-    # Validate both stores before writing anything.
-    if q("SELECT id FROM students WHERE admission_no=?", (admission_no,), one=True) or student_store_q("SELECT id FROM students WHERE admission_no=?", (admission_no,), one=True):
+    if q("SELECT id FROM students WHERE admission_no=?", (admission_no,), one=True):
         flash("That admission number already exists. Open the existing learner instead of creating a duplicate.", "danger")
-        return redirect(url_for("ict_dashboard" if actor["role"] == "ICT" else "admin_dashboard") + ("#ict-add-student" if actor["role"] == "ICT" else "#admin-add-student"))
+        return redirect(url_for("admin_dashboard") + "#admin-add-student")
 
-    starting_balance = float(settings["school_fee"] or 0)
+    fee = float(settings["school_fee"] or 0)
     student_id = None
     warnings = []
     try:
-        # AUTHORITATIVE WRITE: the dedicated student store is the only operation that
-        # is allowed to determine whether the learner exists. Everything else below
-        # is best-effort compatibility/enrichment and must never prevent registration.
-        student_id = student_store_execute("""INSERT INTO students(
-            admission_no,full_name,grade,grade_category,age,guardian_name,guardian_phone,guardian_email,
-            alt_guardian_name,alt_guardian_phone,alt_guardian_email,student_phone,student_email,medical_condition,allergies,
-            special_info,notes,active) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)""",
-            (admission_no,full_name,grade,grade,age,fields["guardian_name"],fields["guardian_phone"],fields["guardian_email"],
+        student_id = execute("""INSERT INTO students(
+            admission_no,full_name,grade,age,guardian_name,guardian_phone,guardian_email,
+            alt_guardian_name,alt_guardian_phone,alt_guardian_email,student_phone,student_email,
+            medical_condition,allergies,special_info,notes,payment_status,balance,active)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)""",
+            (admission_no,full_name,grade,age,fields["guardian_name"],fields["guardian_phone"],fields["guardian_email"],
              fields["alt_guardian_name"],fields["alt_guardian_phone"],fields["alt_guardian_email"],fields["student_phone"],fields["student_email"],
-             fields["medical_condition"],fields["allergies"],fields["special_info"],fields["notes"]))
+             fields["medical_condition"],fields["allergies"],fields["special_info"],fields["notes"],"Pending",fee))
 
-        # BEST-EFFORT legacy compatibility mirror. A legacy schema mismatch, missing
-        # optional field, or old constraint cannot cancel the authoritative learner.
+        # Optional portal account: never let a secondary account/schema problem
+        # undo the authoritative learner record.
         try:
-            compat_conn = get_db()
-            compat_cols = table_columns(compat_conn, "students")
-            compat_values = {
-                "id": student_id, "admission_no": admission_no, "full_name": full_name,
-                "grade": grade, "age": age, "grade_category": grade,
-                "guardian_name": fields["guardian_name"], "guardian_phone": fields["guardian_phone"],
-                "guardian_email": fields["guardian_email"], "alt_guardian_name": fields["alt_guardian_name"],
-                "alt_guardian_phone": fields["alt_guardian_phone"], "alt_guardian_email": fields["alt_guardian_email"],
-                "student_phone": fields["student_phone"], "student_email": fields["student_email"],
-                "medical_condition": fields["medical_condition"], "allergies": fields["allergies"],
-                "special_info": fields["special_info"], "notes": fields["notes"],
-                "payment_status": "Pending", "balance": starting_balance, "active": 1,
-            }
-            cols = [c for c in compat_values if c in compat_cols]
-            placeholders = ",".join("?" for _ in cols)
-            execute(f"INSERT OR IGNORE INTO students({','.join(cols)}) VALUES({placeholders})", tuple(compat_values[c] for c in cols))
+            username = admission_no.lower()
+            execute("INSERT OR IGNORE INTO users(full_name,username,password_hash,role,student_id,active,workspace_type,title) VALUES(?,?,?,?,?,1,?,?)",
+                    (full_name,username,generate_password_hash(admission_no),"Student",student_id,"Student","Student"))
         except Exception as exc:
-            warnings.append("legacy compatibility mirror skipped")
-            app.logger.warning("Student %s saved to dedicated store but legacy mirror was skipped: %s", student_id, exc)
-
-        # BEST-EFFORT portal account. The learner record remains valid even if an old
-        # users schema prevents the account from being created immediately.
-        try:
-            internal_username = f"student-{student_id}"
-            portal_user_id = execute("INSERT OR IGNORE INTO users(full_name,username,password_hash,role,student_id,active) VALUES(?,?,?,?,?,1)",
-                                     (full_name,internal_username,generate_password_hash(admission_no),"Student",student_id))
-            portal_user = q("SELECT id FROM users WHERE student_id=? AND role='Student' ORDER BY id LIMIT 1", (student_id,), one=True)
-            portal_user_id = portal_user['id'] if portal_user else portal_user_id
-            available = table_columns(get_db(), "users")
-            optional = [("workspace_type","Student"),("school_unit",settings["school_name"]),("title","Student"),("department","")]
-            updates=[]; params=[]
-            for col,val in optional:
-                if col in available:
-                    updates.append(f"{col}=?"); params.append(val)
-            if updates and portal_user_id:
-                execute(f"UPDATE users SET {','.join(updates)} WHERE id=?", (*params,portal_user_id))
-        except Exception as exc:
-            warnings.append("student portal account could not be created yet")
+            warnings.append("student portal account setup skipped")
             app.logger.warning("Student %s saved but portal account setup was skipped: %s", student_id, exc)
 
-        # BEST-EFFORT academic placement. A malformed old allocation cannot crash intake.
-        placement = {"class_teacher": None, "subjects": 0, "subject_teachers": 0}
+        # Optional automatic academic placement. Learner creation remains successful
+        # even if an old allocation table contains a bad record.
         try:
             placement = auto_place_new_student(student_id, grade, actor["id"])
         except Exception as exc:
-            warnings.append("automatic class/subject allocation could not be completed yet")
+            placement = {"class_teacher": None, "subjects": 0, "subject_teachers": 0}
+            warnings.append("automatic class/subject allocation skipped")
             app.logger.warning("Student %s saved but automatic placement was skipped: %s", student_id, exc)
 
-        details = f"{full_name} ({admission_no}) created in dedicated students.db; grade={grade}; class_teacher={placement['class_teacher'] or 'pending'}; subjects={placement['subjects']}; subject_teachers={placement['subject_teachers']}."
-        audit(actor["id"], actor["full_name"], "Add Student", details)
+        audit(actor["id"], actor["full_name"], "Add Student",
+              f"{full_name} ({admission_no}) created in school.db; grade={grade}; class_teacher={placement['class_teacher'] or 'pending'}; subjects={placement['subjects']}; subject_teachers={placement['subject_teachers']}.")
         if warnings:
-            flash("Student added successfully. Required learner data was saved. Some optional setup was skipped and can be completed later: " + "; ".join(warnings) + ".", "warning")
+            flash("Student added successfully. Required learner data was saved; " + "; ".join(warnings) + ".", "warning")
         else:
-            flash("Student added successfully. Grade recorded, student portal created, and configured class/subject allocations were applied automatically.", "success")
+            flash("Student added successfully. The learner record is ready.", "success")
     except sqlite3.IntegrityError as exc:
-        # The authoritative store should only fail on a genuine learner uniqueness/data
-        # issue. Report it without attempting dangerous cross-database rollback.
-        app.logger.warning("Student registration rejected by dedicated store: %s", exc)
-        flash("Student could not be added because that admission number already exists. Open the existing learner instead of creating a duplicate.", "danger")
+        app.logger.warning("Student registration rejected: %s", exc)
+        flash("Student could not be added because that admission number already exists or the learner data conflicts with an existing record.", "danger")
     except Exception as exc:
-        # Never manufacture a rollback for the authoritative record. Once it has been
-        # committed, retain it and surface the exact safe failure for later enrichment.
-        app.logger.exception("Student registration failed after authoritative save: %s", exc)
-        if student_id:
-            flash("Student was saved successfully, but some additional setup could not be completed. The learner remains available for allocation and editing.", "warning")
-        else:
-            flash("Student could not be added because the required learner record could not be created.", "danger")
-
-    target = url_for("ict_dashboard") if actor["role"] == "ICT" else url_for("admin_dashboard")
-    return redirect(target + ("#ict-add-student" if actor["role"] == "ICT" else "#admin-add-student"))
-
+        app.logger.exception("Student registration failed: %s", exc)
+        flash("Student could not be added. No partial learner record was intentionally created.", "danger")
+    return redirect(url_for("admin_dashboard") + "#admin-add-student")
 
 @app.route("/students/<int:student_id>/subjects", methods=["GET","POST"])
 @login_required
@@ -5398,24 +5324,25 @@ def update_student(student_id: int):
     if not student:
         abort(404)
     fields = {
-        "full_name": request.form.get("full_name", student["full_name"]).strip(),
-        "admission_no": request.form.get("admission_no", student["admission_no"]).strip(),
-        "grade": request.form.get("grade", student["grade"]).strip(),
-        "guardian_name": request.form.get("guardian_name", "").strip(),
-        "guardian_phone": request.form.get("guardian_phone", "").strip(),
-        "guardian_email": request.form.get("guardian_email", "").strip(),
-        "alt_guardian_name": request.form.get("alt_guardian_name", "").strip(),
-        "alt_guardian_phone": request.form.get("alt_guardian_phone", "").strip(),
-        "alt_guardian_email": request.form.get("alt_guardian_email", "").strip(),
-        "student_phone": request.form.get("student_phone", "").strip(),
-        "student_email": request.form.get("student_email", "").strip(),
-        "medical_condition": request.form.get("medical_condition", "").strip(),
-        "allergies": request.form.get("allergies", "").strip(),
-        "special_info": request.form.get("special_info", "").strip(),
-        "notes": request.form.get("notes", "").strip(),
-        "payment_status": request.form.get("payment_status", "Pending"),
-        "balance": request.form.get("balance", "0").strip(),
-        "active": 1 if request.form.get("active") == "1" else 0,
+        "full_name": request.form.get("full_name", student["full_name"] or "").strip() or student["full_name"],
+        "admission_no": request.form.get("admission_no", student["admission_no"] or "").strip() or student["admission_no"],
+        "grade": request.form.get("grade", student["grade"] or "").strip() or student["grade"],
+        "age": request.form.get("age", student["age"] or "").strip(),
+        "guardian_name": request.form.get("guardian_name", student["guardian_name"] or "").strip(),
+        "guardian_phone": request.form.get("guardian_phone", student["guardian_phone"] or "").strip(),
+        "guardian_email": request.form.get("guardian_email", student["guardian_email"] or "").strip(),
+        "alt_guardian_name": request.form.get("alt_guardian_name", student["alt_guardian_name"] or "").strip(),
+        "alt_guardian_phone": request.form.get("alt_guardian_phone", student["alt_guardian_phone"] or "").strip(),
+        "alt_guardian_email": request.form.get("alt_guardian_email", student["alt_guardian_email"] or "").strip(),
+        "student_phone": request.form.get("student_phone", student["student_phone"] or "").strip(),
+        "student_email": request.form.get("student_email", student["student_email"] or "").strip(),
+        "medical_condition": request.form.get("medical_condition", student["medical_condition"] or "").strip(),
+        "allergies": request.form.get("allergies", student["allergies"] or "").strip(),
+        "special_info": request.form.get("special_info", student["special_info"] or "").strip(),
+        "notes": request.form.get("notes", student["notes"] or "").strip(),
+        "payment_status": request.form.get("payment_status", student["payment_status"] or "Pending").strip() or (student["payment_status"] or "Pending"),
+        "balance": request.form.get("balance", str(student["balance"] or 0)).strip(),
+        "active": 1 if request.form.get("active", "1" if student["active"] else "0") == "1" else 0,
     }
     old_admission=student["admission_no"] or ""
     linked_student_user=q("SELECT id,password_hash FROM users WHERE student_id=? AND role='Student' AND active=1 LIMIT 1", (student_id,), one=True)
@@ -5461,9 +5388,6 @@ def update_student(student_id: int):
             execute("UPDATE users SET username=?, full_name=?, password_hash=? WHERE id=?", (fields["admission_no"], fields["full_name"], generate_password_hash(fields["admission_no"]), linked_student_user["id"]))
         else:
             execute("UPDATE users SET full_name=? WHERE id=?", (fields["full_name"], linked_student_user["id"]))
-    get_student_db().execute("""UPDATE students SET admission_no=?,full_name=?,grade=?,grade_category=?,age=?,guardian_name=?,guardian_phone=?,guardian_email=?,alt_guardian_name=?,alt_guardian_phone=?,alt_guardian_email=?,student_phone=?,student_email=?,medical_condition=?,allergies=?,special_info=?,notes=?,active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-        (fields["admission_no"],fields["full_name"],fields["grade"],fields["grade"],fields["age"],fields["guardian_name"],fields["guardian_phone"],fields["guardian_email"],fields["alt_guardian_name"],fields["alt_guardian_phone"],fields["alt_guardian_email"],fields["student_phone"],fields["student_email"],fields["medical_condition"],fields["allergies"],fields["special_info"],fields["notes"],fields["active"],student_id))
-    get_student_db().commit()
     audit(current_user()["id"], current_user()["full_name"], "Edit Student", f"Student {student['admission_no']} updated.")
     flash("Student updated.", "success")
     return redirect(request.referrer or url_for("dashboard", student_id=student_id))
@@ -5477,8 +5401,6 @@ def delete_student(student_id: int):
     if not student:
         abort(404)
     execute("DELETE FROM students WHERE id = ?", (student_id,))
-    get_student_db().execute("DELETE FROM students WHERE id=?", (student_id,))
-    get_student_db().commit()
     audit(current_user()["id"], current_user()["full_name"], "Delete Student", f"Student {student['admission_no']} deleted.")
     flash("Pupil deleted.", "success")
     return redirect(request.referrer or url_for("admin_dashboard"))
@@ -5856,7 +5778,7 @@ def add_user():
     password=request.form.get("password", "")
     role=request.form.get("role", "Teacher")
     if role in {"Student", "Parent", "System"}:
-        flash("Use Add Student for learners. Staff and operational accounts belong here.", "warning")
+        flash("Student and parent records are not staff accounts. Use the administrator-only student intake.", "warning")
         return redirect(request.referrer or url_for("admin_dashboard"))
     title=request.form.get("title", "").strip()
     leadership_role=request.form.get("leadership_role", "").strip()
@@ -5864,7 +5786,7 @@ def add_user():
     workspace_type=request.form.get("workspace_type", "Teaching").strip() or "Teaching"
     if workspace_type not in {"Teaching","Driver","Reception","Guard","Cook","Other Staff"}: workspace_type="Teaching"
     student_id=request.form.get("student_id") or None
-    allowed=set(ALL_PORTAL_ROLES) - {SYSTEM_ROLE}
+    allowed=set(ALL_PORTAL_ROLES) - {SYSTEM_ROLE, "Student", "Parent"}
     # ICT is a technical operator, not a privilege escalator.
     if role not in allowed or (actor["role"]=="ICT" and role in {"Admin","ICT"}):
         flash("This account type cannot be created by your role.", "danger")
@@ -5872,34 +5794,11 @@ def add_user():
     if not full_name or (role != "Student" and (not username or len(password)<4)):
         flash("Name is required. Staff/portal accounts need a username and password of at least 4 characters.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
-    if role == "Student":
-        # Student accounts use the generated/supplied admission number internally.
-        # The login screen additionally accepts the exact full student name.
-        provisional_admission = (request.form.get("admission_no") or "").strip() or next_admission_no()
-        username = provisional_admission.lower()
-        password = provisional_admission
-    if role in {"Student","Parent"} and student_id:
-        try: student_id=int(student_id)
-        except ValueError: student_id=None
-    else:
-        student_id=None
+    student_id=None
     if q("SELECT id FROM users WHERE lower(username)=? LIMIT 1", (username,), one=True):
         flash("Username already exists. Choose a different username.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
     try:
-        if role == "Student" and not student_id:
-            grade = request.form.get("grade", "").strip() or "Unassigned"
-            admission_no = request.form.get("admission_no", "").strip() or next_admission_no()
-            fee = float(school_settings()["school_fee"] or 0)
-            student_id = execute("INSERT INTO students(admission_no,full_name,grade,student_phone,student_email,medical_condition,notes,payment_status,balance,active) VALUES(?,?,?,?,?,?,?,'Pending',?,1)", (admission_no, full_name, grade, request.form.get("phone", "").strip(), request.form.get("email", "").strip(), request.form.get("medical_notes", "").strip(), request.form.get("accountability_notes", "").strip(), fee))
-            for dept_value in request.form.getlist('department_ids'):
-                try: execute("INSERT OR IGNORE INTO student_departments(student_id,department_id,status,selected_by) VALUES(?,?,?,?)",(student_id,int(dept_value),'Approved',actor['id']))
-                except Exception: pass
-            for subject_value in request.form.getlist('subject_ids'):
-                try:
-                    execute("INSERT OR IGNORE INTO student_subjects(student_id,subject_id,status,selected_by) VALUES(?,?,?,?)",(student_id,int(subject_value),'Approved',actor['id']))
-                except Exception:
-                    pass
         school_unit=(request.form.get("school_unit","").strip() or school_settings()["school_name"])
         school_location=request.form.get("school_location","").strip()
         position_code=staff_code_for(role, workspace_type) if role not in {"Student","Parent","System"} else ""
@@ -5909,12 +5808,6 @@ def add_user():
                    (full_name,username,generate_password_hash(password),role,student_id,title,department,request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),workspace_type,school_unit,school_location,reception_enabled,position_code,position_code))
         if leadership_role and role not in {"Student","Parent","System"}:
             execute("UPDATE users SET leadership_role=?,leadership_level=? WHERE id=?",(leadership_role,1 if leadership_role in {"Dean","Deputy","Deputy Principal","HOD","Head of Department"} else 0,uid))
-        if role=="Student" and student_id:
-            student_row=q("SELECT admission_no,full_name FROM students WHERE id=?", (student_id,), one=True)
-            if student_row:
-                execute("UPDATE users SET username=?, password_hash=?, full_name=? WHERE id=?", (student_row["admission_no"].strip().lower(), generate_password_hash(student_row["admission_no"]), student_row["full_name"], uid))
-        if role=="Parent" and student_id:
-            execute("INSERT OR IGNORE INTO guardian_links(guardian_user_id, student_id, relationship, is_primary) VALUES(?,?,?,?)", (uid,student_id,request.form.get("relationship","Guardian").strip() or "Guardian",1))
         audit(actor["id"],actor["full_name"],"Add User",f"{full_name} ({username}) added as {role}; title={title or '—'}; department={department or '—'}.")
     except sqlite3.IntegrityError:
         flash("Username already exists or the supplied learner link is invalid.", "danger")
@@ -5953,7 +5846,7 @@ def edit_user(user_id:int):
     actor=current_user()
     if actor["role"] not in {"Admin","ICT"}: abort(403)
     user=q("SELECT * FROM users WHERE id=?",(user_id,),one=True)
-    if not user or user["role"]==SYSTEM_ROLE: abort(404)
+    if not user or user["role"] in {SYSTEM_ROLE, "Student"}: abort(404)
     if actor["role"]=="ICT" and user["role"] in {"Admin","ICT"}: abort(403)
     if request.method=="POST":
         role=request.form.get("role",user["role"])
@@ -5963,12 +5856,15 @@ def edit_user(user_id:int):
         workspace_type=request.form.get("workspace_type", user["workspace_type"] if "workspace_type" in user.keys() else "Teaching").strip() or "Teaching"
         if workspace_type not in {"Teaching","Driver","Reception","Guard","Cook","Other Staff"}: workspace_type="Teaching"
         if actor["role"]=="ICT" and role in {"Admin","ICT"}: abort(403)
-        if role not in set(ALL_PORTAL_ROLES)-{SYSTEM_ROLE}: abort(400)
+        if role not in set(ALL_PORTAL_ROLES)-{SYSTEM_ROLE, "Student"}: abort(400)
         student_id=request.form.get("student_id") or None
-        if student_id:
+        if role != "Parent":
+            student_id=None
+        elif student_id:
             try: student_id=int(student_id)
             except ValueError: student_id=None
-        else: student_id=None
+        else:
+            student_id=None
         new_username = request.form.get("username","").strip().lower()
         conflict = q("SELECT id FROM users WHERE lower(username)=? AND id!=? LIMIT 1", (new_username, user_id), one=True)
         if conflict:
@@ -5985,7 +5881,7 @@ def edit_user(user_id:int):
         return redirect(url_for("admin_dashboard"))
     students=q("SELECT id, full_name, admission_no FROM students WHERE active=1 ORDER BY full_name")
     depts=q("SELECT name FROM departments WHERE active=1 ORDER BY name")
-    return render_template("user_edit.html", user=user, students=students, departments=depts, role_options=ALL_PORTAL_ROLES, guardian_links=q("SELECT * FROM guardian_links WHERE guardian_user_id=? AND active=1",(user_id,)))
+    return render_template("user_edit.html", user=user, students=students, departments=depts, role_options=tuple(r for r in ALL_PORTAL_ROLES if r != "Student"), guardian_links=q("SELECT * FROM guardian_links WHERE guardian_user_id=? AND active=1",(user_id,)))
 
 @app.route("/users/<int:user_id>/reset-password", methods=["POST"])
 @login_required
@@ -6511,14 +6407,6 @@ def backup_json_restore():
         conn.isolation_level=old_autocommit
     return redirect(request.referrer or url_for('admin_dashboard'))
 
-@app.route("/backup/students")
-@login_required
-@admin_root_required
-def student_backup_download():
-    init_student_store()
-    return send_file(STUDENT_DB_PATH, as_attachment=True, download_name="students_backup.sqlite3")
-
-
 @app.route("/backup/download")
 @login_required
 @admin_root_required
@@ -6599,19 +6487,6 @@ def backup_restore():
     return redirect(request.referrer or url_for("admin_dashboard"))
 
 
-@app.route("/static/<path:filename>", endpoint="static")
-def prime_static(filename: str):
-    """Explicit static serving for production diagnostics and reliable asset delivery."""
-    from flask import send_from_directory
-    target = (BASE_DIR / "static" / filename).resolve()
-    static_root = (BASE_DIR / "static").resolve()
-    if static_root not in target.parents and target != static_root:
-        abort(404)
-    if not target.exists() or not target.is_file():
-        abort(404)
-    return send_from_directory(static_root, filename, conditional=True, etag=True, max_age=3600)
-
-
 @app.route("/uploads/<path:filename>")
 def uploaded_file(filename: str):
     # Public assets (logo, library, election and institution media) can be served.
@@ -6658,7 +6533,7 @@ def api_student(student_id: int):
 
 @app.errorhandler(403)
 def forbidden(_):
-    return render_template("error.html", title="Access denied", message="You do not have permission to access this area."), 403
+    return ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Access denied</title></head><body><h1>Access denied</h1><p>You do not have permission to access this area.</p><p><a href='/'>Return to portal</a></p></body></html>"), 403
 
 
 @app.errorhandler(500)
@@ -6674,17 +6549,17 @@ def internal_error(error):
 
 @app.errorhandler(404)
 def not_found(_):
-    return render_template("error.html", title="Not found", message="The page you requested could not be found."), 404
+    return ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Not found</title></head><body><h1>Page not found</h1><p>The page you requested could not be found.</p><p><a href='/'>Return to portal</a></p></body></html>"), 404
 
 
 @app.errorhandler(413)
 def too_large(_):
-    return render_template("error.html", title="File too large", message="The uploaded file is too large."), 413
+    return ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>File too large</title></head><body><h1>File too large</h1><p>The uploaded file is too large.</p><p><a href='/'>Return to portal</a></p></body></html>"), 413
 
 
 with app.app_context():
     init_db()
-    init_student_store()
+    migrate_legacy_student_store()
     backfill_student_allocations()
 
 
