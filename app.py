@@ -5177,8 +5177,11 @@ def add_student():
 
     starting_balance = float(settings["school_fee"] or 0)
     student_id = None
+    warnings = []
     try:
-        # Authoritative write: dedicated student database.
+        # AUTHORITATIVE WRITE: the dedicated student store is the only operation that
+        # is allowed to determine whether the learner exists. Everything else below
+        # is best-effort compatibility/enrichment and must never prevent registration.
         student_id = student_store_execute("""INSERT INTO students(
             admission_no,full_name,grade,grade_category,age,guardian_name,guardian_phone,guardian_email,
             alt_guardian_name,alt_guardian_phone,alt_guardian_email,student_phone,student_email,medical_condition,allergies,
@@ -5187,60 +5190,76 @@ def add_student():
              fields["alt_guardian_name"],fields["alt_guardian_phone"],fields["alt_guardian_email"],fields["student_phone"],fields["student_email"],
              fields["medical_condition"],fields["allergies"],fields["special_info"],fields["notes"]))
 
-        # Compatibility index: retain the same ID so every existing module keeps working.
-        # Never assume the persistent legacy DB has exactly today's column set.
-        compat_conn = get_db()
-        compat_cols = table_columns(compat_conn, "students")
-        compat_values = {
-            "id": student_id, "admission_no": admission_no, "full_name": full_name,
-            "grade": grade, "age": age, "grade_category": grade,
-            "guardian_name": fields["guardian_name"], "guardian_phone": fields["guardian_phone"],
-            "guardian_email": fields["guardian_email"], "alt_guardian_name": fields["alt_guardian_name"],
-            "alt_guardian_phone": fields["alt_guardian_phone"], "alt_guardian_email": fields["alt_guardian_email"],
-            "student_phone": fields["student_phone"], "student_email": fields["student_email"],
-            "medical_condition": fields["medical_condition"], "allergies": fields["allergies"],
-            "special_info": fields["special_info"], "notes": fields["notes"],
-            "payment_status": "Pending", "balance": starting_balance, "active": 1,
-        }
-        cols = [c for c in compat_values if c in compat_cols]
-        placeholders = ",".join("?" for _ in cols)
-        execute(f"INSERT INTO students({','.join(cols)}) VALUES({placeholders})", tuple(compat_values[c] for c in cols))
+        # BEST-EFFORT legacy compatibility mirror. A legacy schema mismatch, missing
+        # optional field, or old constraint cannot cancel the authoritative learner.
+        try:
+            compat_conn = get_db()
+            compat_cols = table_columns(compat_conn, "students")
+            compat_values = {
+                "id": student_id, "admission_no": admission_no, "full_name": full_name,
+                "grade": grade, "age": age, "grade_category": grade,
+                "guardian_name": fields["guardian_name"], "guardian_phone": fields["guardian_phone"],
+                "guardian_email": fields["guardian_email"], "alt_guardian_name": fields["alt_guardian_name"],
+                "alt_guardian_phone": fields["alt_guardian_phone"], "alt_guardian_email": fields["alt_guardian_email"],
+                "student_phone": fields["student_phone"], "student_email": fields["student_email"],
+                "medical_condition": fields["medical_condition"], "allergies": fields["allergies"],
+                "special_info": fields["special_info"], "notes": fields["notes"],
+                "payment_status": "Pending", "balance": starting_balance, "active": 1,
+            }
+            cols = [c for c in compat_values if c in compat_cols]
+            placeholders = ",".join("?" for _ in cols)
+            execute(f"INSERT OR IGNORE INTO students({','.join(cols)}) VALUES({placeholders})", tuple(compat_values[c] for c in cols))
+        except Exception as exc:
+            warnings.append("legacy compatibility mirror skipped")
+            app.logger.warning("Student %s saved to dedicated store but legacy mirror was skipped: %s", student_id, exc)
 
-        internal_username = f"student-{student_id}"
-        portal_user_id = execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active) VALUES(?,?,?,?,?,1)",
-                                 (full_name,internal_username,generate_password_hash(admission_no),"Student",student_id))
-        # Optional profile columns are updated only if the deployed schema has them.
-        available = table_columns(get_db(), "users")
-        optional = [("workspace_type","Student"),("school_unit",settings["school_name"]),("title","Student"),("department","")]
-        updates=[]; params=[]
-        for col,val in optional:
-            if col in available:
-                updates.append(f"{col}=?"); params.append(val)
-        if updates:
-            execute(f"UPDATE users SET {','.join(updates)} WHERE id=?", (*params,portal_user_id))
+        # BEST-EFFORT portal account. The learner record remains valid even if an old
+        # users schema prevents the account from being created immediately.
+        try:
+            internal_username = f"student-{student_id}"
+            portal_user_id = execute("INSERT OR IGNORE INTO users(full_name,username,password_hash,role,student_id,active) VALUES(?,?,?,?,?,1)",
+                                     (full_name,internal_username,generate_password_hash(admission_no),"Student",student_id))
+            portal_user = q("SELECT id FROM users WHERE student_id=? AND role='Student' ORDER BY id LIMIT 1", (student_id,), one=True)
+            portal_user_id = portal_user['id'] if portal_user else portal_user_id
+            available = table_columns(get_db(), "users")
+            optional = [("workspace_type","Student"),("school_unit",settings["school_name"]),("title","Student"),("department","")]
+            updates=[]; params=[]
+            for col,val in optional:
+                if col in available:
+                    updates.append(f"{col}=?"); params.append(val)
+            if updates and portal_user_id:
+                execute(f"UPDATE users SET {','.join(updates)} WHERE id=?", (*params,portal_user_id))
+        except Exception as exc:
+            warnings.append("student portal account could not be created yet")
+            app.logger.warning("Student %s saved but portal account setup was skipped: %s", student_id, exc)
 
-        placement = auto_place_new_student(student_id, grade, actor["id"])
+        # BEST-EFFORT academic placement. A malformed old allocation cannot crash intake.
+        placement = {"class_teacher": None, "subjects": 0, "subject_teachers": 0}
+        try:
+            placement = auto_place_new_student(student_id, grade, actor["id"])
+        except Exception as exc:
+            warnings.append("automatic class/subject allocation could not be completed yet")
+            app.logger.warning("Student %s saved but automatic placement was skipped: %s", student_id, exc)
+
         details = f"{full_name} ({admission_no}) created in dedicated students.db; grade={grade}; class_teacher={placement['class_teacher'] or 'pending'}; subjects={placement['subjects']}; subject_teachers={placement['subject_teachers']}."
         audit(actor["id"], actor["full_name"], "Add Student", details)
-        flash("Student added successfully. Grade recorded, student portal created, and any configured class/subject allocations were applied automatically.", "success")
-    except sqlite3.IntegrityError:
-        if student_id:
-            try:
-                execute("DELETE FROM users WHERE student_id=? AND role='Student'", (student_id,))
-                execute("DELETE FROM students WHERE id=?", (student_id,))
-                get_student_db().execute("DELETE FROM students WHERE id=?", (student_id,)); get_student_db().commit()
-            except sqlite3.DatabaseError:
-                pass
-        flash("Student could not be added because a unique learner or account record already exists. No partial student was left behind.", "danger")
+        if warnings:
+            flash("Student added successfully. Required learner data was saved. Some optional setup was skipped and can be completed later: " + "; ".join(warnings) + ".", "warning")
+        else:
+            flash("Student added successfully. Grade recorded, student portal created, and configured class/subject allocations were applied automatically.", "success")
+    except sqlite3.IntegrityError as exc:
+        # The authoritative store should only fail on a genuine learner uniqueness/data
+        # issue. Report it without attempting dangerous cross-database rollback.
+        app.logger.warning("Student registration rejected by dedicated store: %s", exc)
+        flash("Student could not be added because that admission number already exists. Open the existing learner instead of creating a duplicate.", "danger")
     except Exception as exc:
+        # Never manufacture a rollback for the authoritative record. Once it has been
+        # committed, retain it and surface the exact safe failure for later enrichment.
+        app.logger.exception("Student registration failed after authoritative save: %s", exc)
         if student_id:
-            try:
-                execute("DELETE FROM users WHERE student_id=? AND role='Student'", (student_id,))
-                execute("DELETE FROM students WHERE id=?", (student_id,))
-                get_student_db().execute("DELETE FROM students WHERE id=?", (student_id,)); get_student_db().commit()
-            except sqlite3.DatabaseError:
-                pass
-        flash(f"Student could not be added safely: {type(exc).__name__}. No partial student was left behind.", "danger")
+            flash("Student was saved successfully, but some additional setup could not be completed. The learner remains available for allocation and editing.", "warning")
+        else:
+            flash("Student could not be added because the required learner record could not be created.", "danger")
 
     target = url_for("ict_dashboard") if actor["role"] == "ICT" else url_for("admin_dashboard")
     return redirect(target + ("#ict-add-student" if actor["role"] == "ICT" else "#admin-add-student"))
@@ -6580,7 +6599,7 @@ def backup_restore():
     return redirect(request.referrer or url_for("admin_dashboard"))
 
 
-@app.route("/static/<path:filename>")
+@app.route("/static/<path:filename>", endpoint="static")
 def prime_static(filename: str):
     """Explicit static serving for production diagnostics and reliable asset delivery."""
     from flask import send_from_directory
@@ -6645,7 +6664,12 @@ def forbidden(_):
 @app.errorhandler(500)
 def internal_error(error):
     app.logger.exception("Unhandled Prime application error: %s", error)
-    return render_template("error.html", title="Something went wrong", message="The request could not be completed safely. No partial learner record should have been created."), 500
+    # Keep the last-resort 500 response dependency-free. It must never render a
+    # template that itself depends on static routes or another failing service.
+    return ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Prime Portal Error</title>"
+            "<style>body{font-family:system-ui,sans-serif;margin:0;padding:40px;background:#f4f7fb;color:#152033}main{max-width:720px;margin:auto;background:white;border-radius:18px;padding:28px;box-shadow:0 10px 30px rgba(0,0,0,.08)}"
+            "a{display:inline-block;margin-top:16px;padding:11px 15px;border-radius:10px;background:#2457d6;color:#fff;text-decoration:none}</style></head>"
+            "<body><main><h1>Something went wrong</h1><p>The portal could not complete that request. Your learner data is protected from partial writes.</p><a href='/'>Return to portal</a></main></body></html>"), 500
 
 
 @app.errorhandler(404)
