@@ -935,6 +935,25 @@ def _init_db_once() -> None:
             FOREIGN KEY(department_id) REFERENCES departments(id) ON DELETE CASCADE, FOREIGN KEY(selected_by) REFERENCES users(id) ON DELETE SET NULL
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_student_departments_student ON student_departments(student_id,status)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS student_teacher_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, student_id INTEGER NOT NULL, teacher_user_id INTEGER NOT NULL,
+            class_name TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '', scope TEXT NOT NULL DEFAULT 'Subject',
+            assigned_by INTEGER, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(student_id,teacher_user_id,class_name,subject),
+            FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(assigned_by) REFERENCES users(id) ON DELETE SET NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_student_teacher_student ON student_teacher_assignments(student_id,active)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_student_teacher_teacher ON student_teacher_assignments(teacher_user_id,class_name,subject,active)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS department_leadership (
+            department_id INTEGER PRIMARY KEY, dean_user_id INTEGER, deputy_user_id INTEGER, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(department_id) REFERENCES departments(id) ON DELETE CASCADE,
+            FOREIGN KEY(dean_user_id) REFERENCES users(id) ON DELETE SET NULL,
+            FOREIGN KEY(deputy_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )""")
+        ensure_column(conn, "transport_trips", "vehicle_type TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "transport_trips", "number_plate TEXT NOT NULL DEFAULT ''")
         conn.execute("""CREATE TABLE IF NOT EXISTS student_face_profiles (
             id INTEGER PRIMARY KEY AUTOINCREMENT, student_id INTEGER UNIQUE, user_id INTEGER UNIQUE, image_path TEXT NOT NULL DEFAULT '',
             descriptor_json TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, enrolled_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2518,6 +2537,53 @@ def finance_match_external(event_id:int):
     if not event or not student: flash('Payment event or student was not found.','danger'); return redirect(url_for('finance_dashboard'))
     poster=current_user()['id']; pid=execute("INSERT INTO payments(student_id,amount,method,reference_no,recorded_by,status) VALUES(?,?,?,?,?,'Posted')",(sid,event['amount'],event['provider'],event['external_reference'],poster)); new_balance=max(0,float(student['balance'] or 0)-float(event['amount'])); execute("UPDATE students SET balance=?,payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(new_balance,'Paid' if new_balance==0 else 'Pending',sid)); execute("UPDATE external_payment_events SET status='Matched',matched_student_id=?,processed_at=CURRENT_TIMESTAMP WHERE id=?",(sid,event_id)); audit(current_user()['id'],current_user()['full_name'],'Match External Payment',f'External payment {event["external_reference"]} matched to {student["admission_no"]}.'); flash('External payment matched and posted.','success'); return redirect(url_for('finance_dashboard'))
 
+@app.route("/admin/student-allocation", methods=["GET","POST"])
+@login_required
+@role_required("Admin","ICT")
+def admin_student_allocation():
+    user=current_user()
+    if request.method=="POST":
+        action=(request.form.get("action") or "allocation").strip()
+        if action=="leadership":
+            department_id=request.form.get("department_id",type=int); dean_id=request.form.get("dean_user_id",type=int) or None; deputy_id=request.form.get("deputy_user_id",type=int) or None
+            dept=q("SELECT id,name FROM departments WHERE id=? AND active=1",(department_id,),one=True) if department_id else None
+            for uid in [dean_id,deputy_id]:
+                if uid and not q("SELECT 1 FROM users WHERE id=? AND active=1 AND leadership_role IN ('Dean','Deputy','Deputy Principal','Deputy Head','Principal','Teacher')",(uid,),one=True):
+                    uid=None
+            if dept:
+                execute("INSERT INTO department_leadership(department_id,dean_user_id,deputy_user_id) VALUES(?,?,?) ON CONFLICT(department_id) DO UPDATE SET dean_user_id=excluded.dean_user_id,deputy_user_id=excluded.deputy_user_id,updated_at=CURRENT_TIMESTAMP",(department_id,dean_id,deputy_id))
+                audit(user["id"],user["full_name"],"Department Leadership",f"{dept['name']} leadership updated."); flash("Department leadership saved.","success")
+            else: flash("Choose a valid department.","danger")
+            return redirect(url_for("admin_student_allocation"))
+        student_id=request.form.get("student_id",type=int); teacher_id=request.form.get("teacher_user_id",type=int)
+        class_name=(request.form.get("class_name") or "").strip(); subject=(request.form.get("subject") or "").strip() or "General"
+        scope=(request.form.get("scope") or "Subject").strip()
+        student=q("SELECT id,full_name,grade FROM students WHERE id=? AND active=1",(student_id,),one=True) if student_id else None
+        teacher=q("SELECT id,full_name FROM users WHERE id=? AND active=1 AND role='Teacher'",(teacher_id,),one=True) if teacher_id else None
+        if not student or not teacher:
+            flash("Choose a valid student and teacher.","danger")
+        else:
+            class_name=class_name or student["grade"]
+            if scope=="Class Teacher":
+                execute("INSERT INTO class_teacher_assignments(class_name,teacher_user_id,assigned_by) VALUES(?,?,?) ON CONFLICT(class_name) DO UPDATE SET teacher_user_id=excluded.teacher_user_id,assigned_by=excluded.assigned_by",(class_name,teacher_id,user["id"]))
+            else:
+                execute("INSERT OR IGNORE INTO student_teacher_assignments(student_id,teacher_user_id,class_name,subject,scope,assigned_by) VALUES(?,?,?,?,?,?)",(student_id,teacher_id,class_name,subject,scope,user["id"]))
+            audit(user["id"],user["full_name"],"Student Teacher Allocation",f"{student['full_name']} → {teacher['full_name']} ({class_name} / {subject} / {scope}).")
+            flash("Student/teacher allocation saved.","success")
+        return redirect(url_for("admin_student_allocation"))
+    students=q("SELECT id,full_name,admission_no,grade FROM students WHERE active=1 ORDER BY grade,full_name")
+    teachers=q("SELECT id,full_name,title,department FROM users WHERE active=1 AND role='Teacher' ORDER BY full_name")
+    subjects=q("SELECT subject,department FROM subjects_catalog WHERE active=1 ORDER BY department,subject")
+    allocations=q("""SELECT sta.*,s.full_name AS student_name,s.admission_no,t.full_name AS teacher_name,t.department
+                     FROM student_teacher_assignments sta JOIN students s ON s.id=sta.student_id JOIN users t ON t.id=sta.teacher_user_id
+                     WHERE sta.active=1 ORDER BY s.grade,s.full_name,t.full_name,sta.subject""")
+    class_teachers=q("""SELECT cta.class_name,u.full_name AS teacher_name,u.department FROM class_teacher_assignments cta JOIN users u ON u.id=cta.teacher_user_id ORDER BY cta.class_name""")
+    leadership=q("""SELECT d.id,d.name,du.full_name AS dean_name,pu.full_name AS deputy_name
+                    FROM departments d LEFT JOIN department_leadership dl ON dl.department_id=d.id
+                    LEFT JOIN users du ON du.id=dl.dean_user_id LEFT JOIN users pu ON pu.id=dl.deputy_user_id
+                    WHERE d.active=1 ORDER BY d.name""")
+    return render_template("admin_student_allocation.html",settings=school_settings(),actor_name=user["full_name"],role=user["role"],students=students,teachers=teachers,subjects=subjects,allocations=allocations,class_teachers=class_teachers,leadership=leadership)
+
 @app.route("/admin/class-teachers", methods=["GET","POST"])
 @login_required
 @role_required("Admin","ICT")
@@ -2957,6 +3023,7 @@ SYSTEM_SEARCH_INDEX = [
     {"title":"Finance", "description":"Income, expenses and ledger", "url":"/finance", "roles":{"Admin","Finance"}, "keywords":"finance income expenses payments ledger money"},
     {"title":"Examinations", "description":"Compile grades and school totals", "url":"/admin-dashboard#exam-panel", "roles":{"Admin","ICT"}, "keywords":"exams examinations grades marks totals"},
     {"title":"Subjects", "description":"Subject catalogue and compulsory subjects", "url":"/admin/subjects", "roles":{"Admin","ICT"}, "keywords":"subjects curriculum catalogue compulsory"},
+    {"title":"Student & teacher allocation", "description":"Allocate learners to subject teachers, class teachers and departments", "url":"/admin/student-allocation", "roles":{"Admin","ICT"}, "keywords":"students teachers allocation cohort class teacher department dean deputy"},
     {"title":"Class teacher assignments", "description":"Assign teaching staff to classes", "url":"/admin/class-teachers", "roles":{"Admin","ICT"}, "keywords":"class teacher assignments teachers"},
     {"title":"Reception desk", "description":"Reception and operational front desk", "url":"/reception", "roles":{"Admin","ICT","Reception"}, "keywords":"reception desk visitors"},
     {"title":"Backup & restore", "description":"Full system backup and recovery", "url":"/admin/dashboard#backup-panel", "roles":{"Admin"}, "keywords":"backup restore recovery export"},
@@ -3210,10 +3277,11 @@ def driver_trip_start():
     existing=q("SELECT id FROM transport_trips WHERE driver_user_id=? AND status='Active'",(user['id'],),one=True)
     if existing:
         flash('A trip is already active.','warning'); return redirect(url_for('driver_dashboard'))
-    vehicle=request.form.get('vehicle','').strip(); route=request.form.get('route_name','').strip()
-    if not vehicle:
-        flash('Vehicle / bus number is required.','danger'); return redirect(url_for('driver_dashboard'))
-    execute("INSERT INTO transport_trips(driver_user_id,vehicle,route_name,status) VALUES(?,?,?,'Active')",(user['id'],vehicle,route))
+    vehicle_type=request.form.get('vehicle_type','').strip(); number_plate=request.form.get('number_plate','').strip().upper(); route=request.form.get('route_name','').strip()
+    if not vehicle_type or not number_plate:
+        flash('Vehicle type and number plate are required.','danger'); return redirect(url_for('driver_dashboard'))
+    vehicle=f'{vehicle_type} · {number_plate}'
+    execute("INSERT INTO transport_trips(driver_user_id,vehicle,vehicle_type,number_plate,route_name,status) VALUES(?,?,?,?,?,'Active')",(user['id'],vehicle,vehicle_type,number_plate,route))
     audit(user['id'],user['full_name'],'Driver Trip Started',f'{vehicle} · {route or "Route not specified"}.')
     flash('Trip started. Live tracking is ready.','success'); return redirect(url_for('driver_dashboard'))
 
@@ -3251,7 +3319,7 @@ def driver_location():
 @login_required
 @role_required('Admin','ICT')
 def admin_transport():
-    rows=q("SELECT u.id,u.full_name,u.position_code,u.school_unit,u.school_location,t.vehicle,t.route_name,t.status,t.started_at,t.ended_at,l.latitude,l.longitude,l.speed_kph,l.accuracy,l.recorded_at,l.source FROM users u LEFT JOIN transport_trips t ON t.driver_user_id=u.id AND t.status='Active' LEFT JOIN driver_locations l ON l.id=(SELECT x.id FROM driver_locations x WHERE x.driver_user_id=u.id ORDER BY x.recorded_at DESC,x.id DESC LIMIT 1) WHERE u.active=1 AND u.workspace_type='Driver' ORDER BY u.full_name")
+    rows=q("SELECT u.id,u.full_name,u.position_code,u.school_unit,u.school_location,t.vehicle,t.vehicle_type,t.number_plate,t.route_name,t.status,t.started_at,t.ended_at,l.latitude,l.longitude,l.speed_kph,l.accuracy,l.recorded_at,l.source FROM users u LEFT JOIN transport_trips t ON t.driver_user_id=u.id AND t.status='Active' LEFT JOIN driver_locations l ON l.id=(SELECT x.id FROM driver_locations x WHERE x.driver_user_id=u.id ORDER BY x.recorded_at DESC,x.id DESC LIMIT 1) WHERE u.active=1 AND u.workspace_type='Driver' ORDER BY u.full_name")
     return render_template('admin_transport.html',settings=school_settings(),rows=rows,actor_name=current_user()['full_name'],role=current_user()['role'])
 
 @app.route("/finance/fee-structure",methods=['POST'])
@@ -3667,10 +3735,21 @@ def admin_dashboard():
 def teacher_dashboard():
     settings=school_settings(); user=current_user()
     assignments=q("SELECT * FROM teacher_assignments WHERE teacher_user_id=? AND active=1 ORDER BY class_name,subject",(user["id"],)) if user["role"]=="Teacher" else q("SELECT a.*,u.full_name AS teacher_name FROM teacher_assignments a JOIN users u ON u.id=a.teacher_user_id WHERE a.active=1 ORDER BY a.class_name,a.subject")
-    classes=sorted({r["class_name"] for r in assignments})
+    classes=sorted({r["class_name"] for r in assignments} | {r["class_name"] for r in q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=?",(user["id"],))})
     assigned_class_rows=q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=? ORDER BY class_name",(user['id'],)) if user['role']=='Teacher' else q("SELECT class_name FROM class_teacher_assignments ORDER BY class_name")
     class_teacher_classes=[r['class_name'] for r in assigned_class_rows]
-    students=q("SELECT s.id,s.full_name,s.admission_no,s.grade,COUNT(ss.id) AS subject_count FROM students s LEFT JOIN student_subjects ss ON ss.student_id=s.id AND ss.status='Approved' WHERE s.active=1 AND s.grade IN ({}) GROUP BY s.id ORDER BY s.grade,s.full_name".format(','.join('?'*len(classes))),tuple(classes)) if classes else []
+    students=[]
+    if user["role"]=="Teacher" and classes:
+        placeholders=','.join('?'*len(classes))
+        students=q(f"""SELECT DISTINCT s.id,s.full_name,s.admission_no,s.grade,
+            (SELECT COUNT(*) FROM student_subjects ss WHERE ss.student_id=s.id AND ss.status='Approved') AS subject_count
+            FROM students s
+            LEFT JOIN student_teacher_assignments sta ON sta.student_id=s.id AND sta.teacher_user_id=? AND sta.active=1
+            LEFT JOIN class_teacher_assignments cta ON cta.class_name=s.grade AND cta.teacher_user_id=?
+            WHERE s.active=1 AND (s.grade IN ({placeholders}) OR sta.id IS NOT NULL OR cta.id IS NOT NULL)
+            ORDER BY s.grade,s.full_name""",(user["id"],user["id"],*classes))
+    elif user["role"] in {"Admin","ICT"}:
+        students=q("SELECT s.id,s.full_name,s.admission_no,s.grade,COUNT(ss.id) AS subject_count FROM students s LEFT JOIN student_subjects ss ON ss.student_id=s.id AND ss.status='Approved' WHERE s.active=1 GROUP BY s.id ORDER BY s.grade,s.full_name")
     latest_marks=q("SELECT m.*,s.full_name FROM markbook_entries m JOIN students s ON s.id=m.student_id WHERE m.teacher_user_id=? ORDER BY m.created_at DESC LIMIT 80",(user['id'],))
     events=q("SELECT * FROM attendance_events WHERE user_id=? ORDER BY event_at DESC,id DESC LIMIT 20",(user["id"],)) if user["role"]=="Teacher" else []
     upcoming=q("SELECT * FROM class_sessions WHERE teacher_user_id=? AND active=1 AND (starts_at>=datetime('now') OR ends_at>=datetime('now')) ORDER BY starts_at LIMIT 8",(user['id'],)) if user['role']=='Teacher' else []
@@ -4227,8 +4306,9 @@ def live_classroom(session_id:int):
 def create_online_class():
     user=current_user(); title=request.form.get("title","").strip() or "Live Class"; cls=request.form.get("class_name","").strip(); subject=request.form.get("subject","").strip(); starts=request.form.get("starts_at","").strip(); ends=request.form.get("ends_at","").strip(); desc=request.form.get("description","").strip(); audience=request.form.get("audience_mode","Class").strip() or "Class"
     if not cls or not subject or not starts: flash("Class, subject and start time are required.","danger"); return redirect(url_for("online_classes"))
-    assigned=q("SELECT 1 FROM teacher_assignments WHERE teacher_user_id=? AND active=1 AND lower(class_name)=lower(?) AND lower(subject)=lower(?)",(user['id'],cls,subject),one=True)
-    if not assigned: flash("You can only schedule a live lesson for a class/subject assigned to you.","danger"); return redirect(url_for("online_classes"))
+    # A teacher may create a cohort/room even before students have been allocated.
+    # Existing assignments still determine the normal class population; an empty
+    # class is a valid preparation state rather than an access-denied dead end.
     compulsory=q("SELECT id FROM compulsory_subjects WHERE active=1 AND lower(class_name)=lower(?) AND lower(subject)=lower(?)",(cls,subject),one=True)
     if compulsory: audience="Compulsory"
     room=f"{school_settings()['school_name'].replace(' ','-')}-{cls.replace(' ','-')}-{uuid.uuid4().hex[:8]}"
@@ -4714,13 +4794,15 @@ def add_student():
                 starting_balance,
             ),
         )
-        # Every student receives a portal account automatically.  The admission
-        # number is the initial password, while the student's exact full name is
-        # accepted as the login identity.  The stored username remains unique and
-        # stable for system integrations.
+        student_id_row=q("SELECT id FROM students WHERE admission_no=? LIMIT 1",(admission_no,),one=True)
+        student_id=student_id_row["id"] if student_id_row else None
+        # Every student receives a portal account automatically. The admission
+        # number is the initial password; exact full name is accepted at login.
         existing_student_user = q("SELECT id FROM users WHERE student_id=? AND role='Student' AND active=1 LIMIT 1", (student_id,), one=True)
-        if not existing_student_user:
+        if not existing_student_user and student_id:
             execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active,workspace_type,school_unit,qr_access_token,qr_login_enabled) VALUES(?,?,?,?,?,1,'Learning',?,lower(hex(randomblob(16))),0)",(full_name,admission_no,generate_password_hash(admission_no),"Student",student_id,school_settings()["school_name"],))
+        elif existing_student_user:
+            execute("UPDATE users SET full_name=?, username=?, password_hash=? WHERE id=?",(full_name,admission_no,generate_password_hash(admission_no),existing_student_user["id"]))
         audit(current_user()["id"], current_user()["full_name"], "Add Student", f"{full_name} ({admission_no}) created; portal password initialized to admission number.")
         flash("Student added. Their portal login is their full name and admission number.", "success")
     except (sqlite3.IntegrityError, ValueError) as exc:
@@ -5466,6 +5548,37 @@ def delete_user(user_id: int):
     flash("Account permanently deleted.","success")
     return redirect(url_for("admin_dashboard"))
 
+@app.route("/export/<kind>/<fmt>")
+@login_required
+@role_required("Admin","ICT")
+def export_formatted(kind,fmt):
+    if kind not in {"students","employees","attendance"} or fmt.lower() not in {"csv","pdf","docx"}: abort(404)
+    fmt=fmt.lower()
+    if kind=="students":
+        headers=["Name","Admission No.","Class","Status"]; rows=[[r["full_name"],r["admission_no"],r["grade"],"Active" if r["active"] else "Archived"] for r in q("SELECT full_name,admission_no,grade,active FROM students ORDER BY grade,full_name")]
+    elif kind=="employees":
+        headers=["Name","Role","Department","Status"]; rows=[[r["full_name"],r["role"],r["department"],"Active" if r["active"] else "Archived"] for r in q("SELECT full_name,role,department,active FROM users WHERE role!='System' ORDER BY role,full_name")]
+    else:
+        headers=["Name","Role","Date","Action","Time","Location"]; rows=[]
+        for r in q("SELECT u.full_name,u.role,a.action,a.event_at,a.latitude,a.longitude FROM attendance_events a JOIN users u ON u.id=a.user_id ORDER BY a.event_at DESC LIMIT 5000"):
+            dt=str(r["event_at"] or ""); loc=f"{float(r['latitude']):.6f}, {float(r['longitude']):.6f}" if r["latitude"] is not None and r["longitude"] is not None else ""; rows.append([r["full_name"],r["role"],dt[:10],r["action"],dt[11:19],loc])
+    filename=f"prime-{kind}-export-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
+    if fmt=="csv":
+        out=io.StringIO(); csv.writer(out).writerows([headers,*rows]); return send_file(io.BytesIO(out.getvalue().encode('utf-8-sig')),mimetype='text/csv',as_attachment=True,download_name=filename+'.csv')
+    if fmt=="docx":
+        from docx import Document
+        doc=Document(); doc.add_heading(f"{school_settings()['school_name']} — {kind.title()}",0); table=doc.add_table(rows=1,cols=len(headers))
+        for i,h in enumerate(headers): table.rows[0].cells[i].text=str(h)
+        for row in rows:
+            cells=table.add_row().cells
+            for i,val in enumerate(row): cells[i].text=str(val)
+        bio=io.BytesIO(); doc.save(bio); bio.seek(0); return send_file(bio,mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',as_attachment=True,download_name=filename+'.docx')
+    from reportlab.lib.pagesizes import A4,landscape
+    from reportlab.platypus import SimpleDocTemplate,Table,TableStyle,Paragraph
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+    bio=io.BytesIO(); doc=SimpleDocTemplate(bio,pagesize=landscape(A4),leftMargin=18,rightMargin=18,topMargin=22,bottomMargin=22); styles=getSampleStyleSheet(); t=Table([headers]+[[str(v) for v in row] for row in rows],repeatRows=1); t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#1f2937')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('GRID',(0,0),(-1,-1),.25,colors.HexColor('#cbd5e1')),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('FONTSIZE',(0,0),(-1,-1),7)])); doc.build([Paragraph(f"{school_settings()['school_name']} — {kind.title()}",styles['Title']),t]); bio.seek(0); return send_file(bio,mimetype='application/pdf',as_attachment=True,download_name=filename+'.pdf')
+
 @app.route("/export/<kind>")
 @login_required
 @role_required("Admin")
@@ -5851,10 +5964,38 @@ def backup_download():
 def backup_restore():
     file = request.files.get("backup_file")
     if not file or not file.filename:
-        flash("Choose a database backup file first.", "danger")
+        flash("Choose a backup file first.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
+    filename_lower=file.filename.lower()
+    if filename_lower.endswith(".json"):
+        try:
+            payload=json.load(file.stream)
+            if payload.get('format')!='Prime Institution OS Full System JSON' or not isinstance(payload.get('tables'),dict):
+                raise ValueError('This is not a valid Prime Institution OS full backup.')
+            conn=get_db(); old_autocommit=conn.isolation_level
+            try:
+                session['_restore_actor_username']=current_user()['username']; conn.execute('PRAGMA foreign_keys=OFF'); conn.execute('BEGIN')
+                existing=_backup_tables()
+                for table in existing: conn.execute(f'DELETE FROM [{table}]')
+                for table,data in payload['tables'].items():
+                    if table.startswith('sqlite_') or table not in existing: continue
+                    columns=data.get('columns') or []; valid=[c for c in columns if c in table_columns(conn,table)]
+                    for row in data.get('rows') or []:
+                        if not valid: continue
+                        conn.execute(f"INSERT INTO [{table}] ({','.join('['+c+']' for c in valid)}) VALUES ({','.join('?' for _ in valid)})",[row.get(c) for c in valid])
+                for asset in payload.get('assets') or []:
+                    rel=str(asset.get('path','')); target=(DATA_DIR/rel).resolve(); root=UPLOAD_DIR.resolve()
+                    if not rel.startswith('uploads/') or root not in target.parents: continue
+                    target.parent.mkdir(parents=True,exist_ok=True); target.write_bytes(base64.b64decode(asset.get('data_base64','')))
+                conn.commit(); conn.execute('PRAGMA foreign_keys=ON'); init_db(); flash('Full JSON backup restored successfully.','success')
+            except Exception:
+                conn.rollback(); conn.execute('PRAGMA foreign_keys=ON'); raise
+            finally: conn.isolation_level=old_autocommit
+        except Exception as exc:
+            flash(f'JSON restore failed safely: {exc}','danger')
+        return redirect(request.referrer or url_for('admin_dashboard'))
     if not allowed_filename(file.filename):
-        flash("Only .db, .sqlite, or .sqlite3 files are allowed.", "danger")
+        flash("Only .db, .sqlite, or .sqlite3 database backups are allowed.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
     safe_name = secure_filename(file.filename)
     temp_path = UPLOAD_DIR / safe_name

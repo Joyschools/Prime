@@ -34,7 +34,7 @@
 
     <nav class="side-nav side-nav-groups" aria-label="Admin sections">
       <section class="nav-group open"><button class="nav-group-toggle" type="button" aria-expanded="true" data-target="admin-overview-panel"><span>Home</span><span class="nav-caret">⌂</span></button><div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="admin-overview-panel">QR & daily attendance</button></div></section>
-      <section class="nav-group"><button class="nav-group-toggle" type="button" aria-expanded="false" data-target="users-panel"><span>People & Access</span><span class="nav-caret">▾</span></button><div class="nav-group-links"><a class="nav-link" href="/admin/employees">View all employees</a><a class="nav-link" href="/admin/learners">View all learners</a><a class="nav-link" href="/admin/class-teachers">Class teacher assignments</a></div></section>
+      <section class="nav-group"><button class="nav-group-toggle" type="button" aria-expanded="false" data-target="users-panel"><span>People & Access</span><span class="nav-caret">▾</span></button><div class="nav-group-links"><a class="nav-link" href="/admin/employees">View all employees</a><a class="nav-link" href="/admin/learners">View all learners</a><a class="nav-link" href="/admin/student-allocation">Student & teacher allocation</a></div></section>
       <section class="nav-group"><button class="nav-group-toggle" type="button" aria-expanded="false" data-target="analytics-panel"><span>Summary & Analytics</span><span class="nav-caret">▾</span></button><div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="admin-overview-panel" data-scroll="admin-metrics">Summary</button><button class="nav-link nav-action" type="button" data-target="analytics-panel">Charts & breakdowns</button></div></section>
       <section class="nav-group"><button class="nav-group-toggle" type="button" aria-expanded="false" data-target="operations-links"><span>Operations</span><span class="nav-caret">▾</span></button><div class="nav-group-links"><a class="nav-link" href="/admin/attendance">Attendance detail</a><a class="nav-link" href="/staff/timetable">Timetable</a><a class="nav-link" href="/staff/reminders">Reminders</a><a class="nav-link" href="/calendar">School calendar</a><a class="nav-link" href="/reception">Reception</a></div></section>
       <section class="nav-group"><button class="nav-group-toggle" type="button" aria-expanded="false" data-target="finance-panel"><span>Finance</span><span class="nav-caret">▾</span></button><div class="nav-group-links"><button class="nav-link nav-action" type="button" data-target="finance-panel">Finance overview</button><a class="nav-link" href="/finance-dashboard">Finance workspace</a></div></section>
@@ -287,16 +287,13 @@
     </section>
 
     <section id="exports-panel" class="panel glass workspace-panel hidden">
-      <div class="panel-head"><div><div class="eyebrow">Exports</div><h3>Download records</h3></div></div>
-      <div class="quick-actions">
-        <a class="btn btn-primary" href="{{ url_for('export_data', kind='students') }}">Students CSV</a>
-        <a class="btn btn-ghost" href="{{ url_for('export_data', kind='users') }}">Employees CSV</a>
-        <a class="btn btn-ghost" href="{{ url_for('export_data', kind='payments') }}">Payments CSV</a>
-        <a class="btn btn-ghost" href="{{ url_for('export_data', kind='audit') }}">Audit CSV</a>
-      </div>
-    </section>
-
-    <section class="panel glass" style="margin-top:14px"><div class="panel-head"><div><div class="eyebrow">Full recovery</div><h3>System backup & restore</h3><p class="muted">JSON includes database records, settings and included uploaded assets. SQLite remains available as a fast binary rollback.</p></div></div><div class="quick-actions"><a class="btn btn-primary" href="/backup/json">Download full JSON backup</a><a class="btn btn-ghost" href="/backup/download">Download SQLite backup</a><form method="post" action="/backup/json/restore" enctype="multipart/form-data" class="quick-actions"><input type="file" name="json_backup" accept=".json" required><button class="btn btn-ghost" type="submit">Restore JSON</button></form></div></section><section class="panel glass" style="margin-top:14px"><div class="panel-head"><div><div class="eyebrow">Protection</div><h3>Automatic backup reminder</h3><p class="muted">At {{settings.backup_reminder_time or '16:00'}} the Admin browser gets a reminder. If the page remains open, an automatic full JSON download is triggered at {{settings.backup_auto_time or '16:30'}}.</p></div><span id="backupStatus" class="pill-role">Monitoring</span></div><a class="btn btn-ghost" href="/backup/json">Download full JSON backup now</a></section>
+      <div class="panel-head"><div><div class="eyebrow">Exports</div><h3>Download clean records</h3><p class="muted">Choose a record once, then the format you need.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Record</th><th>CSV</th><th>Word</th><th>PDF</th></tr></thead><tbody>
+      <tr><td>Students</td><td><a class="btn btn-ghost mini" href="/export/students/csv">CSV</a></td><td><a class="btn btn-ghost mini" href="/export/students/docx">Word</a></td><td><a class="btn btn-ghost mini" href="/export/students/pdf">PDF</a></td></tr>
+      <tr><td>Employees</td><td><a class="btn btn-ghost mini" href="/export/employees/csv">CSV</a></td><td><a class="btn btn-ghost mini" href="/export/employees/docx">Word</a></td><td><a class="btn btn-ghost mini" href="/export/employees/pdf">PDF</a></td></tr>
+      <tr><td>Attendance</td><td><a class="btn btn-ghost mini" href="/export/attendance/csv">CSV</a></td><td><a class="btn btn-ghost mini" href="/export/attendance/docx">Word</a></td><td><a class="btn btn-ghost mini" href="/export/attendance/pdf">PDF</a></td></tr>
+      </tbody></table></div></section>
+<section id="backup-quick" class="panel glass" style="margin-top:14px"><div class="panel-head"><div><div class="eyebrow">Backup & restore</div><h3>One recovery workspace</h3><p class="muted">Full JSON preserves records/settings/assets. SQLite is the fast database rollback copy.</p></div></div><div class="quick-actions"><a class="btn btn-primary" href="/backup/json">Full JSON backup</a><a class="btn btn-ghost" href="/backup/download">SQLite backup</a><span class="muted small">Use the Backup & restore panel below to restore either file type.</span></div></section>
 <section id="backup-panel" class="panel glass workspace-panel hidden">
       <div class="panel-head"><div><div class="eyebrow">Backup</div><h3>Restore and protect the site</h3></div></div>
       <div class="detail-card" style="margin-bottom:16px">
@@ -307,7 +304,7 @@
       <div class="detail-card">
         <h4>Restore backup</h4>
         <form class="stack-form" method="post" action="{{ url_for('backup_restore') }}" enctype="multipart/form-data">
-          <label><span>Backup file</span><input type="file" name="backup_file" accept=".db,.sqlite,.sqlite3" required></label>
+          <label><span>Backup file</span><input type="file" name="backup_file" accept=".db,.sqlite,.sqlite3,.json" required></label>
           <button class="btn btn-primary" type="submit">Restore backup</button>
         </form>
       </div>
@@ -516,10 +513,5 @@
   document.getElementById('scrollCreateUser')?.addEventListener('click',()=>document.getElementById('create-user-card')?.scrollIntoView({behavior:'smooth',block:'start'}));
 })();
 </script>
-{% include '_footer.html' %}</body><script>(function(){
-const rem=("{{settings.backup_reminder_time or '16:00'}}").slice(0,5), aut=("{{settings.backup_auto_time or '16:30'}}").slice(0,5); let reminded=false,downloaded=false;
-function hm(d){return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
-function notify(msg){const el=document.getElementById('backupStatus');if(el)el.textContent=msg;if('Notification' in window&&Notification.permission==='granted')new Notification('{{settings.school_name}} backup',{body:msg})}
-function tick(){const now=hm(new Date());if(now===rem&&!reminded){reminded=true;notify('Backup reminder: download or verify today’s full backup.');if('Notification' in window&&Notification.permission==='default')Notification.requestPermission().catch(()=>{});}if(now===aut&&!downloaded){downloaded=true;notify('Automatic backup download starting…');const a=document.createElement('a');a.href='/backup/json';a.download='';document.body.appendChild(a);a.click();a.remove();}}
-setInterval(tick,20000);tick();})();</script>
+{% include '_footer.html' %}</body>
 </html>
