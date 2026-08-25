@@ -948,9 +948,10 @@ def _init_db_once() -> None:
             ("students", "promoted_from_grade TEXT NOT NULL DEFAULT ''"),
             ("users", "email TEXT NOT NULL DEFAULT ''"),
             ("school_settings", "student_email_domain TEXT NOT NULL DEFAULT 'school.ac.ke'"),
-            ("school_settings", "public_address TEXT NOT NULL DEFAULT 'Kimbo, Juja, Kiambu County, Kenya'"),
-            ("school_settings", "public_location_notes TEXT NOT NULL DEFAULT 'School location to be confirmed by the Administrator.'"),
-            ("school_settings", "public_map_query TEXT NOT NULL DEFAULT 'Kimbo, Juja, Kiambu County, Kenya'"),
+            ("school_settings", "public_location_title TEXT NOT NULL DEFAULT 'Visit us today at this location'"),
+            ("school_settings", "public_address TEXT NOT NULL DEFAULT ''"),
+            ("school_settings", "public_location_notes TEXT NOT NULL DEFAULT ''"),
+            ("school_settings", "public_map_query TEXT NOT NULL DEFAULT ''"),
         ]:
             ensure_column(conn, table, coldef)
         conn.executescript("""
@@ -991,7 +992,8 @@ def _init_db_once() -> None:
         # Seed a single generic transport zone only when the institution has none.
         if conn.execute("SELECT COUNT(*) FROM transport_rates").fetchone()[0] == 0:
             conn.execute("INSERT INTO transport_rates(zone_name,amount,period,active) VALUES('Local / Zone A',0,'Term 1',1)")
-        conn.execute("UPDATE school_settings SET public_map_query=COALESCE(NULLIF(public_map_query,''),'Kimbo, Juja, Kiambu County, Kenya') WHERE id=1")
+        conn.execute("UPDATE school_settings SET public_location_title=COALESCE(NULLIF(public_location_title,''),'Visit us today at this location') WHERE id=1")
+        conn.execute("UPDATE school_settings SET public_address='', public_location_notes='', public_map_query='' WHERE id=1 AND (public_address LIKE '%Kimbo%' OR public_map_query LIKE '%Kimbo%')")
         # Reconcile legacy learner balances after migration/restore.
         for row in conn.execute("SELECT id FROM students").fetchall():
             sid=row[0]
@@ -5299,16 +5301,17 @@ def save_settings():
     except ValueError:
         school_fee = 0.0
     student_email_domain = (request.form.get("student_email_domain") or "school.ac.ke").strip().lstrip("@").lower() or "school.ac.ke"
-    public_address = (request.form.get("public_address") or "Kimbo, Juja, Kiambu County, Kenya").strip()
+    public_location_title = (request.form.get("public_location_title") or "Visit us today at this location").strip()
+    public_address = (request.form.get("public_address") or "").strip()
     public_location_notes = (request.form.get("public_location_notes") or "").strip()
-    public_map_query = (request.form.get("public_map_query") or public_address or "Kimbo, Juja, Kiambu County, Kenya").strip()
+    public_map_query = (request.form.get("public_map_query") or "").strip()
     execute(
         """
         UPDATE school_settings
-        SET school_name = ?, admission_prefix = ?, admission_suffix = ?, student_name_prefix = ?, student_name_suffix = ?, currency_code = ?, school_fee = ?, student_email_domain = ?, public_address = ?, public_location_notes = ?, public_map_query = ?
+        SET school_name = ?, admission_prefix = ?, admission_suffix = ?, student_name_prefix = ?, student_name_suffix = ?, currency_code = ?, school_fee = ?, student_email_domain = ?, public_location_title = ?, public_address = ?, public_location_notes = ?, public_map_query = ?
         WHERE id = 1
         """,
-        (school_name, admission_prefix, admission_suffix, student_name_prefix, student_name_suffix, currency_code, school_fee, student_email_domain, public_address, public_location_notes, public_map_query),
+        (school_name, admission_prefix, admission_suffix, student_name_prefix, student_name_suffix, currency_code, school_fee, student_email_domain, public_location_title, public_address, public_location_notes, public_map_query),
     )
     audit(current_user()["id"], current_user()["full_name"], "Update Settings", f"School settings updated for {school_name}.")
     flash("School settings updated.", "success")
