@@ -26,45 +26,99 @@
 {% if welcome_animation %}<div class="welcome-splash welcome-style-{{ school_settings.welcome_animation_style|default('clean', true) }}" id="welcomeSplash" style="--ws-accent:{{ school_settings.landing_accent_color }};--ws-duration:{{ welcome_animation_duration_ms }}ms"><div class="welcome-grid" aria-hidden="true"></div><div class="welcome-rail" aria-hidden="true"></div><div class="welcome-mark">{% if school_settings.logo_path %}<img class="welcome-logo" src="/{{ school_settings.logo_path }}" alt="">{% endif %}<div class="welcome-kicker">Institutional technology</div><div class="welcome-rule"></div><h1 class="welcome-name">{{ welcome_animation_name }}</h1><div class="welcome-sub">Technology · Innovation · Impact</div><div class="welcome-progress" aria-hidden="true"><span></span></div></div><div class="welcome-corner" aria-hidden="true"><span></span><b>01</b></div></div>{% endif %}
 <main class="auth-shell landing-shell"><section class="auth-card glass portal-selector landing-card">
 <div class="landing-topbar">
-  <div class="brand-line">{% if school_settings.logo_path %}<img class="landing-logo" src="/{{ school_settings.logo_path }}" alt="School logo">{% else %}<span class="brand-dot"></span>{% endif %}<div><div class="brand-name">{{ portal_title }}</div><div class="brand-subtitle">{{ school_settings.portal_subtitle }}</div></div></div>
-  <div class="landing-badge"><span class="landing-badge-dot"></span> Official school portal</div>
-</div>
-{% if not login_role %}
-{% set pre = (school_settings.prelogin_sections or '').split(',') %}
-<div class="prelogin-info">
-{% if 'institution' in pre %}<details open><summary>About the institution</summary><p>{{ school_settings.institution_history or 'School information will appear here.' }}</p>{% if school_settings.institution_religion %}<p><strong>Values:</strong> {{ school_settings.institution_religion }}</p>{% endif %}</details>{% endif %}
-{% if 'history' in pre and school_settings.institution_history %}<details><summary>History</summary><p>{{ school_settings.institution_history }}</p></details>{% endif %}
-{% if 'achievements' in pre and school_settings.institution_performance %}<details><summary>Achievements & performance</summary><p>{{ school_settings.institution_performance }}</p></details>{% endif %}
-{% if 'owners' in pre and school_settings.institution_owners %}<details><summary>School owners / management</summary><p>{{ school_settings.institution_owners }}</p></details>{% endif %}
-{% if 'developer' in pre %}<details><summary>About the developer</summary><p><strong>{{ school_settings.developer_name }}</strong></p><p>{{ school_settings.developer_about or 'Developer information.' }}</p></details>{% endif %}
-{% if 'company' in pre %}<details><summary>About the company</summary><p><strong>{{ school_settings.company_name }}</strong></p><p>{{ school_settings.company_about or 'Company information.' }}</p></details>{% endif %}
+  <div class="landing-brand-wrap">
+    <a class="landing-brand" href="#home" aria-label="{{ portal_title }} home">
+      {% if school_settings.logo_path %}<img class="landing-logo" src="/{{ school_settings.logo_path }}" alt="School logo">{% else %}<span class="brand-dot"></span>{% endif %}
+      <span><strong>{{ portal_title }}</strong><small>{{ school_settings.portal_subtitle }}</small></span>
+    </a>
+    <span class="landing-official">Official school portal</span>
+  </div>
+  <button type="button" class="landing-menu-toggle" aria-expanded="false" aria-controls="landingNav">Menu <span>☰</span></button>
+  <nav class="landing-nav" id="landingNav" aria-label="Public portal navigation">
+    <a href="#home">Home</a>
+    <details class="landing-nav-menu">
+      <summary>About</summary>
+      <div class="landing-dropdown">
+        <a href="#about">About the institution</a>
+        {% if school_settings.institution_history %}<a href="#history">History</a>{% endif %}
+        {% if school_settings.institution_performance %}<a href="#performance">Achievements & performance</a>{% endif %}
+        {% if school_settings.institution_owners %}<a href="#owners">Management</a>{% endif %}
+        {% if school_settings.institution_religion %}<a href="#values">Values</a>{% endif %}
+      </div>
+    </details>
+    <a href="#dates">Calendar</a>
+    <a href="#community">Portals</a>
+    {% if school_settings.public_map_query %}<a href="#visit">Visit</a>{% endif %}
+    <a href="#contact">Contact</a>
+    <a class="landing-nav-portal" href="#community">Portal Login</a>
+  </nav>
 </div>
 
-<section class="landing-hero">
-  <div class="hero-copy landing-heading-scope">
-    <div class="eyebrow">School Portal</div>
-    <h1>Welcome to the <span>{{ portal_title }}</span></h1>
-    <p class="landing-lead">One connected place for learning, communication, results, assignments and the everyday work of your school community.</p>
-    <div class="landing-rule"><span></span><b>Access your portal</b><span></span></div>
-  </div>
-  <div class="landing-accent-panel">
-    <div class="accent-title">Built for a connected school</div>
-    <div class="accent-points"><span>Learning</span><span>Communication</span><span>Results</span><span>School services</span></div>
-  </div>
+{% if not login_role %}
+{% set pre = (school_settings.prelogin_sections or '').split(',') %}
+<section class="landing-public-content" id="home">
+  <section class="landing-showcase" id="about">
+    <div class="landing-showcase-copy">
+      <div class="eyebrow">Welcome</div>
+      <h1>Welcome to <span>{{ portal_title }}</span></h1>
+      <p class="landing-lead">One connected place for learning, communication, results, assignments and the everyday work of your school community.</p>
+      <div class="landing-actions">
+        <a class="landing-action-primary" href="#community">Access your portal</a>
+        {% if school_settings.institution_history %}<a class="landing-action-secondary" href="#history">Our history</a>{% endif %}
+      </div>
+      <div class="landing-trust-line"><span></span><b>Learning · Communication · Results · School services</b></div>
+    </div>
+    <div class="landing-showcase-media">
+      {% if school_settings.landing_show_gallery and (school_settings.institution_image_path or school_settings.institution_image_2_path or school_settings.institution_image_3_path) %}
+      <div class="landing-gallery landing-gallery-featured" aria-label="Institution photographs">
+        {% for path,pos in [(school_settings.institution_image_path,school_settings.institution_image_1_position),(school_settings.institution_image_2_path,school_settings.institution_image_2_position),(school_settings.institution_image_3_path,school_settings.institution_image_3_position)] %}
+          {% if path %}<figure><img src="/{{ path }}" alt="{{ portal_title }}" style="object-position:{{pos or '50% 50%'}}"><figcaption>Institution</figcaption></figure>{% endif %}
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="landing-placeholder-media"><span>{{ portal_title }}</span><small>Institution information</small></div>
+      {% endif %}
+    </div>
+  </section>
+
+  {% if pre %}
+  <section class="landing-about-strip" aria-label="Institution information">
+    {% if 'institution' in pre %}<article id="about-card"><span class="eyebrow">About the institution</span><p>{{ school_settings.institution_history or 'School information will appear here.' }}</p>{% if school_settings.institution_religion %}<p><strong>Values:</strong> {{ school_settings.institution_religion }}</p>{% endif %}</article>{% endif %}
+    {% if 'developer' in pre %}<article><span class="eyebrow">About the developer</span><p><strong>{{ school_settings.developer_name }}</strong></p><p>{{ school_settings.developer_about or 'Developer information.' }}</p></article>{% endif %}
+    {% if 'company' in pre %}<article><span class="eyebrow">About the company</span><p><strong>{{ school_settings.company_name }}</strong></p><p>{{ school_settings.company_about or 'Company information.' }}</p></article>{% endif %}
+  </section>
+  {% endif %}
+
+  <section class="landing-story-grid">
+    {% if 'history' in pre and school_settings.institution_history %}<article id="history"><span class="eyebrow">Our history</span><h2>Where the institution comes from</h2><p>{{ school_settings.institution_history }}</p></article>{% endif %}
+    {% if 'achievements' in pre and school_settings.institution_performance %}<article id="performance"><span class="eyebrow">Achievements & performance</span><h2>What the institution is building</h2><p>{{ school_settings.institution_performance }}</p></article>{% endif %}
+    {% if school_settings.institution_religion %}<article id="values"><span class="eyebrow">Values</span><h2>What guides the community</h2><p>{{ school_settings.institution_religion }}</p></article>{% endif %}
+    {% if 'owners' in pre and school_settings.institution_owners %}<article id="owners"><span class="eyebrow">Management</span><h2>People behind the institution</h2><p>{{ school_settings.institution_owners }}</p></article>{% endif %}
+  </section>
+
+  {% if school_settings.landing_show_dates %}<section class="landing-important-dates" id="dates"><div class="landing-section-heading"><div><div class="eyebrow">School calendar</div><h2>Important dates</h2><p>Upcoming events published by the institution.</p></div></div><div class="date-strip">{% for d in important_dates %}<article class="date-card"><div class="date-day">{{ d.event_date }}</div><strong>{{ d.title }}</strong>{% if d.event_time %}<span>{{ d.event_time }}</span>{% endif %}{% if d.location %}<span>{{ d.location }}</span>{% endif %}</article>{% else %}<div class="landing-empty">No important dates have been published yet.</div>{% endfor %}</div></section>{% endif %}
+
+  {% if school_settings.public_map_query %}<section class="visitor-map" id="visit"><div class="visitor-copy"><div class="eyebrow">Visitors</div><h2>{{school_settings.public_location_title or 'Visit us today at this location'}}</h2><p>{{school_settings.public_address}}</p>{% if school_settings.public_location_notes %}<p>{{school_settings.public_location_notes}}</p>{% endif %}<a class="landing-action-secondary" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query={{school_settings.public_map_query|urlencode}}">Open location in Maps</a></div><iframe title="Visitor location" src="https://www.google.com/maps?q={{school_settings.public_map_query|urlencode}}&output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe></section>{% endif %}
+
+  <section id="community" class="landing-community">
+    <div class="landing-section-heading"><div><div class="eyebrow">Access</div><h2>Parents, students and staff</h2></div><p>Choose the workspace that belongs to you.</p></div>
+    <div class="portal-entry-grid">
+      <a class="portal-entry-card portal-family" href="/student"><span class="eyebrow">Student portal</span><strong>Student</strong><span>Use the school email / admission-number account to enter classes, assignments, results and finance.</span><b>Open student portal →</b></a>
+      {% if parent_portal_enabled %}<a class="portal-entry-card portal-family" href="/parent"><span class="eyebrow">Family portal</span><strong>Parent / Guardian</strong><span>View connected children, fees, approved results and school communication.</span><b>Open family portal →</b></a>{% endif %}
+    </div>
+    <div class="landing-section-heading staff-heading"><div><div class="eyebrow">Staff</div><h2>Secure staff workspaces</h2></div><p>Admin and ICT remain behind their separate secure entries.</p></div>
+    <div class="staff-entry"><a href="/teacher"><strong>Teacher</strong><span>Attendance, classes, marks and assignments</span></a><a href="/finance"><strong>Finance</strong><span>Fees, collections, payroll and institution cash</span></a><a href="/librarian"><strong>Library</strong><span>Books, loans and learner library service</span></a><a href="/driver"><strong>Driver</strong><span>Trips, routes and live vehicle location</span></a></div>
+  </section>
+
+  {% if school_settings.landing_announcement or school_settings.landing_contact %}<section class="landing-notices" id="contact">{% if school_settings.landing_announcement %}<article><span class="eyebrow">School notice</span><p>{{ school_settings.landing_announcement }}</p></article>{% endif %}{% if school_settings.landing_contact %}<article><span class="eyebrow">Enquiries</span><p>{{ school_settings.landing_contact }}</p></article>{% endif %}</section>{% endif %}
+
+  <section class="landing-access-notes">
+    <article class="mini-card recovery-entry"><strong>Forgot your password?</strong><span>Use your registered username and email to receive a secure reset link without needing your old password.</span><a class="landing-action-secondary" href="/forgot-password">Open password recovery</a></article>
+    <article class="mini-card"><strong>Staff access</strong><span>Finance, ICT, Library and administration use their dedicated secure entry links.</span></article>
+    <article class="mini-card"><strong>Multiple workspaces</strong><span>Different role logins can remain open in separate browser tabs.</span></article>
+  </section>
+  {% if setup_required %}<div class="setup-link"><a class="btn btn-ghost btn-block" href="/register">First-time Administrator setup</a></div>{% endif %}
 </section>
-{% if school_settings.landing_show_dates %}<section class="landing-important-dates"><div class="panel-head"><div><div class="eyebrow">School calendar</div><h2>Important dates</h2><p class="muted">Upcoming events published by the institution.</p></div></div><div class="date-strip">{% for d in important_dates %}<article class="date-card"><div class="date-day">{{ d.event_date }}</div><strong>{{ d.title }}</strong>{% if d.event_time %}<span>{{ d.event_time }}</span>{% endif %}{% if d.location %}<span>{{ d.location }}</span>{% endif %}</article>{% else %}<div class="mini-card"><span class="muted">No important dates have been published yet.</span></div>{% endfor %}</div></section>{% endif %}
-{% if school_settings.landing_show_gallery %}{% if school_settings.institution_image_path or school_settings.institution_image_2_path or school_settings.institution_image_3_path %}<section class="landing-gallery">{% for path,pos in [(school_settings.institution_image_path,school_settings.institution_image_1_position),(school_settings.institution_image_2_path,school_settings.institution_image_2_position),(school_settings.institution_image_3_path,school_settings.institution_image_3_position)] %}{% if path %}<figure><img src="/{{ path }}" alt="Institution history" style="object-position:{{pos}}"><figcaption>Institution</figcaption></figure>{% endif %}{% endfor %}</section>{% endif %}{% endif %}
-{% if school_settings.public_map_query %}<section class="visitor-map"><div class="visitor-copy"><div class="eyebrow">Visitors</div><h2>{{school_settings.public_location_title or 'Visit us today at this location'}}</h2><p class="muted">{{school_settings.public_address}}</p>{% if school_settings.public_location_notes %}<p class="muted">{{school_settings.public_location_notes}}</p>{% endif %}<a class="btn btn-primary" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query={{school_settings.public_map_query|urlencode}}">Get directions</a></div><iframe title="Visitor location" src="https://www.google.com/maps?q={{school_settings.public_map_query|urlencode}}&output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe></section>{% endif %}<div class="portal-section-title"><div><div class="eyebrow">Family access</div><h2>Parents and students</h2></div><span class="section-note">One home for the family portal.</span></div><div class="portal-entry-grid"><a class="portal-entry-card portal-family" href="/student"><span class="eyebrow">Student portal</span><strong>Student</strong><span>Use the school email / admission-number account to enter classes, assignments, results and finance.</span><b>Open student portal →</b></a>{% if parent_portal_enabled %}<a class="portal-entry-card portal-family" href="/parent"><span class="eyebrow">Family portal</span><strong>Parent / Guardian</strong><span>View connected children, fees, approved results and school communication.</span><b>Open family portal →</b></a>{% endif %}</div><div class="portal-section-title" style="margin-top:18px"><div><div class="eyebrow">Staff</div><h2>Secure staff workspaces</h2></div><span class="section-note">Admin and ICT stay behind their separate secure entries.</span></div><div class="staff-entry"><a href="/teacher"><strong>Teacher</strong><span class="muted">Attendance, classes, marks and assignments</span></a><a href="/finance"><strong>Finance</strong><span class="muted">Fees, collections, payroll and institution cash</span></a><a href="/librarian"><strong>Library</strong><span class="muted">Books, loans and learner library service</span></a><a href="/driver"><strong>Driver</strong><span class="muted">Trips, routes and live vehicle location</span></a></div>
-{% if school_settings.landing_announcement %}<div class="mini-card" style="margin:14px 0"><strong>School notice</strong><span>{{ school_settings.landing_announcement }}</span></div>{% endif %}
-{% if school_settings.landing_contact %}<div class="mini-card" style="margin:14px 0"><strong>Enquiries</strong><span class="muted">{{ school_settings.landing_contact }}</span></div>{% endif %}
-{% if school_settings.landing_show_roles %}<div class="role-grid" style="display:none">
-  <a class="role-card role-teacher-card" href="/teacher"><span class="role-kicker">Teaching workspace</span><strong>Teacher</strong><span>Classes, attendance, marks, assignments & communication</span><b class="role-arrow">→</b></a>
-  <a class="role-card role-student-card" href="/student"><span class="role-kicker">Learning workspace</span><strong>Student</strong><span>Learning, assignments, results, resources & classes</span><b class="role-arrow">→</b></a>
-  {% if parent_portal_enabled %}<a class="role-card role-parent-card" href="/parent"><span class="role-kicker">Family workspace</span><strong>Parent</strong><span>Fees, report cards, communication & learner progress</span><b class="role-arrow">→</b></a>{% endif %}
-</div>{% endif %}
-<div class="mini-card recovery-entry" style="margin-top:14px"><strong>Forgot your password?</strong><span class="muted">Use your registered username and email to receive a secure reset link without needing your old password.</span><a class="btn btn-ghost mini" style="margin-top:9px;display:inline-flex" href="/forgot-password">Open password recovery</a></div>
-<div class="mini-card" style="margin-top:14px"><strong>Staff access</strong><span class="muted">Finance, ICT, Library and administration use their dedicated secure entry links rather than the public learner portal.</span></div>
-<div class="mini-card" style="margin-top:14px"><strong>Multiple workspaces</strong><span class="muted">Different role logins can remain open in separate browser tabs.</span></div>{% if setup_required %}<div class="setup-link"><a class="btn btn-ghost btn-block" href="/register">First-time Administrator setup</a></div>{% endif %}
 {% else %}
 <div class="eyebrow">{{ login_role }} access</div><h1>Log in</h1>{% if success %}<div class="flash success">{{ success }}</div>{% endif %}{% if error %}<div class="flash danger">{{ error }}</div>{% endif %}<form method="post" action="/login?role={{ login_role }}" class="stack-form"><input type="hidden" name="role" value="{{ login_role }}"><label><span>{% if login_role == 'Student' %}Student name{% else %}Username{% endif %}</span><input name="username" autocomplete="username" required placeholder="{% if login_role == 'Student' %}Your full two/three names{% else %}Username{% endif %}"></label><label><span>Password{% if login_role == 'Student' %} (Admission number){% endif %}</span><div class="password-wrap"><input id="loginPassword" type="password" name="password" autocomplete="current-password" required><button class="password-toggle" type="button" data-password-target="loginPassword" aria-label="Show password">Show</button></div></label><button class="btn btn-primary" type="submit">Log in as {{ login_role }}</button></form>{% if login_role == 'Student' %}<p class="muted" style="margin-top:12px">Students: enter your exact full name and the admission number generated when you were added to the school.</p>{% endif %}<p class="muted" style="margin-top:14px"><a href="/forgot-password">Forgot password?</a> &nbsp;·&nbsp; <a href="/">Choose another role</a></p>
 {% endif %}
