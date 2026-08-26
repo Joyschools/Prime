@@ -5589,12 +5589,14 @@ def add_student():
             warnings.append("fee breakdown could not be posted automatically")
             app.logger.exception("Student %s saved but fee charge setup failed: %s", student_id, exc)
 
+    temp_student_password = secrets.token_urlsafe(9)
     try:
-        username = admission_no.lower()
+        username = generated_email.lower()
         execute("INSERT OR IGNORE INTO users(full_name,username,password_hash,role,student_id,active,workspace_type,title,email) VALUES(?,?,?,?,?,1,?,?,?)",
-                (full_name,username,generate_password_hash(admission_no),"Student",student_id,"Student","Student",generated_email))
+                (full_name,username,generate_password_hash(temp_student_password),"Student",student_id,"Student","Student",generated_email))
     except Exception as exc:
         warnings.append("student portal account setup skipped")
+        temp_student_password = ""
         app.logger.warning("Student %s saved but portal account setup was skipped: %s", student_id, exc)
 
     try:
@@ -5611,9 +5613,12 @@ def add_student():
         app.logger.warning("Student %s saved but audit logging failed: %s", student_id, exc)
 
     if warnings:
-        flash("Student added successfully. The learner record is saved; " + "; ".join(warnings) + ".", "warning")
+        message = "Student added successfully. The learner record is saved; " + "; ".join(warnings) + "."
+        if temp_student_password:
+            message += f" Portal username: {generated_email}. Temporary password: {temp_student_password}. Give it to the learner securely and ask them to change it after first sign-in."
+        flash(message, "warning")
     else:
-        flash("Student added successfully. The learner record is ready.", "success")
+        flash(f"Student added successfully. Portal username: {generated_email}. Temporary password: {temp_student_password}. Give it to the learner securely and ask them to change it after first sign-in.", "success")
     return redirect(url_for("admin_dashboard") + "#admin-add-student")
 
 @app.route("/students/<int:student_id>/subjects", methods=["GET","POST"])
