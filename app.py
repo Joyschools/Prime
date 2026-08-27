@@ -2003,6 +2003,13 @@ def role_target(role: str) -> str:
     }[role]
 
 
+def portal_login_target(portal: str, destination: str) -> str:
+    """Shared public portal gate: always show the normal credential form first."""
+    if portal not in set(ALL_PORTAL_ROLES) | {"E-Learning", "Library"}:
+        raise KeyError(portal)
+    return url_for("login", role=portal, next=destination)
+
+
 def workspace_type_for_user(user) -> str:
     if not user: return "Teaching"
     try:
@@ -2119,7 +2126,7 @@ def selected_role_from_request(default=""):
     role = (request.args.get("role") or request.form.get("role") or default).strip()
     # E-Learning is a secure gateway label, not a stored user role. It may be
     # used only to select the dedicated learning login flow.
-    allowed = set(ALL_PORTAL_ROLES) | {"E-Learning"}
+    allowed = set(ALL_PORTAL_ROLES) | {"E-Learning", "Library"}
     return role if role in allowed else default
 
 
@@ -2909,10 +2916,11 @@ def login():
     if role == "Parent" and not parent_portal_enabled():
         flash("Parent / Guardian portal is disabled for this institution mode.", "warning")
         return redirect(url_for("index"))
-    if role == "E-Learning" and request.method == "GET" and current_user():
-        if current_user()["role"] in E_LEARNING_ROLES:
-            return redirect(next_url or url_for("online_classes"))
-        abort(403)
+    # Portal launchers are deliberate authentication gates. Even when this
+    # browser already has an authenticated session, a public portal-selection
+    # link must present the shared login form instead of silently inheriting the
+    # previous account. The successful credential check then replaces the session
+    # with exactly one authenticated identity and sends it to the requested portal.
     # Keep the legacy single-account/passwordless portal shortcut on GET, but
     # NEVER bypass an explicit credential POST. Accounts created by Admin/ICT
     # must always be able to authenticate with their own username/password.
@@ -2925,6 +2933,7 @@ def login():
         password = request.form.get("password", "")
         role = selected_role_from_request().strip()
         learning_login = role == "E-Learning"
+        library_login = role == "Library"
         # Identity is established by username + password. The role selected on the
         # login screen is only a convenience hint and must never lock out a valid
         # account when its stored role is authoritative. After credentials are
@@ -2996,9 +3005,9 @@ def login():
         if not admission_login_ok and not parent_name_login_ok and not password_ok:
             if user and user["role"] == "Student":
                 flash("Invalid student name/admission number or password.", "danger")
-                return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, next_url=next_url, login_context=login_context, error="Invalid student name/admission number or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=learning_login)
+                return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, next_url=next_url, login_context=login_context, error="Invalid student name/admission number or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=learning_login, library_login=library_login)
             flash("Invalid username or password.", "danger")
-            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, next_url=next_url, login_context=login_context, error="Invalid username or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=learning_login)
+            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, next_url=next_url, login_context=login_context, error="Invalid username or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=learning_login, library_login=library_login)
         # A student-linked account is always a Student account. This repairs any
         # legacy/migrated record that accidentally retained a staff role and prevents
         # student credentials from ever entering the Teacher workspace.
@@ -3010,7 +3019,10 @@ def login():
         role = user["role"]
         if learning_login and role not in E_LEARNING_ROLES:
             flash("E-Learning is available only to Admin, ICT, Teachers and Students.", "danger")
-            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role="E-Learning", next_url=next_url, login_context=login_context, error="E-Learning is available only to Admin, ICT, Teachers and Students.", success=None, setup_required=not auth_initialized(), e_learning_login=True)
+            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role="E-Learning", next_url=next_url, login_context=login_context, error="E-Learning is available only to Admin, ICT, Teachers and Students.", success=None, setup_required=not auth_initialized(), e_learning_login=True, library_login=False)
+        if library_login and role not in LIBRARY_ROLES:
+            flash("The Library Portal is available only to authorised school accounts.", "danger")
+            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role="Library", next_url=next_url, login_context=login_context, error="The Library Portal is available only to authorised school accounts.", success=None, setup_required=not auth_initialized(), e_learning_login=False, library_login=True)
         # Normal password login always goes directly to the person's dashboard.
         # Staff QR is only an optional convenience after the first successful password login.
         if user["role"] not in {"Student", "Parent", "System"} and "qr_login_enabled" in user.keys():
@@ -3025,7 +3037,7 @@ def login():
         if learning_login:
             return redirect(url_for("online_classes"))
         return redirect(specialized_dashboard_for(user))
-    return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, next_url=next_url, login_context=login_context, success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=(role=="E-Learning"))
+    return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, next_url=next_url, login_context=login_context, success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=(role=="E-Learning"), library_login=(role=="Library"))
 
 
 @app.route("/register", methods=["GET", "POST"])

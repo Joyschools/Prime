@@ -55,9 +55,9 @@
       <button type="button" class="landing-nav-trigger" aria-expanded="false">Portals <span aria-hidden="true">⌄</span></button>
       <div class="landing-dropdown landing-dropdown-portal">
         <div class="landing-drop-title">School services</div>
-        <a href="/e-learning">E-Learning / Online Classes</a>
+        <a href="/login?role=E-Learning&amp;next=%2Fonline-classes">E-Learning / Online Classes</a>
         <a href="/communication">School Communication</a>
-        <a href="/library">Library Resources</a>
+        <a href="/login?role=Library&amp;next=%2Flibrary">Library Resources</a>
         {% if school_settings.public_map_query %}<a href="#visit">Visitor location</a>{% endif %}
       </div>
     </div>
@@ -67,59 +67,52 @@
       <button type="button" class="landing-nav-trigger landing-nav-login" aria-expanded="false">Portal Login <span aria-hidden="true">⌄</span></button>
       <div class="landing-dropdown landing-dropdown-portal-login">
         <div class="landing-drop-title">Choose your portal</div>
-        <a href="/teacher">Teacher Portal</a>
-        {% if parent_portal_enabled %}<a href="/parent">Parent / Guardian Portal</a>{% endif %}
-        <a href="/student">Student Portal</a>
-        <a href="/e-learning">E-Learning Portal</a>
-        <a href="/library">Library Portal</a>
-        <a href="/librarian">Librarian Portal</a>
-        <a href="/driver">Driver Portal</a>
+        <a href="/login?role=Teacher&amp;next=%2Fteacher%2Fdashboard">Teacher Portal</a>
+        {% if parent_portal_enabled %}<a href="/login?role=Parent&amp;next=%2Fparent-dashboard">Parent / Guardian Portal</a>{% endif %}
+        <a href="/login?role=Student&amp;next=%2Fstudent%2Fdashboard">Student Portal</a>
+        <a href="/login?role=E-Learning&amp;next=%2Fonline-classes">E-Learning Portal</a>
+        <a href="/login?role=Library&amp;next=%2Flibrary">Library Portal</a>
+        <a href="/login?role=Librarian&amp;next=%2Flibrarian-dashboard">Librarian Portal</a>
+        <a href="/login?role=Driver&amp;next=%2Fdriver-dashboard">Driver Portal</a>
       </div>
     </div>
   </nav>
   <div class="landing-mobile-nav" aria-label="Mobile school navigation">
-    <div class="landing-mobile-toplinks">
-      <a class="mobile-top-home" href="#home">Home</a>
-      <a href="#dates">Calendar</a>
-      <a href="#visitor-qr">QR</a>
-      <a class="mobile-top-login" href="#portal-login-mobile">Portal Login</a>
+    <div class="landing-mobile-topbar">
+      <a class="landing-mobile-brand" href="#home" aria-label="School Portal home"><span class="landing-mobile-brand-mark">▦</span><span>{{ portal_title }}</span></a>
+      <div class="landing-mobile-tools" aria-label="Page tools">
+        <button type="button" data-mobile-text="decrease" aria-label="Decrease text size">A−</button>
+        <button type="button" data-mobile-text="increase" aria-label="Increase text size">A+</button>
+        <button type="button" data-mobile-share aria-label="Share portal">↗</button>
+      </div>
     </div>
-    <aside class="landing-mobile-rail">
-      <div class="landing-mobile-menu-title">Navigate</div>
-      <div class="landing-mobile-rail-item">
-        <button type="button" class="landing-mobile-trigger" aria-expanded="false" data-mobile-panel="about">About <span>⌄</span></button>
-        <div class="landing-mobile-panel" data-mobile-panel-target="about">
-          <a href="#about">Welcome</a>
-          {% if school_settings.institution_history %}<a href="#history">History</a>{% endif %}
-          {% if school_settings.institution_owners %}<a href="#owners">Founder</a>{% endif %}
-          {% if school_settings.institution_performance %}<a href="#performance">Curriculum</a>{% endif %}
-          {% if school_settings.institution_help %}<a href="#guidelines">Dress code</a>{% endif %}
-          {% if school_settings.developer_name %}<a href="#developer">Developer</a>{% endif %}
-        </div>
+    <nav class="landing-mobile-links" aria-label="Primary mobile navigation">
+      <a class="is-active" href="#home">Home</a>
+      <button type="button" class="mobile-link-button" data-mobile-panel="about" aria-expanded="false">About <span>⌄</span></button>
+      <a href="#dates">Calendar</a>
+      <button type="button" class="mobile-link-button" data-mobile-panel="portals" aria-expanded="false">Portals <span>⌄</span></button>
+      <a href="#contact">Contacts</a>
+    </nav>
+    <div class="landing-mobile-panel-wrap">
+      <div class="landing-mobile-panel" data-mobile-panel-target="about">
+        {% if school_settings.institution_history %}<a href="#history">History</a>{% endif %}
+        {% if school_settings.institution_owners %}<a href="#owners">Founder</a>{% endif %}
+        {% if school_settings.institution_performance %}<a href="#performance">Curriculum</a>{% endif %}
+        {% if school_settings.institution_help %}<a href="#guidelines">Dress code</a>{% endif %}
+        {% if school_settings.developer_name %}<a href="#developer">Developer</a>{% endif %}
       </div>
-      <div class="landing-mobile-rail-item">
-        <button type="button" class="landing-mobile-trigger" aria-expanded="false" data-mobile-panel="portals">Portals <span>⌄</span></button>
-        <div class="landing-mobile-panel" data-mobile-panel-target="portals">
-          <a href="/e-learning">E-Learning</a>
-          <a href="/communication">Communication</a>
-          <a href="/library">Library Resources</a>
-          {% if school_settings.public_map_query %}<a href="#visit">Visitor location</a>{% endif %}
-        </div>
+      <div class="landing-mobile-panel" data-mobile-panel-target="portals">
+        <a href="/login?role=Teacher&amp;next=%2Fteacher%2Fdashboard">Teacher</a>
+        {% if parent_portal_enabled %}<a href="/login?role=Parent&amp;next=%2Fparent-dashboard">Parent / Guardian</a>{% endif %}
+        <a href="/login?role=Student&amp;next=%2Fstudent%2Fdashboard">Student</a>
+        <a href="/login?role=E-Learning&amp;next=%2Fonline-classes">E-Learning</a>
+        <a href="/login?role=Library&amp;next=%2Flibrary">Library</a>
+        <a href="/login?role=Librarian&amp;next=%2Flibrarian-dashboard">Librarian</a>
+        <a href="/login?role=Driver&amp;next=%2Fdriver-dashboard">Driver</a>
       </div>
-      {% if school_settings.public_map_query %}<a class="landing-mobile-rail-link" href="#visit">Visit</a>{% endif %}
-      <a class="landing-mobile-rail-link" href="#contact">Contacts</a>
-      <div class="landing-mobile-portal-panel" id="portal-login-mobile">
-        <div class="landing-mobile-menu-title">Portal Login</div>
-        <a href="/teacher">Teacher</a>
-        {% if parent_portal_enabled %}<a href="/parent">Parent / Guardian</a>{% endif %}
-        <a href="/student">Student</a>
-        <a href="/e-learning">E-Learning</a>
-        <a href="/library">Library</a>
-        <a href="/librarian">Librarian</a>
-        <a href="/driver">Driver</a>
-      </div>
-    </aside>
+    </div>
   </div>
+
 </header>
 
 {% if not login_role %}
@@ -203,8 +196,39 @@
 {% endif %}
 </section></main><script>(function(){var splash=document.getElementById('welcomeSplash');if(!splash)return;var d={{welcome_animation_duration_ms|int}};window.setTimeout(function(){splash.hidden=true;},Math.max(900,d+100));})();</script><script>
 (function(){
-  document.querySelectorAll('.landing-mobile-trigger').forEach(function(btn){btn.addEventListener('click',function(){const key=btn.dataset.mobilePanel;const panel=document.querySelector('[data-mobile-panel-target="'+key+'"]');if(!panel)return;const open=panel.classList.toggle('open');btn.setAttribute('aria-expanded',String(open));});});
-  document.querySelectorAll('.landing-mobile-panel a,.landing-mobile-toplinks a,.landing-mobile-rail-link,.landing-mobile-portal-panel a').forEach(function(a){a.addEventListener('click',function(){document.querySelectorAll('.landing-mobile-panel').forEach(function(p){p.classList.remove('open')});document.querySelectorAll('.landing-mobile-trigger').forEach(function(b){b.setAttribute('aria-expanded','false')});});});
+  const root=document.querySelector('.landing-mobile-nav');
+  if(!root)return;
+  const closePanels=function(){
+    root.querySelectorAll('.landing-mobile-panel').forEach(function(p){p.classList.remove('open');});
+    root.querySelectorAll('.mobile-link-button').forEach(function(b){b.setAttribute('aria-expanded','false');});
+  };
+  root.querySelectorAll('.mobile-link-button').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      const key=btn.dataset.mobilePanel;
+      const panel=root.querySelector('[data-mobile-panel-target="'+key+'"]');
+      if(!panel)return;
+      const open=panel.classList.contains('open');
+      closePanels();
+      if(!open){panel.classList.add('open');btn.setAttribute('aria-expanded','true');}
+    });
+  });
+  root.querySelectorAll('.landing-mobile-panel a').forEach(function(a){a.addEventListener('click',closePanels);});
+  const textButtons=root.querySelectorAll('[data-mobile-text]');
+  const applyText=function(action){
+    const current=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--mobile-text-scale')||'1')||1;
+    let next=action==='increase'?Math.min(1.14,current+0.07):Math.max(.93,current-.07);
+    document.documentElement.style.setProperty('--mobile-text-scale',String(next));
+    document.body.style.setProperty('--mobile-text-scale',String(next));
+    document.body.style.fontSize=(100*next)+'%';
+  };
+  textButtons.forEach(function(btn){btn.addEventListener('click',function(){applyText(btn.dataset.mobileText);});});
+  const share=root.querySelector('[data-mobile-share]');
+  if(share){share.addEventListener('click',async function(){
+    try{
+      if(navigator.share){await navigator.share({title:document.title,text:'Open the school portal',url:window.location.href});}
+      else if(navigator.clipboard){await navigator.clipboard.writeText(window.location.href);share.textContent='✓';setTimeout(function(){share.textContent='↗';},1400);}
+    }catch(e){}
+  });}
 })();
 </script>
 <script>
