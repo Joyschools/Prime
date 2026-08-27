@@ -1306,6 +1306,7 @@ def _init_db_once() -> None:
         ensure_column(conn, "school_settings", "backup_auto_time TEXT NOT NULL DEFAULT '16:30'")
         ensure_column(conn, "school_settings", "tracking_enabled INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "school_settings", "scanner_enabled INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "school_settings", "about_seed_version INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "school_settings", "institution_portal_guide TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "institution_admin_guide TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "institution_ict_guide TEXT NOT NULL DEFAULT ''")
@@ -1657,9 +1658,9 @@ def recalculate_student_balance(student_id: int) -> dict:
     return {"assessed":assessed,"paid":paid,"balance":balance,"status":status}
 
 def student_email_for(admission_no: str, existing: str = "") -> str:
-    existing=(existing or "").strip().lower()
-    if existing:
-        return existing
+    """Generate the learner's institutional email strictly from the admission number.
+    The optional existing argument is retained for compatibility but is intentionally ignored.
+    """
     domain=(school_settings()["student_email_domain"] or "school.ac.ke").strip().lstrip("@").lower()
     local=re.sub(r"[^a-z0-9]+",".",(admission_no or "student").lower()).strip(".") or "student"
     return f"{local}@{domain}"
@@ -1680,11 +1681,48 @@ def return_to_referrer(fallback_endpoint: str):
         return ref
     return url_for(fallback_endpoint)
 
+DEFAULT_ABOUT_SECTIONS = [
+    {"title":"Institutional History","body":"[Insert the confirmed founding year, place, founders and the story of how the institution began. Add the major milestones that shaped the school from its earliest days to the present.]","layout":"reading","media":[{"path":"static/img/about-placeholders/about-01.png","kind":"image","caption":"Replace with an authentic school history photograph."}]},
+    {"title":"Our Founder","body":"[Insert the founder\'s full name, background, educational philosophy and the reason the institution was established. Explain the founder\'s contribution and continuing legacy.]","layout":"image-right","media":[{"path":"static/img/about-placeholders/about-02.png","kind":"image","caption":"Replace with founder or historic school image."}]},
+    {"title":"Mission, Vision & Values","body":"[Insert the institution\'s official mission, vision, core values, motto and guiding principles using the school\'s approved wording.]","layout":"reading","media":[{"path":"static/img/about-placeholders/about-03.png","kind":"image","caption":"Replace with an image that represents the institution\'s values."}]},
+    {"title":"Academic Programmes","body":"[Describe the academic programmes, grades, courses, departments and pathways offered. Include any specialisations and curriculum frameworks that apply.]","layout":"image-left","media":[{"path":"static/img/about-placeholders/about-04.png","kind":"image","caption":"Replace with a classroom or academic programme photograph."}]},
+    {"title":"Teaching & Learning","body":"[Explain the institution\'s teaching approach, learning environment, assessment philosophy, practical learning and how teachers help learners succeed.]","layout":"reading","media":[{"path":"static/img/about-placeholders/about-05.png","kind":"image","caption":"Replace with a genuine teaching and learning image."}]},
+    {"title":"Learner Life & Co-curricular","body":"[Describe clubs, sports, music, arts, competitions, leadership, trips and other activities that make learner life rich beyond the classroom.]","layout":"image-right","media":[{"path":"static/img/about-placeholders/about-06.png","kind":"image","caption":"Replace with a real co-curricular or student-life photograph."}]},
+    {"title":"Leadership & Governance","body":"[Introduce the leadership structure, governance arrangements, boards, management and the people responsible for guiding the institution.]","layout":"reading","media":[{"path":"static/img/about-placeholders/about-07.png","kind":"image","caption":"Replace with leadership or governance photograph."}]},
+    {"title":"Staff & School Community","body":"[Tell visitors about teachers, administrators, finance, ICT, library, transport, welfare and support teams, and how they work together for learners.]","layout":"image-left","media":[{"path":"static/img/about-placeholders/about-08.png","kind":"image","caption":"Replace with a staff or school-community group photograph."}]},
+    {"title":"Campus & Facilities","body":"[Describe the campus, classrooms, laboratories, library, ICT facilities, sports grounds, boarding or dining facilities and any special infrastructure.]","layout":"feature","media":[{"path":"static/img/about-placeholders/about-09.png","kind":"image","caption":"Replace with a campus or facilities photograph."}]},
+    {"title":"Technology & Innovation","body":"[Explain how the institution uses digital systems, ICT, e-learning, communication tools, data and innovation to improve teaching, administration and service delivery.]","layout":"image-right","media":[{"path":"static/img/about-placeholders/about-10.png","kind":"image","caption":"Replace with an ICT or e-learning photograph."}]},
+    {"title":"Student Support & Welfare","body":"[Describe counselling, pastoral care, health, safeguarding, inclusion, special support, mentorship and other welfare services available to learners.]","layout":"reading","media":[{"path":"static/img/about-placeholders/about-11.png","kind":"image","caption":"Replace with a learner support or welfare photograph."}]},
+    {"title":"Achievements & Milestones","body":"[Record academic results, awards, competitions, innovations, major projects, recognitions and other milestones, with dates and evidence where appropriate.]","layout":"feature","media":[{"path":"static/img/about-placeholders/about-12.png","kind":"image","caption":"Replace with an awards or achievements photograph."}]},
+    {"title":"Community & Partnerships","body":"[Explain the institution\'s relationship with families, community organisations, government, faith communities, employers, universities, NGOs and other partners.]","layout":"image-left","media":[{"path":"static/img/about-placeholders/about-13.png","kind":"image","caption":"Replace with a community or partnership photograph."}]},
+    {"title":"Alumni & Former Learners","body":"[Share the story of former learners, alumni achievements, alumni involvement and the continuing relationship between graduates and the institution.]","layout":"reading","media":[{"path":"static/img/about-placeholders/about-14.png","kind":"image","caption":"Replace with an alumni or former-learners photograph."}]},
+    {"title":"Future Plans & Expectations","body":"[Describe the institution\'s future direction, planned facilities, academic growth, staff development, learner opportunities, technology plans and the experience the school intends to build next.]","layout":"feature","media":[{"path":"static/img/about-placeholders/about-15.png","kind":"image","caption":"Replace with an image representing future growth or plans."}]},
+    {"title":"About the Developer & Digital Platform","body":"[Insert the approved developer/company story, why the digital platform was created, how it connects learning and administration, and the principles guiding security, continuity and future development.]","layout":"image-right","media":[{"path":"static/img/about-placeholders/about-16.png","kind":"image","caption":"Replace with the approved developer/platform image."}]}
+]
+
+def _ensure_about_story_seed():
+    """Upgrade the one-time starter About story to a complete 16-section editable structure."""
+    row=q("SELECT about_sections_json, about_seed_version FROM school_settings WHERE id=1", one=True)
+    if not row: return
+    if int(row["about_seed_version"] or 0) >= 1: return
+    try:
+        current=json.loads(row["about_sections_json"] or "[]")
+        if not isinstance(current,list): current=[]
+    except Exception:
+        current=[]
+    known={str(x.get("title","")).strip().lower() for x in current if isinstance(x,dict)}
+    merged=current[:]
+    for sample in DEFAULT_ABOUT_SECTIONS:
+        if sample["title"].strip().lower() not in known:
+            merged.append(json.loads(json.dumps(sample)))
+    execute("UPDATE school_settings SET about_sections_json=?, about_seed_version=1 WHERE id=1", (json.dumps(merged,ensure_ascii=False),))
+
 def school_settings():
     """Return the single school-wide portal settings row, creating it when needed."""
     row = q("SELECT * FROM school_settings WHERE id = 1", one=True)
     if row:
-        return row
+        _ensure_about_story_seed()
+        return q("SELECT * FROM school_settings WHERE id = 1", one=True)
     execute(
         """
         INSERT INTO school_settings(
@@ -1694,6 +1732,7 @@ def school_settings():
         ) VALUES (1, 'School Portal System', 'ADM-', '', '', '', 'KES', 0, 0, 'institution,history,achievements,owners,developer,company', 'Toror Technology and Innovations Ltd.', 'Toror Technology and Innovations Ltd.')
         """
     )
+    _ensure_about_story_seed()
     return q("SELECT * FROM school_settings WHERE id = 1", one=True)
 
 
@@ -5908,11 +5947,18 @@ def add_student():
             warnings.append("fee breakdown could not be posted automatically")
             app.logger.exception("Student %s saved but fee charge setup failed: %s", student_id, exc)
 
-    temp_student_password = secrets.token_urlsafe(9)
+    # Learner portal credentials are deterministic and easy to issue: generated school
+    # email is the username, and the admission number is the initial password.
+    temp_student_password = admission_no
     try:
         username = generated_email.lower()
-        execute("INSERT OR IGNORE INTO users(full_name,username,password_hash,role,student_id,active,workspace_type,title,email) VALUES(?,?,?,?,?,1,?,?,?)",
-                (full_name,username,generate_password_hash(temp_student_password),"Student",student_id,"Student","Student",generated_email))
+        linked = q("SELECT id FROM users WHERE student_id=? AND role='Student' ORDER BY id LIMIT 1", (student_id,), one=True)
+        if linked:
+            execute("UPDATE users SET full_name=?,username=?,email=?,password_hash=?,active=1,workspace_type='Student',title='Student',role='Student' WHERE id=?",
+                    (full_name,username,generated_email,generate_password_hash(temp_student_password),linked["id"]))
+        else:
+            execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active,workspace_type,title,email) VALUES(?,?,?,?,?,1,?,?,?)",
+                    (full_name,username,generate_password_hash(temp_student_password),"Student",student_id,"Student","Student",generated_email))
     except Exception as exc:
         warnings.append("student portal account setup skipped")
         temp_student_password = ""
@@ -6093,8 +6139,7 @@ def update_student(student_id: int):
     tr=q("SELECT amount FROM transport_rates WHERE zone_name=? AND active=1 LIMIT 1",(transport_zone,),one=True) if uses_bus and transport_zone else None
     transport_charge=float(tr["amount"] or 0) if tr else 0.0
     old_admission=student["admission_no"] or ""
-    if not fields["student_email"]:
-        fields["student_email"]=student_email_for(admission_no)
+    fields["student_email"]=student_email_for(admission_no)
     try:
         execute("""UPDATE students SET admission_no=?,full_name=?,grade=?,age=?,grade_category=?,guardian_name=?,guardian_phone=?,guardian_email=?,alt_guardian_name=?,alt_guardian_phone=?,alt_guardian_email=?,student_phone=?,student_email=?,address=?,date_of_birth=?,gender=?,id_reference=?,emergency_contact=?,blood_group=?,medical_condition=?,medical_notes=?,allergies=?,special_info=?,notes=?,active=?,fee_assessed_total=?,fee_override_enabled=?,transport_zone=?,uses_school_bus=?,meal_plan=?,transport_charge=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
             (admission_no,full_name,grade,age,grade,fields["guardian_name"],fields["guardian_phone"],fields["guardian_email"],fields["alt_guardian_name"],fields["alt_guardian_phone"],fields["alt_guardian_email"],fields["student_phone"],fields["student_email"],fields["address"],fields["date_of_birth"],fields["gender"],fields["id_reference"],fields["emergency_contact"],fields["blood_group"],fields["medical_condition"],fields["medical_notes"],fields["allergies"],fields["special_info"],fields["notes"],active,fee_total,override,transport_zone,uses_bus,meal_plan,transport_charge,student_id))
@@ -6107,14 +6152,12 @@ def update_student(student_id: int):
             # In override mode the supplied total is authoritative; no synthetic charges are needed.
             execute("UPDATE students SET fee_assessed_total=? WHERE id=?",(fee_total,student_id))
         recalculate_student_balance(student_id)
-        linked=q("SELECT id,password_hash FROM users WHERE student_id=? AND role='Student' AND active=1 LIMIT 1",(student_id,),one=True)
+        linked=q("SELECT id FROM users WHERE student_id=? AND role='Student' ORDER BY id LIMIT 1",(student_id,),one=True)
+        generated_email = student_email_for(admission_no)
         if linked:
-            try: bootstrap=bool(old_admission) and check_password_hash(linked["password_hash"],old_admission)
-            except Exception: bootstrap=False
-            if bootstrap: execute("UPDATE users SET username=?,full_name=?,email=?,password_hash=? WHERE id=?",(admission_no,full_name,fields["student_email"],generate_password_hash(admission_no),linked["id"]))
-            else: execute("UPDATE users SET full_name=?,email=? WHERE id=?",(full_name,fields["student_email"],linked["id"]))
+            execute("UPDATE users SET username=?,full_name=?,email=?,password_hash=?,active=?,role='Student',workspace_type='Student',title='Student' WHERE id=?",(generated_email,full_name,generated_email,generate_password_hash(admission_no),active,linked["id"]))
         else:
-            execute("INSERT OR IGNORE INTO users(full_name,username,password_hash,role,student_id,active,workspace_type,title,email) VALUES(?,?,?,?,?,1,?,?,?)",(full_name,admission_no,generate_password_hash(admission_no),"Student",student_id,"Student","Student",fields["student_email"]))
+            execute("INSERT INTO users(full_name,username,password_hash,role,student_id,active,workspace_type,title,email) VALUES(?,?,?,?,?, ?,?,?,?)",(full_name,generated_email,generate_password_hash(admission_no),"Student",student_id,active,"Student","Student",generated_email))
         audit(current_user()["id"],current_user()["full_name"],"Update Student",f"Updated {full_name} ({admission_no}); balance recalculated from charges/payments.")
         flash("Learner updated. Fees, payments and transport have been reconciled automatically.","success")
     except Exception as exc:
