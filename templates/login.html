@@ -1,7 +1,8 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/favicon.ico">
-<title>{{ portal_title }} | Login</title><link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}"><meta name="theme-color" content="{{ theme_color }}"><link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"><style>{{theme_style|safe}}{{theme_preset_style|safe}}{{landing_style|safe}}</style><style>.landing-body{min-height:100vh}.landing-important-dates{margin:18px 0}.date-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.date-card{padding:15px;border:1px solid rgba(127,127,127,.18);border-radius:15px;background:var(--landing-panel,#fff);color:var(--landing-text,#152033)}.date-card strong,.date-card span{display:block}.date-day{font-weight:800;color:var(--primary-blue);margin-bottom:5px}.landing-gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0}.landing-gallery figure{margin:0;overflow:hidden;border-radius:16px;background:var(--landing-panel,#fff)}.landing-gallery img{width:100%;height:190px;display:block;object-fit:cover}.landing-gallery figcaption{padding:8px 10px;font-size:12px;font-weight:700}.landing-card{background:var(--landing-panel,#fff);color:var(--landing-text,#152033)}@media(max-width:800px){.landing-gallery{grid-template-columns:1fr}.landing-gallery img{height:210px}}.qr-login-grid{display:grid;grid-template-columns:minmax(280px,.9fr) minmax(280px,1.1fr);gap:18px}.qr-camera-card{display:grid;gap:10px}.qr-camera-card video{width:100%;min-height:260px;max-height:360px;object-fit:cover;border-radius:16px;background:#05080b;border:1px solid rgba(127,127,127,.2)}@media(max-width:760px){.qr-login-grid{grid-template-columns:1fr}}
+<title>{{ portal_title }} | Login</title><link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}"><meta name="theme-color" content="{{ theme_color }}"><link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"><style>{{theme_style|safe}}{{theme_preset_style|safe}}{{landing_style|safe}}.landing-deep-about{padding:clamp(24px,5vw,76px) 0}.landing-deep-about-list{display:grid;gap:28px}.landing-deep-about-item{padding:clamp(22px,4vw,46px);border-radius:28px;background:rgba(255,255,255,.9);border:1px solid rgba(0,0,0,.08);box-shadow:0 20px 60px rgba(0,0,0,.06)}.deep-about-copy{min-width:0}.deep-about-body{font-size:clamp(17px,1.2vw,21px);line-height:1.85;color:var(--primary-text)}.collapsible-copy.is-long{max-height:330px;overflow:hidden;position:relative}.collapsible-copy.is-long:after{content:'';position:absolute;left:0;right:0;bottom:0;height:90px;background:linear-gradient(180deg,rgba(255,255,255,0),rgba(255,255,255,.97))}.about-more-btn,.about-media-more{margin-top:12px;border:1px solid rgba(0,0,0,.12);background:var(--panel);border-radius:999px;padding:10px 16px;font-weight:850;cursor:pointer}.deep-about-media-gallery{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:24px}.deep-about-media-item{margin:0;border-radius:20px;overflow:hidden;background:rgba(0,0,0,.03);border:1px solid rgba(0,0,0,.08)}.deep-about-media-item img,.deep-about-media-item video{display:block;width:100%;aspect-ratio:16/10;object-fit:cover}.deep-about-media-item figcaption{padding:10px 12px;font-size:14px;color:#666}.media-collapsible .extra-media{display:none}.media-collapsible.open .extra-media{display:block}.about-media-more{grid-column:1/-1;justify-self:start}.@media(max-width:720px){.deep-about-media-gallery{grid-template-columns:1fr}.landing-deep-about-item{border-radius:22px}.deep-about-body{font-size:18px;line-height:1.8}}
+</style><style>.landing-body{min-height:100vh}.landing-important-dates{margin:18px 0}.date-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.date-card{padding:15px;border:1px solid rgba(127,127,127,.18);border-radius:15px;background:var(--landing-panel,#fff);color:var(--landing-text,#152033)}.date-card strong,.date-card span{display:block}.date-day{font-weight:800;color:var(--primary-blue);margin-bottom:5px}.landing-gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0}.landing-gallery figure{margin:0;overflow:hidden;border-radius:16px;background:var(--landing-panel,#fff)}.landing-gallery img{width:100%;height:190px;display:block;object-fit:cover}.landing-gallery figcaption{padding:8px 10px;font-size:12px;font-weight:700}.landing-card{background:var(--landing-panel,#fff);color:var(--landing-text,#152033)}@media(max-width:800px){.landing-gallery{grid-template-columns:1fr}.landing-gallery img{height:210px}}.qr-login-grid{display:grid;grid-template-columns:minmax(280px,.9fr) minmax(280px,1.1fr);gap:18px}.qr-camera-card{display:grid;gap:10px}.qr-camera-card video{width:100%;min-height:260px;max-height:360px;object-fit:cover;border-radius:16px;background:#05080b;border:1px solid rgba(127,127,127,.2)}@media(max-width:760px){.qr-login-grid{grid-template-columns:1fr}}
 </style><style>.visitor-map{display:grid;grid-template-columns:1fr 1.15fr;gap:16px;margin:16px 0}.visitor-copy,.visitor-map iframe{border-radius:18px}.visitor-copy{padding:20px;border:1px solid color-mix(in srgb,var(--primary-blue) 18%,transparent);background:color-mix(in srgb,var(--landing-panel) 82%,transparent)}.visitor-map iframe{width:100%;min-height:260px;border:0}.portal-entry-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}.portal-entry-card{display:grid;gap:9px;padding:22px;border-radius:20px;border:1px solid color-mix(in srgb,var(--primary-blue) 20%,transparent);background:var(--landing-panel);text-decoration:none;color:inherit}.portal-entry-card strong{font-size:24px}.portal-family{min-height:150px}</style></head>
 <style>
 .welcome-splash{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;background:#071019;color:#fff;overflow:hidden;animation:wsFadeOut .58s cubic-bezier(.65,0,.35,1) forwards;animation-delay:calc(var(--ws-duration) - 580ms)}
@@ -22,8 +23,8 @@
 @media(max-width:650px){.welcome-mark{padding:22px}.welcome-logo{width:46px;height:46px;margin-bottom:18px}.welcome-corner{right:18px;bottom:18px}.welcome-grid{background-size:38px 38px}}
 @media (prefers-reduced-motion:reduce){.welcome-splash{animation:none;opacity:0;visibility:hidden}.welcome-splash>*{animation:none}.welcome-mark{opacity:1;transform:none}.welcome-name,.welcome-kicker,.welcome-sub,.welcome-logo{opacity:1;transform:none}.welcome-rule{transform:none}.welcome-rail{transform:scaleY(1)}}
 </style>
-<body class="auth-body landing-body landing-font-scope" style="--primary-blue: {{ school_settings.landing_accent_color }};--deep-accent-blue:{{ school_settings.accent_color }};--landing-bg:{{ school_settings.landing_background_color }};--landing-panel:{{ school_settings.landing_panel_color }};--landing-text:{{ school_settings.landing_text_color }};{% if school_settings.landing_background_path %}background-image:linear-gradient(180deg,color-mix(in srgb,var(--landing-bg) 84%,transparent),color-mix(in srgb,var(--landing-bg) 94%,transparent)),url('/{{ school_settings.landing_background_path }}');background-size:cover;background-position:center;background-attachment:fixed;{% endif %}background-color:var(--landing-bg);color:var(--landing-text)">
-{% if welcome_animation %}<div class="welcome-splash welcome-style-{{ school_settings.welcome_animation_style|default('clean', true) }}" id="welcomeSplash" style="--ws-accent:{{ school_settings.landing_accent_color }};--ws-duration:{{ welcome_animation_duration_ms }}ms"><div class="welcome-grid" aria-hidden="true"></div><div class="welcome-rail" aria-hidden="true"></div><div class="welcome-mark">{% if school_settings.logo_path %}<img class="welcome-logo" src="/{{ school_settings.logo_path }}" alt="">{% endif %}<div class="welcome-kicker">Institutional technology</div><div class="welcome-rule"></div><h1 class="welcome-name">{{ welcome_animation_name }}</h1><div class="welcome-sub">Technology · Innovation · Impact</div><div class="welcome-progress" aria-hidden="true"><span></span></div></div><div class="welcome-corner" aria-hidden="true"><span></span><b>01</b></div></div>{% endif %}
+<body class="auth-body landing-body landing-font-scope" style="--primary-blue:#9d2b2f;--deep-accent-blue:#163f32;--landing-bg:#f5efe1;--landing-panel:#ffffff;--landing-text:#17231d;{% if school_settings.landing_background_path %}background-image:linear-gradient(180deg,color-mix(in srgb,var(--landing-bg) 84%,transparent),color-mix(in srgb,var(--landing-bg) 94%,transparent)),url('/{{ school_settings.landing_background_path }}');background-size:cover;background-position:center;background-attachment:fixed;{% endif %}background-color:var(--landing-bg);color:var(--landing-text)">
+{% if welcome_animation %}<div class="welcome-splash welcome-style-{{ school_settings.welcome_animation_style|default('clean', true) }}" id="welcomeSplash" style="--ws-accent:#9d2b2f;--ws-duration:{{ welcome_animation_duration_ms }}ms"><div class="welcome-grid" aria-hidden="true"></div><div class="welcome-rail" aria-hidden="true"></div><div class="welcome-mark">{% if school_settings.logo_path %}<img class="welcome-logo" src="/{{ school_settings.logo_path }}" alt="">{% endif %}<div class="welcome-kicker">Institutional technology</div><div class="welcome-rule"></div><h1 class="welcome-name">{{ welcome_animation_name }}</h1><div class="welcome-sub">Technology · Innovation · Impact</div><div class="welcome-progress" aria-hidden="true"><span></span></div></div><div class="welcome-corner" aria-hidden="true"><span></span><b>01</b></div></div>{% endif %}
 <main class="auth-shell landing-shell"><section class="auth-card glass portal-selector landing-card">
 <header class="landing-topbar" id="landingTop">
   <div class="landing-toprow">
@@ -53,7 +54,7 @@
       <button type="button" class="landing-nav-trigger" aria-expanded="false">Portals <span aria-hidden="true">⌄</span></button>
       <div class="landing-dropdown landing-dropdown-portal">
         <div class="landing-drop-title">School services</div>
-        <a href="/online-classes">E-Learning / Online Classes</a>
+        <a href="/e-learning">E-Learning / Online Classes</a>
         <a href="/communication">School Communication</a>
         <a href="/library">Library Resources</a>
         {% if school_settings.public_map_query %}<a href="#visit">Visitor location</a>{% endif %}
@@ -73,6 +74,46 @@
       </div>
     </div>
   </nav>
+  <div class="landing-mobile-nav" aria-label="Mobile school navigation">
+    <div class="landing-mobile-toplinks">
+      <a class="mobile-top-home" href="#home">Home</a>
+      <a href="#dates">Calendar</a>
+      <a class="mobile-top-login" href="#portal-login-mobile">Portal Login</a>
+    </div>
+    <aside class="landing-mobile-rail">
+      <div class="landing-mobile-menu-title">Navigate</div>
+      <div class="landing-mobile-rail-item">
+        <button type="button" class="landing-mobile-trigger" aria-expanded="false" data-mobile-panel="about">About <span>⌄</span></button>
+        <div class="landing-mobile-panel" data-mobile-panel-target="about">
+          <a href="#about">Welcome</a>
+          {% if school_settings.institution_history %}<a href="#history">History</a>{% endif %}
+          {% if school_settings.institution_owners %}<a href="#owners">Founder</a>{% endif %}
+          {% if school_settings.institution_performance %}<a href="#performance">Curriculum</a>{% endif %}
+          {% if school_settings.institution_help %}<a href="#guidelines">Dress code</a>{% endif %}
+          {% if school_settings.developer_name %}<a href="#developer">Developer</a>{% endif %}
+        </div>
+      </div>
+      <div class="landing-mobile-rail-item">
+        <button type="button" class="landing-mobile-trigger" aria-expanded="false" data-mobile-panel="portals">Portals <span>⌄</span></button>
+        <div class="landing-mobile-panel" data-mobile-panel-target="portals">
+          <a href="/e-learning">E-Learning</a>
+          <a href="/communication">Communication</a>
+          <a href="/library">Library Resources</a>
+          {% if school_settings.public_map_query %}<a href="#visit">Visitor location</a>{% endif %}
+        </div>
+      </div>
+      {% if school_settings.public_map_query %}<a class="landing-mobile-rail-link" href="#visit">Visit</a>{% endif %}
+      <a class="landing-mobile-rail-link" href="#contact">Contacts</a>
+      <div class="landing-mobile-portal-panel" id="portal-login-mobile">
+        <div class="landing-mobile-menu-title">Portal Login</div>
+        <a href="/teacher">Teacher</a>
+        {% if parent_portal_enabled %}<a href="/parent">Parent / Guardian</a>{% endif %}
+        <a href="/student">Student</a>
+        <a href="/librarian">Librarian</a>
+        <a href="/driver">Driver</a>
+      </div>
+    </aside>
+  </div>
 </header>
 
 {% if not login_role %}
@@ -82,7 +123,7 @@
     <div class="landing-showcase-copy">
       <div class="eyebrow">Welcome</div>
       <h1>{{ school_settings.landing_hero_title or ('Welcome to ' ~ portal_title) }}</h1>
-      <p class="landing-lead">{{ school_settings.landing_hero_text or 'One connected place for learning, communication, results, assignments and the everyday work of the school community.' }}</p>
+      <p class="landing-lead">{{ school_settings.landing_hero_text or 'Learning, character, community and opportunity — in one school community.' }}</p>
       <div class="landing-actions">
         
         {% if school_settings.institution_history %}<a class="landing-action-secondary" href="#history">Explore our history</a>{% endif %}
@@ -110,21 +151,28 @@
   </section>
   {% endif %}
 
-  <section class="landing-story-grid">
-    {% if 'history' in pre and school_settings.institution_history %}<article id="history"><span class="eyebrow">Our history</span><h2>Where the institution comes from</h2><p>{{ school_settings.institution_history }}</p></article>{% endif %}
-    {% if 'achievements' in pre and school_settings.institution_performance %}<article id="performance"><span class="eyebrow">Academic performance</span><h2>What the institution is building</h2><p>{{ school_settings.institution_performance }}</p></article>{% endif %}
-    {% if school_settings.institution_religion %}<article id="values"><span class="eyebrow">Religion &amp; values</span><h2>What guides the community</h2><p>{{ school_settings.institution_religion }}</p></article>{% endif %}
-    {% if 'owners' in pre and school_settings.institution_owners %}<article id="owners"><span class="eyebrow">Founders &amp; management</span><h2>People behind the institution</h2><p>{{ school_settings.institution_owners }}</p></article>{% endif %}
-    {% if school_settings.institution_help %}<article id="guidelines"><span class="eyebrow">Curriculum · Dress code · Guidelines</span><h2>Information for our community</h2><p>{{ school_settings.institution_help }}</p></article>{% endif %}
-    {% if school_settings.institution_contact %}<article id="contact"><span class="eyebrow">Vision · Direction · Contact</span><h2>Stay connected to the institution</h2><p>{{ school_settings.institution_contact }}</p></article>{% endif %}
+  {% if about_sections %}
+  <section class="landing-deep-about" id="about-story" aria-label="Institutional story">
+    <div class="landing-section-heading"><div><div class="eyebrow">About the institution</div><h2>Our story, in the institution's own words</h2><p>Explore the story below section by section.</p></div></div>
+    <div class="landing-deep-about-list">
+      {% for section in about_sections %}
+      <article class="landing-deep-about-item layout-{{ section.layout }}">
+        <div class="deep-about-copy"><span class="eyebrow">{{ '%02d'|format(loop.index) }}</span>{% if section.title %}<h2>{{ section.title }}</h2>{% endif %}<div class="deep-about-body collapsible-copy{% if section.body|length > 900 %} is-long{% endif %}"><div class="copy-inner">{{ section.body|e|replace('\n','<br>')|safe }}</div></div>{% if section.body|length > 900 %}<button class="about-more-btn" type="button">View more</button>{% endif %}</div>
+        {% set media = section.media if section.media is defined else [] %}
+        {% if (not media) and section.image %}{% set media=[{'path':section.image,'kind':'image','caption':section.caption}] %}{% endif %}
+        {% if media %}<div class="deep-about-media-gallery{% if media|length > 3 %} media-collapsible{% endif %}">{% for m in media %}<figure class="deep-about-media-item{% if loop.index > 3 %} extra-media{% endif %}">{% if m.kind == 'video' %}<video controls preload="metadata" src="/{{ m.path }}"></video>{% else %}<img src="/{{ m.path }}" alt="{{ section.title or portal_title }}" loading="lazy">{% endif %}{% if m.caption %}<figcaption>{{ m.caption }}</figcaption>{% endif %}</figure>{% endfor %}{% if media|length > 3 %}<button class="about-media-more" type="button">View more media</button>{% endif %}</div>{% endif %}
+      </article>
+      {% endfor %}
+    </div>
   </section>
+  {% endif %}
 
   {% if school_settings.landing_show_dates %}<section class="landing-important-dates" id="dates"><div class="landing-section-heading"><div><div class="eyebrow">School calendar</div><h2>Important dates</h2><p>Upcoming events published by the institution.</p></div></div><div class="date-strip">{% for d in important_dates %}<article class="date-card"><div class="date-day">{{ d.event_date }}</div><strong>{{ d.title }}</strong>{% if d.event_time %}<span>{{ d.event_time }}</span>{% endif %}{% if d.location %}<span>{{ d.location }}</span>{% endif %}</article>{% else %}<div class="landing-empty">No important dates have been published yet.</div>{% endfor %}</div></section>{% endif %}
 
   {% if school_settings.public_map_query %}<section class="visitor-map" id="visit"><div class="visitor-copy"><div class="eyebrow">Visitors</div><h2>{{school_settings.public_location_title or 'Visit us today at this location'}}</h2><p>{{school_settings.public_address}}</p>{% if school_settings.public_location_notes %}<p>{{school_settings.public_location_notes}}</p>{% endif %}<a class="landing-action-secondary" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query={{school_settings.public_map_query|urlencode}}">Open location in Maps</a></div><iframe title="Visitor location" src="https://www.google.com/maps?q={{school_settings.public_map_query|urlencode}}&output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe></section>{% endif %}
 
   <section id="services" class="landing-services-note">
-    <div class="landing-section-heading"><div><div class="eyebrow">One public home</div><h2>Everything important starts here.</h2></div><p>The navigation above is the single doorway to school portals and online services. Public visitors stay here; authenticated users continue into their own secure workspace.</p></div>
+    <div class="landing-section-heading"><div><div class="eyebrow">Welcome</div><h2>{{ school_settings.school_name }} — a place for learning, community and growth.</h2></div><p>Explore the institution's story, important dates, visitor information and secure portals from the navigation above.</p></div>
   </section>
 
   {% if school_settings.landing_announcement or school_settings.landing_contact %}<section class="landing-notices" id="notices">{% if school_settings.landing_announcement %}<article><span class="eyebrow">School notice</span><p>{{ school_settings.landing_announcement }}</p></article>{% endif %}{% if school_settings.landing_contact %}<article><span class="eyebrow">Enquiries</span><p>{{ school_settings.landing_contact }}</p></article>{% endif %}</section>{% endif %}
@@ -133,18 +181,44 @@
 </section>
 
 {% else %}
+{% if e_learning_login|default(false) %}
+<div class="eyebrow">Secure e-learning</div><h1>Enter the E-Learning Portal</h1><p class="muted" style="font-size:17px;line-height:1.7">This is a protected learning workspace for Admin, ICT, Teachers and Students.</p>{% if error %}<div class="flash danger">{{ error }}</div>{% endif %}{% if success %}<div class="flash success">{{ success }}</div>{% endif %}<div class="elearn-login-choice"><section class="elearn-login-box"><div class="eyebrow">Student access</div><h2>Students</h2><p class="muted">Use your registered school email as the username and your admission number as the initial password.</p><form method="post" action="/login?role=E-Learning" class="stack-form"><input type="hidden" name="role" value="E-Learning"><label><span>School email</span><input name="username" type="email" autocomplete="username" required placeholder="student@school.co.ke"></label><label><span>Admission number</span><input name="password" type="password" autocomplete="current-password" required></label><button class="btn btn-primary" type="submit">Enter student e-learning</button></form></section><section class="elearn-login-box"><div class="eyebrow">Staff / management access</div><h2>Teacher · ICT · Admin</h2><p class="muted">Use the same account name / username and password issued for your school account.</p><form method="post" action="/login?role=E-Learning" class="stack-form"><input type="hidden" name="role" value="E-Learning"><label><span>Name / username</span><input name="username" autocomplete="username" required placeholder="Your school username"></label><label><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label><button class="btn btn-primary" type="submit">Enter staff e-learning</button></form></section></div><div class="login-links-row"><a class="forgot-password-link" href="/forgot-password">Forgot password?</a><a class="back-role-link" href="/">Back to school portal</a></div>
+{% else %}
 <div class="eyebrow">{{ login_role }} access</div><h1>Log in</h1>{% if success %}<div class="flash success">{{ success }}</div>{% endif %}{% if error %}<div class="flash danger">{{ error }}</div>{% endif %}<form method="post" action="/login?role={{ login_role }}" class="stack-form"><input type="hidden" name="role" value="{{ login_role }}"><label><span>{% if login_role == 'Student' %}School email / username{% else %}Username{% endif %}</span><input name="username" autocomplete="username" required placeholder="{% if login_role == 'Student' %}School email or school username{% else %}Username{% endif %}"></label><label><span>Password</span><div class="password-wrap"><input id="loginPassword" type="password" name="password" autocomplete="current-password" required><button class="password-toggle" type="button" data-password-target="loginPassword" aria-label="Show password">Show</button></div></label><button class="btn btn-primary" type="submit">Log in as {{ login_role }}</button></form>{% if login_role == 'Student' %}<p class="muted" style="margin-top:12px">Students use the credentials issued for their school account. Your admission number identifies your learner record; it is not presented as the permanent e-learning password.</p>{% endif %}<div class="login-links-row"><a class="forgot-password-link" href="/forgot-password">Forgot password?</a><a class="visitor-qr-button" href="#" data-open-visitor-qr>Visitor QR</a><a class="back-role-link" href="/">Choose another role</a></div>
 <div class="visitor-qr-modal" id="visitorQrModal" hidden role="dialog" aria-modal="true" aria-labelledby="visitorQrTitle"><div class="visitor-qr-backdrop" data-close-visitor-qr></div><div class="visitor-qr-dialog"><button type="button" class="visitor-qr-close" data-close-visitor-qr aria-label="Close">×</button><div class="eyebrow">Visitor access</div><h2 id="visitorQrTitle">Scan to open the public school portal</h2><img src="{{ portal_qr_data_uri }}" alt="Visitor QR code"><p>Visitors can scan this code to open the institution's public portal, location and published information.</p></div></div>
 {% endif %}
+{% endif %}
 </section></main><script>(function(){var splash=document.getElementById('welcomeSplash');if(!splash)return;var d={{welcome_animation_duration_ms|int}};window.setTimeout(function(){splash.hidden=true;},Math.max(900,d+100));})();</script><script>
+(function(){
+  document.querySelectorAll('.landing-mobile-trigger').forEach(function(btn){btn.addEventListener('click',function(){const key=btn.dataset.mobilePanel;const panel=document.querySelector('[data-mobile-panel-target="'+key+'"]');if(!panel)return;const open=panel.classList.toggle('open');btn.setAttribute('aria-expanded',String(open));});});
+  document.querySelectorAll('.landing-mobile-panel a,.landing-mobile-toplinks a,.landing-mobile-rail-link,.landing-mobile-portal-panel a').forEach(function(a){a.addEventListener('click',function(){document.querySelectorAll('.landing-mobile-panel').forEach(function(p){p.classList.remove('open')});document.querySelectorAll('.landing-mobile-trigger').forEach(function(b){b.setAttribute('aria-expanded','false')});});});
+})();
+</script>
+<script>
 (function(){
   const menu=document.getElementById('landingNav');
   const toggle=document.getElementById('landingMenuToggle');
   if(toggle && menu){
-    toggle.addEventListener('click',function(){
+    let suppressClickUntil=0;
+    const openLandingMenu=function(e){
+      if(e){e.preventDefault();e.stopPropagation();}
+      const isDesktop=window.matchMedia('(min-width:821px)').matches;
+      if(isDesktop){
+        const collapsed=menu.classList.toggle('menu-collapsed');
+        toggle.setAttribute('aria-expanded',String(!collapsed));
+        const icon=toggle.querySelector('span'); if(icon) icon.textContent=collapsed?'☰':'×';
+        return;
+      }
       const open=menu.classList.toggle('open');
       toggle.setAttribute('aria-expanded',String(open));
       document.body.classList.toggle('landing-menu-open',open);
+    };
+    toggle.addEventListener('click',function(e){
+      if(Date.now()<suppressClickUntil){e.preventDefault();e.stopPropagation();return;}
+      openLandingMenu(e);
+    });
+    toggle.addEventListener('pointerup',function(e){
+      if(e.pointerType==='touch'){suppressClickUntil=Date.now()+650;openLandingMenu(e);}
     });
   }
   document.querySelectorAll('.landing-nav-trigger').forEach(function(trigger){
@@ -165,7 +239,7 @@
   const modal=document.getElementById('visitorQrModal');
   document.querySelectorAll('[data-open-visitor-qr]').forEach(function(btn){btn.addEventListener('click',function(e){e.preventDefault();if(modal){modal.hidden=false;document.body.classList.add('modal-open');}})});
   document.querySelectorAll('[data-close-visitor-qr]').forEach(function(btn){btn.addEventListener('click',function(e){e.preventDefault();if(modal){modal.hidden=true;document.body.classList.remove('modal-open');}})});
-  document.addEventListener('keydown',function(e){if(e.key==='Escape' && modal && !modal.hidden){modal.hidden=true;document.body.classList.remove('modal-open');}});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape' && modal && !modal.hidden){modal.hidden=true;document.body.classList.remove('modal-open');}});\n  document.querySelectorAll('.about-more-btn').forEach(function(btn){btn.addEventListener('click',function(){const box=btn.previousElementSibling;if(!box)return;const expanded=box.classList.toggle('expanded');if(expanded){box.classList.remove('is-long');btn.textContent='View less';}else{box.classList.add('is-long');btn.textContent='View more';}});});\n  document.querySelectorAll('.about-media-more').forEach(function(btn){btn.addEventListener('click',function(){const wrap=btn.parentElement;const open=wrap.classList.toggle('open');btn.textContent=open?'Show less media':'View more media';});});\n
 })();
 </script>
 <script>document.addEventListener('click',function(e){const b=e.target.closest('.password-toggle');if(!b)return;const i=document.getElementById(b.dataset.passwordTarget);if(!i)return;i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'Show':'Hide';});</script><script>if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js").catch(function(err){console.warn("Offline mode unavailable",err);});}</script>{% include '_footer.html' %}</body></html>

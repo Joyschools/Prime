@@ -64,10 +64,11 @@ PULSE_PEER_URL = os.environ.get("PULSE_PEER_URL", "https://breathe-xozy.onrender
 PULSE_TIMEOUT_SECONDS = max(1, min(10, int(os.environ.get("PULSE_TIMEOUT_SECONDS", "4"))))
 PULSE_ALLOWED_CALLBACK_HOSTS = {h.strip().lower() for h in os.environ.get("PULSE_ALLOWED_CALLBACK_HOSTS", "").split(",") if h.strip()}
 ALLOWED_RESTORE_EXT = {"db", "sqlite", "sqlite3"}
-PUBLIC_ROLES = ("Teacher", "Student", "Parent")
-HIDDEN_ROLES = ("Admin", "ICT", "Finance", "Librarian")
+PUBLIC_ROLES = ("Teacher", "Student", "Parent", "Librarian", "Driver")
+HIDDEN_ROLES = ("Admin", "ICT", "Finance")
 QR_LOGIN_ROLES = {"Admin", "ICT", "Finance", "Teacher", "Librarian"}
 QR_LOGIN_WORKSPACES = {"Teaching", "Driver", "Reception", "Guard", "Cook", "Other Staff"}
+E_LEARNING_ROLES = {"Admin", "ICT", "Teacher", "Student"}
 RECEPTION_WORKSPACE = "Reception"
 ALL_PORTAL_ROLES = HIDDEN_ROLES + PUBLIC_ROLES
 ADMIN_LOGIN_PATH = "/xtspolsjhulupjoppsup-lmkzcodup"
@@ -719,6 +720,7 @@ def _init_db_once() -> None:
         ensure_column(conn, "school_settings", "institution_affiliations TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "institution_help TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "institution_contact TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "school_settings", "about_sections_json TEXT NOT NULL DEFAULT '[]'")
         ensure_column(conn, "school_settings", "institution_image_path TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "institution_image_2_path TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "institution_image_3_path TEXT NOT NULL DEFAULT ''")
@@ -1966,6 +1968,7 @@ def role_target(role: str) -> str:
         "Student": url_for("student_dashboard"),
         "Parent": url_for("parent_dashboard"),
         "Librarian": url_for("librarian_dashboard"),
+        "Driver": url_for("driver_dashboard"),
     }[role]
 
 
@@ -2083,7 +2086,10 @@ def enter_role_without_login(role: str):
 
 def selected_role_from_request(default=""):
     role = (request.args.get("role") or request.form.get("role") or default).strip()
-    return role if role in ALL_PORTAL_ROLES else default
+    # E-Learning is a secure gateway label, not a stored user role. It may be
+    # used only to select the dedicated learning login flow.
+    allowed = set(ALL_PORTAL_ROLES) | {"E-Learning"}
+    return role if role in allowed else default
 
 
 
@@ -2185,38 +2191,24 @@ def theme_style(settings=None) -> str:
     settings = settings or school_settings()
     def esc(v):
         return str(v).replace('<','').replace('>','').replace('"','').replace(';','')
-    bg=esc(settings['background_color'] or '#343541')
-    panel=esc(settings['panel_color'] or bg)
-    sidebar=esc(settings['sidebar_color'] or panel)
-    header=esc(settings['header_color'] or panel)
-    requested_text=esc(settings['text_color'] or '#ececf1')
-    requested_muted=esc(settings['muted_text_color'] or '#b5bac7')
-    # User-selected colours remain authoritative, but unreadable combinations are automatically corrected.
-    body_text=_best_text(bg, requested_text)
-    panel_text=_best_text(panel, body_text)
-    sidebar_text=_best_text(sidebar, body_text)
-    header_text=_best_text(header, body_text)
-    muted=_best_text(bg, requested_muted, minimum=3.0)
-    input_bg=_best_text(panel, bg, minimum=1.2) if _contrast_ratio(panel,bg)<1.12 else bg
-    primary_button_text=_best_text(settings['primary_color'] or '#3457d5', '#ffffff')
-    heading_font=esc(settings['heading_font'] or settings['font_family'] or 'Inter')
+    # Authenticated workspaces use a restrained cool charcoal baseline. The public
+    # landing page owns its own red/cream/green palette and overrides this scope.
+    bg='#202123'; panel='#2b2d31'; panel3='#34363b'; sidebar='#252629'; header='#2b2d31'
+    text='#ececf1'; muted='#a8a8ad'
     font_family=esc(settings['font_family'] or 'Inter')
+    heading_font=esc(settings['heading_font'] or settings['font_family'] or 'Inter')
     bg_path=str(settings.get('background_path','') or '').strip() if hasattr(settings,'get') else ''
-    bg_image = f"body.app-body{{background-image:linear-gradient(180deg,rgba(15,23,42,.18),rgba(15,23,42,.24)),url('/{bg_path}');background-size:cover;background-position:center;background-attachment:fixed;}}" if bg_path else ''
-    css=(
-        f":root{{--bg:{bg};--panel:{panel};--panel-3:{input_bg};"
-        f"--primary-blue:{esc(settings['primary_color'] or '#3457d5')};--deep-accent-blue:{esc(settings['accent_color'] or '#3457d5')};"
-        f"--primary-text:{body_text};--muted-text:{muted};--panel-text:{panel_text};--sidebar-text:{sidebar_text};--header-text:{header_text};"
-        f"--text-soft:{_rgba(body_text,.06)};--text-border:{_rgba(body_text,.14)};--text-hover:{_rgba(body_text,.10)};"
-        f"--input-text:{_best_text(input_bg,body_text)};--primary-button-text:{primary_button_text};"
-        f"--font:'{font_family}',Inter,system-ui,sans-serif;--heading-font:'{heading_font}',{font_family},Inter,sans-serif;"
-        f"--radius:{int(settings['radius_px'] or 12)}px;--radius-sm:{int(settings['button_radius_px'] or 10)}px;--sidebar-bg:{sidebar};--header-bg:{header};}}"
-    )
+    bg_image=f"body.app-body{{background-image:linear-gradient(180deg,rgba(17,18,20,.72),rgba(17,18,20,.84)),url('/{bg_path}');background-size:cover;background-position:center;background-attachment:fixed;}}" if bg_path else ''
+    css=(f"body.app-body{{--bg:{bg};--bg-soft:#1b1c1e;--panel:{panel};--panel-2:#25272b;--panel-3:{panel3};"
+         f"--primary-navy:{text};--primary-blue:#8f929a;--deep-accent-blue:#a6a8ae;--cool-pale-blue:#2f3136;--soft-white:#f7f7f8;--white:#fff;"
+         f"--primary-text:{text};--muted-text:{muted};--panel-text:{text};--sidebar-text:{text};--header-text:{text};"
+         f"--text-soft:rgba(255,255,255,.05);--text-border:rgba(255,255,255,.12);--text-hover:rgba(255,255,255,.08);"
+         f"--input-text:#f1f1f3;--primary-button-text:#f7f7f8;--sidebar-bg:{sidebar};--header-bg:{header};"
+         f"--font:'{font_family}',Inter,system-ui,sans-serif;--heading-font:'{heading_font}',{font_family},Inter,sans-serif;}}" )
     extra=settings['custom_css'] or ''
     if len(extra)>12000 or re.search(r'@import|javascript:|expression\s*\(', extra, re.I):
         extra=''
-    return css+extra
-
+    return css+bg_image+extra
 
 def theme_preset_style(settings=None) -> str:
     settings=settings or school_settings()
@@ -2253,12 +2245,48 @@ def portal_qr_data_uri() -> str:
     qr=qrcode.QRCode(version=2,box_size=5,border=2); qr.add_data(payload); qr.make(fit=True)
     buf=io.BytesIO(); qr.make_image().save(buf,format="PNG"); return "data:image/png;base64,"+base64.b64encode(buf.getvalue()).decode("ascii")
 
+def public_about_sections(settings):
+    """Return validated editable About-page sections without ever breaking the page."""
+    try:
+        raw = settings["about_sections_json"] if "about_sections_json" in settings.keys() else "[]"
+        data = json.loads(raw or "[]")
+        if not isinstance(data, list):
+            return []
+        out=[]
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            title=str(item.get("title", "")).strip()[:160]
+            body=str(item.get("body", "")).strip()
+            image=str(item.get("image", "")).strip()[:600]
+            caption=str(item.get("caption", "")).strip()[:300]
+            layout=item.get("layout", "reading")
+            if layout not in {"reading","image-left","image-right","feature"}: layout="reading"
+            media=[]
+            raw_media=item.get("media", [])
+            if isinstance(raw_media, list):
+                for m in raw_media:
+                    if not isinstance(m, dict):
+                        continue
+                    path=str(m.get("path", "")).strip()[:600]
+                    kind=str(m.get("kind", "image")).strip().lower()
+                    cap=str(m.get("caption", "")).strip()[:300]
+                    if path and kind in {"image","video"}:
+                        media.append({"path":path,"kind":kind,"caption":cap})
+            if image and not media:
+                media=[{"path":image,"kind":"image","caption":caption}]
+            if title or body or image or media:
+                out.append({"title":title,"body":body,"image":image,"caption":caption,"layout":layout,"media":media})
+        return out
+    except Exception:
+        return []
+
 @app.context_processor
 def auth_template_context():
     settings=school_settings()
     return {
         "current_user": current_user(), "school_settings": settings, "portal_title": settings["school_name"], "theme_color": settings["primary_color"], "all_roles": ALL_PORTAL_ROLES, "public_roles": PUBLIC_ROLES,
-        "theme_style": theme_style(settings), "theme_preset_style": theme_preset_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(),
+        "theme_style": theme_style(settings), "theme_preset_style": theme_preset_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(), "about_sections": public_about_sections(settings),
         "active_adverts": active_advertisements(),
         "welcome_animation": bool(settings["welcome_animation_enabled"]), "welcome_animation_name": settings["welcome_animation_name"], "welcome_animation_duration_ms": int(settings["welcome_animation_duration_ms"] or 2200), "welcome_animation_style": settings["welcome_animation_style"] if "welcome_animation_style" in settings.keys() else "clean",
         "important_dates": important_dates(12, landing=request.path == '/'),
@@ -2796,6 +2824,10 @@ def login():
     if role == "Parent" and not parent_portal_enabled():
         flash("Parent / Guardian portal is disabled for this institution mode.", "warning")
         return redirect(url_for("index"))
+    if role == "E-Learning" and request.method == "GET" and current_user():
+        if current_user()["role"] in E_LEARNING_ROLES:
+            return redirect(url_for("online_classes"))
+        abort(403)
     # Keep the legacy single-account/passwordless portal shortcut on GET, but
     # NEVER bypass an explicit credential POST. Accounts created by Admin/ICT
     # must always be able to authenticate with their own username/password.
@@ -2807,6 +2839,7 @@ def login():
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
         role = selected_role_from_request().strip()
+        learning_login = role == "E-Learning"
         # Identity is established by username + password. The role selected on the
         # login screen is only a convenience hint and must never lock out a valid
         # account when its stored role is authoritative. After credentials are
@@ -2817,6 +2850,12 @@ def login():
         # no longer authenticates the account.
         admission_login_ok = False
         parent_name_login_ok = False
+        if learning_login and not user:
+            # E-Learning staff login is friendly to the person's stored name as well
+            # as their normal username. Only permitted learning roles may pass.
+            name_candidates=q("SELECT * FROM users WHERE active=1 AND role IN ('Admin','ICT','Teacher') AND (lower(trim(full_name))=? OR lower(trim(full_name)) LIKE ?) ORDER BY id DESC",(username, username+' %'))
+            if len(name_candidates)==1:
+                user=name_candidates[0]
         if not user:
             student_candidates = q("""
                 SELECT u.* FROM users u
@@ -2872,9 +2911,9 @@ def login():
         if not admission_login_ok and not parent_name_login_ok and not password_ok:
             if user and user["role"] == "Student":
                 flash("Invalid student name/admission number or password.", "danger")
-                return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid student name/admission number or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
+                return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid student name/admission number or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=learning_login)
             flash("Invalid username or password.", "danger")
-            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
+            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=learning_login)
         # A student-linked account is always a Student account. This repairs any
         # legacy/migrated record that accidentally retained a staff role and prevents
         # student credentials from ever entering the Teacher workspace.
@@ -2884,6 +2923,9 @@ def login():
         # A selected portal role can never override the account's stored role.
         # This is especially important for Admin vs ICT separation.
         role = user["role"]
+        if learning_login and role not in E_LEARNING_ROLES:
+            flash("E-Learning is available only to Admin, ICT, Teachers and Students.", "danger")
+            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role="E-Learning", error="E-Learning is available only to Admin, ICT, Teachers and Students.", success=None, setup_required=not auth_initialized(), e_learning_login=True)
         # Normal password login always goes directly to the person's dashboard.
         # Staff QR is only an optional convenience after the first successful password login.
         if user["role"] not in {"Student", "Parent", "System"} and "qr_login_enabled" in user.keys():
@@ -2893,8 +2935,10 @@ def login():
         session.clear(); session.permanent=True
         session["user_id"]=user["id"]; session["active_portal_role"]=user["role"]; session["login_event_id"]=login_id; session["login_location_pending"]=1
         session["auth_ticket"] = _issue_auth_ticket(user["id"])
+        if learning_login:
+            return redirect(url_for("online_classes"))
         return redirect(specialized_dashboard_for(user))
-    return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized())
+    return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=(role=="E-Learning"))
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -3980,7 +4024,7 @@ def driver_dashboard():
         if user['role']=='Teacher': return redirect(url_for('teacher_dashboard'))
         abort(403)
     trip=q("SELECT * FROM transport_trips WHERE driver_user_id=? AND status='Active' ORDER BY id DESC LIMIT 1",(user['id'],),one=True)
-    return render_template('driver_dashboard.html',settings=school_settings(),actor_name=user['full_name'],trip=trip,notification_count=notification_count(user['id']))
+    return render_template('driver_dashboard.html',settings=school_settings(),actor_name=user['full_name'],trip=trip,notification_count=notification_count(user['id']),role=user['role'])
 
 @app.route("/driver/trip/start",methods=['POST'])
 @login_required
@@ -4573,10 +4617,11 @@ def parent_dashboard():
 @app.route("/library")
 @login_required
 def library():
-    if not school_settings()["library_enabled"] and current_user()["role"] not in {"Admin","ICT","Librarian"}: abort(404)
+    role=current_user()["role"]
+    if role not in {"Admin","ICT","Librarian","Student"}: abort(403)
+    if not school_settings()["library_enabled"] and role not in {"Admin","ICT","Librarian"}: abort(404)
     class_level=request.args.get("class","").strip(); subject=request.args.get("subject","").strip()
     where=["active=1"]; params=[]
-    role=current_user()["role"]
     if role=="Student":
         st=portal_student()
         class_level=(st["grade"] if st else class_level) or ""
@@ -4612,14 +4657,112 @@ def institution():
 
 @app.route("/institution/save", methods=["POST"])
 @login_required
-@role_required("Admin", "ICT")
+@role_required("Admin")
 def institution_save():
-    values={k:request.form.get(k,"").strip() for k in ["institution_history","institution_performance","institution_religion","institution_affiliations","institution_help","institution_contact","institution_portal_guide","institution_admin_guide","institution_ict_guide","institution_finance_guide","institution_driver_guide_en","institution_driver_guide_sw"]}
+    about_sections=[]
+    try:
+        raw_sections=json.loads(request.form.get("about_sections_json", "[]") or "[]")
+        if isinstance(raw_sections,list):
+            for item in raw_sections:
+                if not isinstance(item,dict): continue
+                title=str(item.get("title","")).strip()[:160]
+                body=str(item.get("body","")).strip()
+                image=str(item.get("image","")).strip()[:600]
+                caption=str(item.get("caption","")).strip()[:300]
+                layout=item.get("layout","reading")
+                if layout not in {"reading","image-left","image-right","feature"}: layout="reading"
+                media=[]
+                raw_media=item.get("media",[])
+                if isinstance(raw_media,list):
+                    for m in raw_media:
+                        if not isinstance(m,dict): continue
+                        path=str(m.get("path","")).strip()[:600]; kind=str(m.get("kind","image")).strip().lower(); cap=str(m.get("caption","")).strip()[:300]
+                        if path and kind in {"image","video"}: media.append({"path":path,"kind":kind,"caption":cap})
+                if image and not media:
+                    media=[{"path":image,"kind":"image","caption":caption}]
+                if title or body or image or media:
+                    about_sections.append({"title":title,"body":body,"image":image,"caption":caption,"layout":layout,"media":media})
+    except Exception:
+        about_sections=[]
+    # Keep the old cover image field working.
     image=request.files.get("institution_image"); image_path=school_settings()["institution_image_path"] or ""
     if image and image.filename:
         dest=UPLOAD_DIR/"institution"; dest.mkdir(exist_ok=True); fname=secure_filename(image.filename); out=dest/f"{uuid.uuid4().hex}-{fname}"; image.save(out); image_path="uploads/institution/"+out.name
-    execute("UPDATE school_settings SET institution_history=?, institution_performance=?, institution_religion=?, institution_affiliations=?, institution_help=?, institution_contact=?, institution_portal_guide=?, institution_admin_guide=?, institution_ict_guide=?, institution_finance_guide=?, institution_driver_guide_en=?, institution_driver_guide_sw=?, institution_image_path=?, institution_enabled=1 WHERE id=1",(values["institution_history"],values["institution_performance"],values["institution_religion"],values["institution_affiliations"],values["institution_help"],values["institution_contact"],values["institution_portal_guide"],values["institution_admin_guide"],values["institution_ict_guide"],values["institution_finance_guide"],values["institution_driver_guide_en"],values["institution_driver_guide_sw"],image_path))
-    flash("Institution information updated.","success"); return redirect(url_for("institution"))
+    # Remove media explicitly marked by the editor, then attach new images/videos.
+    try:
+        removed_by_section=json.loads(request.form.get("about_remove_media", "{}") or "{}")
+        if not isinstance(removed_by_section, dict): removed_by_section={}
+    except Exception:
+        removed_by_section={}
+    for i,item in enumerate(about_sections):
+        media=list(item.get("media",[]))
+        removed=set(str(x) for x in (removed_by_section.get(str(i), []) or []) if str(x).strip())
+        if removed:
+            kept=[]
+            for m in media:
+                path=str(m.get("path", ""))
+                if path in removed:
+                    try:
+                        target=(UPLOAD_DIR/Path(path).relative_to("uploads")).resolve() if path.startswith("uploads/") else None
+                        if target and UPLOAD_DIR.resolve() in target.parents:
+                            target.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                else:
+                    kept.append(m)
+            media=kept
+        for uploaded in request.files.getlist(f"about_media_{i}"):
+            if not uploaded or not uploaded.filename: continue
+            ext=Path(uploaded.filename).suffix.lower()
+            if ext not in {".png",".jpg",".jpeg",".webp",".gif",".mp4",".webm",".mov"}: continue
+            dest=UPLOAD_DIR/"institution"; dest.mkdir(exist_ok=True); fname=secure_filename(uploaded.filename); out=dest/f"{uuid.uuid4().hex}-{fname}"; uploaded.save(out)
+            kind="video" if ext in {".mp4",".webm",".mov"} else "image"
+            media.append({"path":"uploads/institution/"+out.name,"kind":kind,"caption":""})
+        item["media"]=media
+        if not item.get("image") and media:
+            first_image=next((m for m in media if m["kind"]=="image"),None)
+            if first_image: item["image"]=first_image["path"]; item["caption"]=first_image.get("caption","")
+    # Optional document import: bring an existing school history into the editable About story.
+    import_file=request.files.get('about_import_file')
+    if import_file and import_file.filename:
+        fname=secure_filename(import_file.filename)
+        ext=Path(fname).suffix.lower()
+        imported_text=''
+        try:
+            if ext in {'.txt','.md'}:
+                imported_text=import_file.read().decode('utf-8','replace')
+            elif ext=='.docx':
+                from docx import Document
+                doc=Document(import_file.stream)
+                imported_text='\n'.join(p.text for p in doc.paragraphs if p.text.strip())
+            elif ext=='.pdf':
+                reader=PdfReader(import_file.stream)
+                imported_text='\n'.join((pg.extract_text() or '') for pg in reader.pages)
+        except Exception as exc:
+            app.logger.warning('Public About import failed: %s', exc)
+            imported_text=''
+        imported_text=imported_text.strip()
+        if imported_text:
+            try: target_index=int(request.form.get('about_import_target','-1') or '-1')
+            except Exception: target_index=-1
+            if 0 <= target_index < len(about_sections):
+                prior=str(about_sections[target_index].get('body','')).strip()
+                about_sections[target_index]['body']=(prior+'\n\n'+imported_text).strip() if prior else imported_text
+            else:
+                about_sections.insert(0, {'title':'Institutional History','body':imported_text,'image':'','caption':'','layout':'reading','media':[]})
+
+    execute("UPDATE school_settings SET about_sections_json=?, institution_image_path=?, institution_enabled=1 WHERE id=1",(json.dumps(about_sections, ensure_ascii=False),image_path))
+    audit(current_user()["id"],current_user()["full_name"],"Public About Update","Institutional public About sections and media updated.")
+    flash("Public About saved. Refresh or open Preview to see the current public page.","success")
+    return redirect(url_for("admin_public_about"))
+
+@app.route("/admin/public-about", methods=["GET"])
+@login_required
+@role_required("Admin")
+def admin_public_about():
+    settings=school_settings()
+    return render_template("admin_public_about.html", settings=settings, actor_name=current_user()["full_name"], role=current_user()["role"], about_sections=public_about_sections(settings))
+
 
 @app.route("/admin/theme/preset", methods=["POST"])
 @login_required
@@ -4821,9 +4964,15 @@ def ict_logo():
     if ext not in {"png","jpg","jpeg","webp","svg"}:
         flash("Logo must be PNG, JPG, JPEG, WEBP or SVG.", "danger")
         return redirect(url_for("ict_dashboard" if current_user()["role"]=="ICT" else "admin_dashboard"))
-    name="school-logo."+ext
-    path=UPLOAD_DIR/name; file.save(path)
+    folder=UPLOAD_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    name=f"school-logo-{uuid.uuid4().hex[:12]}.{ext}"
+    path=folder/name; file.save(path)
+    old_path=school_settings()["logo_path"] or ""
     execute("UPDATE school_settings SET logo_path=? WHERE id=1", ("uploads/"+name,))
+    if old_path.startswith("uploads/school-logo-"):
+        try: (UPLOAD_DIR / Path(old_path).name).unlink(missing_ok=True)
+        except Exception: pass
     flash("School logo updated.", "success")
     return redirect(url_for("ict_dashboard" if current_user()["role"]=="ICT" else "admin_dashboard"))
 
@@ -4988,20 +5137,49 @@ def notifications_api():
     rows=q("SELECT id,title,body,link,created_at,priority FROM notifications WHERE user_id=? AND read_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 8",(current_user()["id"],))
     return jsonify({"count":notification_count(current_user()["id"]),"items":[dict(r) for r in rows]})
 
+@app.route("/e-learning")
+@app.route("/e-learning/login")
+def e_learning_gateway():
+    user=current_user()
+    if user:
+        if user["role"] in E_LEARNING_ROLES:
+            return redirect(url_for("online_classes"))
+        abort(403)
+    return redirect(url_for("login", role="E-Learning"))
+
+
 @app.route("/online-classes")
-@login_required
 def online_classes():
     user=current_user()
+    if not user:
+        return redirect(url_for("login", role="E-Learning"))
+    if user["role"] not in E_LEARNING_ROLES: abort(403)
     sessions=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.active=1 AND (cs.starts_at >= datetime('now','-1 day') OR cs.ends_at IS NULL OR cs.ends_at >= datetime('now','-1 day')) ORDER BY cs.starts_at",())
-    if user["role"]=="Teacher": sessions=[r for r in sessions if r["teacher_user_id"]==user["id"]] + [r for r in sessions if r["teacher_user_id"]!=user["id"]]
+    assignments=[]; submissions=[]; learning_groups=[]; resources=[]
+    if user["role"]=="Teacher":
+        sessions=[r for r in sessions if r["teacher_user_id"]==user["id"]] + [r for r in sessions if r["teacher_user_id"]!=user["id"]]
+        assignments=q("SELECT a.*,COUNT(s.id) AS submission_count FROM assignments a LEFT JOIN submissions s ON s.assignment_id=a.id WHERE a.posted_by=? AND a.active=1 GROUP BY a.id ORDER BY a.deadline,a.id DESC",(user["id"],))
+        submissions=q("SELECT s.*,a.title,a.subject,st.full_name AS student_name,st.admission_no FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.id=s.student_id WHERE a.posted_by=? ORDER BY s.submitted_at DESC LIMIT 60",(user["id"],))
+        learning_groups=q("SELECT g.*,COUNT(gm.id) AS member_count FROM groups g LEFT JOIN group_members gm ON gm.group_id=g.id WHERE g.active=1 AND (g.owner_user_id=? OR gm.user_id=?) GROUP BY g.id ORDER BY g.name",(user["id"],user["id"]))
+        resources=q("SELECT * FROM library_items WHERE active=1 AND (resource_type='Digital' OR youtube_url!='' OR source_url!='') ORDER BY created_at DESC LIMIT 30")
     elif user["role"]=="Student" and user["student_id"]:
-        st=q("SELECT grade FROM students WHERE id=?",(user["student_id"],),one=True); grade=st["grade"] if st else ""; sessions=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.active=1 AND lower(cs.class_name)=lower(?) ORDER BY cs.starts_at",(grade,))
-    return render_template("online_classes.html",settings=school_settings(),sessions=sessions,assignments=(q("SELECT * FROM teacher_assignments WHERE teacher_user_id=? AND active=1 ORDER BY class_name,subject",(user["id"],)) if user["role"]=="Teacher" else []),actor_name=user["full_name"],role=user["role"],today=datetime.now().strftime('%Y-%m-%d'))
+        st=q("SELECT grade FROM students WHERE id=?",(user["student_id"],),one=True); grade=st["grade"] if st else ""
+        sessions=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.active=1 AND lower(cs.class_name)=lower(?) ORDER BY cs.starts_at",(grade,))
+        assignments=q("SELECT a.*,u.full_name AS teacher_name FROM assignments a JOIN users u ON u.id=a.posted_by WHERE a.active=1 AND lower(a.grade)=lower(?) ORDER BY a.deadline,a.id DESC LIMIT 60",(grade,))
+        submissions=q("SELECT s.*,a.title,a.subject,a.grade FROM submissions s JOIN assignments a ON a.id=s.assignment_id WHERE s.student_id=? ORDER BY s.submitted_at DESC LIMIT 60",(user["student_id"],))
+        learning_groups=q("SELECT g.*,COUNT(gm2.id) AS member_count FROM groups g JOIN group_members gm ON gm.group_id=g.id LEFT JOIN group_members gm2 ON gm2.group_id=g.id WHERE g.active=1 AND gm.user_id=? GROUP BY g.id ORDER BY g.name",(user["id"],))
+        resources=q("SELECT * FROM library_items WHERE active=1 AND (resource_type='Digital' OR youtube_url!='' OR source_url!='') AND (class_level='' OR lower(class_level)=lower(?)) ORDER BY created_at DESC LIMIT 30",(grade,))
+    else:
+        resources=q("SELECT * FROM library_items WHERE active=1 AND (resource_type='Digital' OR youtube_url!='' OR source_url!='') ORDER BY created_at DESC LIMIT 30")
+    return render_template("online_classes.html",settings=school_settings(),sessions=sessions,assignments=assignments,submissions=submissions,learning_groups=learning_groups,resources=resources,actor_name=user["full_name"],role=user["role"],today=datetime.now().strftime('%Y-%m-%d'))
 
 @app.route("/online-class/<int:session_id>")
-@login_required
 def live_classroom(session_id:int):
-    user=current_user(); sess=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.id=? AND cs.active=1",(session_id,),one=True)
+    user=current_user()
+    if not user:
+        return redirect(url_for("login", role="E-Learning"))
+    if user["role"] not in E_LEARNING_ROLES: abort(403)
+    sess=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.id=? AND cs.active=1",(session_id,),one=True)
     if not sess: abort(404)
     allowed=False; mode='student'
     if user['role']=='Teacher':
@@ -6110,13 +6288,23 @@ def admin_institution_profile():
 @login_required
 @role_required("Admin")
 def admin_public_settings():
-    keys=["institution_history","institution_performance","institution_religion","institution_affiliations","institution_help","institution_contact","institution_owners","developer_name","developer_about","company_name","company_about"]
-    values={k:request.form.get(k,"").strip() for k in keys}
-    selected=[k for k in ["institution","history","achievements","owners","developer","company"] if request.form.get(f"show_{k}")]
-    execute("""UPDATE school_settings SET institution_history=?, institution_performance=?, institution_religion=?, institution_affiliations=?, institution_help=?, institution_contact=?, institution_owners=?, developer_name=?, developer_about=?, company_name=?, company_about=?, prelogin_sections=?, landing_hero_title=?, landing_hero_text=?, landing_cta_primary=?, landing_cta_secondary=?, landing_announcement=?, landing_contact=?, landing_show_dates=?, landing_show_gallery=?, landing_show_roles=? WHERE id=1""", (values["institution_history"],values["institution_performance"],values["institution_religion"],values["institution_affiliations"],values["institution_help"],values["institution_contact"],values["institution_owners"],values["developer_name"],values["developer_about"],values["company_name"],values["company_about"],",".join(selected), request.form.get("landing_hero_title","").strip()[:240], request.form.get("landing_hero_text","").strip()[:2000], request.form.get("landing_cta_primary","").strip()[:80] or "Sign in to your workspace", request.form.get("landing_cta_secondary","").strip()[:80] or "View school information", request.form.get("landing_announcement","").strip()[:500], request.form.get("landing_contact","").strip()[:500], 1 if request.form.get("landing_show_dates") else 0, 1 if request.form.get("landing_show_gallery") else 0, 1 if request.form.get("landing_show_roles") else 0))
-    audit(current_user()["id"], current_user()["full_name"], "Public Information", "Pre-login information sections updated.")
-    flash("Public information settings saved.", "success")
+    # About content is intentionally managed only from Admin → Public About.
+    execute("""UPDATE school_settings SET prelogin_sections=?, landing_hero_title=?, landing_hero_text=?, landing_cta_primary=?, landing_cta_secondary=?, landing_announcement=?, landing_contact=?, landing_show_dates=?, landing_show_gallery=?, landing_show_roles=? WHERE id=1""", (
+        request.form.get("prelogin_sections", "institution,history,achievements,owners,developer,company"),
+        request.form.get("landing_hero_title", "").strip()[:240],
+        request.form.get("landing_hero_text", "").strip()[:2000],
+        request.form.get("landing_cta_primary", "").strip()[:80] or "Sign in to your workspace",
+        request.form.get("landing_cta_secondary", "").strip()[:80] or "View school information",
+        request.form.get("landing_announcement", "").strip()[:500],
+        request.form.get("landing_contact", "").strip()[:500],
+        1 if request.form.get("landing_show_dates") else 0,
+        1 if request.form.get("landing_show_gallery") else 0,
+        1 if request.form.get("landing_show_roles") else 0,
+    ))
+    audit(current_user()["id"], current_user()["full_name"], "Public Settings", "Public landing settings updated; About content remains managed in Public About.")
+    flash("Public landing settings saved. Use Public About for institutional writing.", "success")
     return redirect(url_for("admin_dashboard"))
+
 
 @app.route("/admin/login-access", methods=["POST"])
 @login_required
