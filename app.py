@@ -18,6 +18,9 @@ import urllib.request
 import mimetypes
 import smtplib
 import ssl
+import shutil
+import tempfile
+import zipfile
 from email.message import EmailMessage
 from collections.abc import MutableMapping
 from datetime import datetime, timedelta
@@ -32,6 +35,7 @@ from flask import (
     g,
     jsonify,
     redirect,
+    after_this_request,
     render_template,
     request,
     send_file,
@@ -70,6 +74,7 @@ HIDDEN_ROLES = ("Admin", "ICT", "Finance")
 QR_LOGIN_ROLES = {"Admin", "ICT", "Finance", "Teacher", "Librarian"}
 QR_LOGIN_WORKSPACES = {"Teaching", "Driver", "Reception", "Guard", "Cook", "Other Staff"}
 E_LEARNING_ROLES = {"Admin", "ICT", "Teacher", "Student"}
+LIBRARY_ROLES = {"Admin", "ICT", "Librarian", "Teacher", "Student", "Parent"}
 RECEPTION_WORKSPACE = "Reception"
 ALL_PORTAL_ROLES = HIDDEN_ROLES + PUBLIC_ROLES
 ADMIN_LOGIN_PATH = "/xtspolsjhulupjoppsup-lmkzcodup"
@@ -87,7 +92,7 @@ _PORTAL_CONTEXT_SALT = "school-portal-context-v1"
 
 app = Flask(__name__, instance_path=str(INSTANCE_DIR), instance_relative_config=True, static_folder=str(BASE_DIR / "static"), static_url_path="/static")
 app.config.update(
-    MAX_CONTENT_LENGTH=20 * 1024 * 1024,
+    MAX_CONTENT_LENGTH=250 * 1024 * 1024,
     TEMPLATES_AUTO_RELOAD=True,
 )
 
@@ -2308,6 +2313,20 @@ def public_about_sections(settings):
         return []
 
 
+def public_about_first_image(settings):
+    try:
+        sections=public_about_sections(settings)
+        for section in sections:
+            for media in section.get("media", []) or []:
+                if media.get("kind")=="image" and media.get("path"):
+                    return media["path"]
+            if section.get("image"):
+                return section["image"]
+    except Exception:
+        pass
+    return ""
+
+
 def public_contacts(limit=30):
     try:
         return q("SELECT * FROM institution_contacts WHERE visible=1 ORDER BY display_order,name LIMIT ?", (limit,))
@@ -2325,7 +2344,7 @@ def auth_template_context():
     settings=school_settings()
     return {
         "current_user": current_user(), "school_settings": settings, "portal_title": settings["school_name"], "theme_color": settings["primary_color"], "all_roles": ALL_PORTAL_ROLES, "public_roles": PUBLIC_ROLES,
-        "theme_style": theme_style(settings), "theme_preset_style": theme_preset_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(), "about_sections": public_about_sections(settings),
+        "theme_style": theme_style(settings), "theme_preset_style": theme_preset_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(), "about_sections": public_about_sections(settings), "about_first_image": public_about_first_image(settings),
         "active_adverts": active_advertisements(),
         "welcome_animation": bool(settings["welcome_animation_enabled"]), "welcome_animation_name": settings["welcome_animation_name"], "welcome_animation_duration_ms": int(settings["welcome_animation_duration_ms"] or 2200), "welcome_animation_style": settings["welcome_animation_style"] if "welcome_animation_style" in settings.keys() else "clean",
         "important_dates": important_dates(12, landing=request.path == '/'),
@@ -2858,16 +2877,41 @@ def generate_reset_for_request(request_id: int):
     return redirect(url_for("password_reset_requests"))
 
 
+def _safe_internal_next(raw_next: str):
+    """Accept only same-site relative paths for post-login continuation."""
+    value=(raw_next or "").strip()
+    if not value:
+        return ""
+    try:
+        parsed=urllib.parse.urlsplit(value)
+    except Exception:
+        return ""
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith("/") or parsed.path.startswith("//"):
+        return ""
+    return urllib.parse.urlunsplit(("", "", parsed.path, parsed.query, parsed.fragment))
+
+
+def _login_context_for_next(next_url: str, role: str):
+    path=urllib.parse.urlsplit(next_url or "").path.lower()
+    if path.startswith("/library"):
+        return "Library"
+    if path.startswith("/e-learning") or path.startswith("/online-classes") or path.startswith("/online-class/"):
+        return "E-Learning"
+    return role or ""
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     settings = school_settings()
     role = selected_role_from_request()
+    next_url = _safe_internal_next(request.args.get("next") or request.form.get("next") or "")
+    login_context = _login_context_for_next(next_url, role)
     if role == "Parent" and not parent_portal_enabled():
         flash("Parent / Guardian portal is disabled for this institution mode.", "warning")
         return redirect(url_for("index"))
     if role == "E-Learning" and request.method == "GET" and current_user():
         if current_user()["role"] in E_LEARNING_ROLES:
-            return redirect(url_for("online_classes"))
+            return redirect(next_url or url_for("online_classes"))
         abort(403)
     # Keep the legacy single-account/passwordless portal shortcut on GET, but
     # NEVER bypass an explicit credential POST. Accounts created by Admin/ICT
@@ -2952,9 +2996,9 @@ def login():
         if not admission_login_ok and not parent_name_login_ok and not password_ok:
             if user and user["role"] == "Student":
                 flash("Invalid student name/admission number or password.", "danger")
-                return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid student name/admission number or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=learning_login)
+                return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, next_url=next_url, login_context=login_context, error="Invalid student name/admission number or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=learning_login)
             flash("Invalid username or password.", "danger")
-            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, error="Invalid username or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=learning_login)
+            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, next_url=next_url, login_context=login_context, error="Invalid username or password.", success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=learning_login)
         # A student-linked account is always a Student account. This repairs any
         # legacy/migrated record that accidentally retained a staff role and prevents
         # student credentials from ever entering the Teacher workspace.
@@ -2966,7 +3010,7 @@ def login():
         role = user["role"]
         if learning_login and role not in E_LEARNING_ROLES:
             flash("E-Learning is available only to Admin, ICT, Teachers and Students.", "danger")
-            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role="E-Learning", error="E-Learning is available only to Admin, ICT, Teachers and Students.", success=None, setup_required=not auth_initialized(), e_learning_login=True)
+            return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role="E-Learning", next_url=next_url, login_context=login_context, error="E-Learning is available only to Admin, ICT, Teachers and Students.", success=None, setup_required=not auth_initialized(), e_learning_login=True)
         # Normal password login always goes directly to the person's dashboard.
         # Staff QR is only an optional convenience after the first successful password login.
         if user["role"] not in {"Student", "Parent", "System"} and "qr_login_enabled" in user.keys():
@@ -2976,10 +3020,12 @@ def login():
         session.clear(); session.permanent=True
         session["user_id"]=user["id"]; session["active_portal_role"]=user["role"]; session["login_event_id"]=login_id; session["login_location_pending"]=1
         session["auth_ticket"] = _issue_auth_ticket(user["id"])
+        if next_url:
+            return redirect(next_url)
         if learning_login:
             return redirect(url_for("online_classes"))
         return redirect(specialized_dashboard_for(user))
-    return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=(role=="E-Learning"))
+    return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, next_url=next_url, login_context=login_context, success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=(role=="E-Learning"))
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -4688,10 +4734,13 @@ def parent_dashboard():
 
 
 @app.route("/library")
-@login_required
 def library():
-    role=current_user()["role"]
-    if role not in {"Admin","ICT","Librarian","Student"}: abort(403)
+    user=current_user()
+    if not user:
+        return redirect(url_for("login", next=request.full_path))
+    role=user["role"]
+    if role not in LIBRARY_ROLES:
+        abort(403)
     if not school_settings()["library_enabled"] and role not in {"Admin","ICT","Librarian"}: abort(404)
     class_level=request.args.get("class","").strip(); subject=request.args.get("subject","").strip()
     where=["active=1"]; params=[]
@@ -4824,6 +4873,13 @@ def institution_save():
             else:
                 about_sections.insert(0, {'title':'Institutional History','body':imported_text,'image':'','caption':'','layout':'reading','media':[]})
 
+    # Public About media is also the institution's front-page gallery source when no
+    # separate landing image has been selected. This keeps the admin About editor
+    # and the visitor-facing page in sync instead of leaving a blank placeholder.
+    if not image_path:
+        first_about_image=next((m.get("path") for sec in about_sections for m in sec.get("media",[]) if m.get("kind")=="image" and m.get("path")), "")
+        if first_about_image:
+            image_path=first_about_image
     execute("UPDATE school_settings SET about_sections_json=?, institution_image_path=?, institution_enabled=1 WHERE id=1",(json.dumps(about_sections, ensure_ascii=False),image_path))
     audit(current_user()["id"],current_user()["full_name"],"Public About Update","Institutional public About sections and media updated.")
     flash("Public About saved. Refresh or open Preview to see the current public page.","success")
@@ -5218,14 +5274,14 @@ def e_learning_gateway():
         if user["role"] in E_LEARNING_ROLES:
             return redirect(url_for("online_classes"))
         abort(403)
-    return redirect(url_for("login", role="E-Learning"))
+    return redirect(url_for("login", role="E-Learning", next=url_for("online_classes")))
 
 
 @app.route("/online-classes")
 def online_classes():
     user=current_user()
     if not user:
-        return redirect(url_for("login", role="E-Learning"))
+        return redirect(url_for("login", role="E-Learning", next=url_for("online_classes")))
     if user["role"] not in E_LEARNING_ROLES: abort(403)
     sessions=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.active=1 AND (cs.starts_at >= datetime('now','-1 day') OR cs.ends_at IS NULL OR cs.ends_at >= datetime('now','-1 day')) ORDER BY cs.starts_at",())
     assignments=[]; submissions=[]; learning_groups=[]; resources=[]
@@ -5250,7 +5306,7 @@ def online_classes():
 def live_classroom(session_id:int):
     user=current_user()
     if not user:
-        return redirect(url_for("login", role="E-Learning"))
+        return redirect(url_for("login", role="E-Learning", next=url_for("live_classroom", session_id=session_id)))
     if user["role"] not in E_LEARNING_ROLES: abort(403)
     sess=q("SELECT cs.*,u.full_name AS teacher_name FROM class_sessions cs JOIN users u ON u.id=cs.teacher_user_id WHERE cs.id=? AND cs.active=1",(session_id,),one=True)
     if not sess: abort(404)
@@ -7058,6 +7114,170 @@ def admin_root_required(view):
         return view(*args, **kwargs)
     return wrapper
 
+def _full_portal_backup_name(prefix="prime-institution-full-portal"):
+    return f"{prefix}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.zip"
+
+
+def _backup_archive_paths():
+    """Yield every persistent portal file except transient/snapshot backup clutter."""
+    excluded_dirs={"resilience_backups"}
+    excluded_suffixes={".incoming", ".pre-restore.bak", ".incoming.bak"}
+    if not DATA_DIR.exists():
+        return
+    for path in DATA_DIR.rglob("*"):
+        if not path.is_file():
+            continue
+        rel=path.relative_to(DATA_DIR)
+        if any(part in excluded_dirs for part in rel.parts):
+            continue
+        rel_name=rel.as_posix()
+        if rel_name in {"school.db", "school.db-wal", "school.db-shm"}:
+            continue
+        if any(str(path).endswith(suffix) for suffix in excluded_suffixes):
+            continue
+        yield path, rel
+
+
+def _create_full_portal_backup_file():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_path=DATA_DIR / f".full-backup-{uuid.uuid4().hex}.zip"
+    db_snapshot=DATA_DIR / f".full-db-snapshot-{uuid.uuid4().hex}.sqlite3"
+    manifest={
+        "format":"Prime Institution OS Full Portal Archive",
+        "version":1,
+        "created_at":datetime.utcnow().isoformat(timespec="seconds")+"Z",
+        "root":"DATA_DIR",
+        "database":"school.db",
+        "includes":"All persistent portal files, a transaction-consistent database snapshot, signing secret and uploaded assets; transient resilience backup snapshots are intentionally excluded.",
+    }
+    try:
+        # SQLite is configured for WAL mode. Use the SQLite backup API rather than
+        # copying the live file directly, so committed WAL contents are included in
+        # one transaction-consistent database snapshot.
+        source=sqlite3.connect(DB_PATH,timeout=30)
+        try:
+            with sqlite3.connect(db_snapshot,timeout=30) as dest:
+                source.backup(dest)
+        finally:
+            source.close()
+        with zipfile.ZipFile(tmp_path,"w",compression=zipfile.ZIP_DEFLATED,compresslevel=6) as zf:
+            zf.writestr("portal_manifest.json", json.dumps(manifest,ensure_ascii=False,indent=2))
+            if db_snapshot.exists():
+                zf.write(db_snapshot,arcname="school.db")
+            for path,rel in _backup_archive_paths():
+                zf.write(path,arcname=rel.as_posix())
+        return tmp_path
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        db_snapshot.unlink(missing_ok=True)
+
+
+@app.route("/backup/download")
+@login_required
+@admin_root_required
+def backup_download():
+    backup_path=_create_full_portal_backup_file()
+    name=_full_portal_backup_name()
+    @after_this_request
+    def _cleanup(response):
+        try: backup_path.unlink(missing_ok=True)
+        except OSError: pass
+        return response
+    execute("INSERT INTO backup_registry(backup_type,file_name,row_count,created_by) VALUES(?,?,?,?)",("FULL ZIP",name,0,current_user()["id"]))
+    return send_file(backup_path,mimetype="application/zip",as_attachment=True,download_name=name)
+
+
+@app.route("/backup/sqlite-download")
+@login_required
+@admin_root_required
+def backup_sqlite_download():
+    if not DB_PATH.exists():
+        abort(404)
+    return send_file(DB_PATH,as_attachment=True,download_name="school_backup.sqlite3")
+
+
+def _validate_full_backup_zip(file_storage):
+    """Validate archive structure and prevent zip-slip before extraction."""
+    with zipfile.ZipFile(file_storage.stream,"r") as zf:
+        names=zf.namelist()
+        if "school.db" not in names:
+            raise ValueError("The full portal archive is missing school.db.")
+        for info in zf.infolist():
+            name=Path(info.filename)
+            if name.is_absolute() or ".." in name.parts:
+                raise ValueError("The backup contains an unsafe file path.")
+            if info.file_size > 250*1024*1024:
+                raise ValueError("A file in the backup is too large to restore safely.")
+    file_storage.stream.seek(0)
+
+
+@app.route("/backup/full-restore", methods=["POST"])
+@login_required
+@admin_root_required
+def backup_full_restore():
+    file=request.files.get("full_backup_file") or request.files.get("backup_file")
+    if not file or not file.filename or not file.filename.lower().endswith(".zip"):
+        flash("Choose the full .zip portal backup first.","danger")
+        return redirect(request.referrer or url_for("admin_dashboard"))
+    temp_root=DATA_DIR / f".restore-{uuid.uuid4().hex}"
+    temp_root.mkdir(parents=True,exist_ok=True)
+    try:
+        _validate_full_backup_zip(file)
+        file.stream.seek(0)
+        with zipfile.ZipFile(file.stream,"r") as zf:
+            zf.extractall(temp_root)
+        restored_db=temp_root / "school.db"
+        if not _sqlite_integrity_ok(restored_db):
+            raise ValueError("The backup database failed SQLite integrity verification.")
+        with sqlite3.connect(restored_db,timeout=30) as test:
+            present={r[0] for r in test.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            required={"users","students","school_settings"}
+            if not required.issubset(present):
+                raise ValueError("The backup database is missing required Prime portal tables.")
+        actor=current_user()
+        # Safety copy of the current database before any replacement.
+        snapshot_dir=DATA_DIR / "resilience_backups"
+        snapshot_dir.mkdir(parents=True,exist_ok=True)
+        if DB_PATH.exists():
+            shutil.copy2(DB_PATH, snapshot_dir / f"pre-full-restore-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.sqlite3")
+        db=g.pop("db",None)
+        if db is not None:
+            db.close()
+        for suffix in ("-wal","-shm"):
+            DB_PATH.with_name(DB_PATH.name+suffix).unlink(missing_ok=True)
+        # Remove current persistent portal state, keeping resilience snapshots.
+        for child in list(DATA_DIR.iterdir()):
+            if child.name in {"resilience_backups", temp_root.name}:
+                continue
+            if child.is_dir():
+                shutil.rmtree(child,ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+        for src in temp_root.rglob("*"):
+            rel=src.relative_to(temp_root)
+            dest=DATA_DIR/rel
+            if src.is_dir():
+                dest.mkdir(parents=True,exist_ok=True)
+            else:
+                dest.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copy2(src,dest)
+        init_db()
+        restored_actor=q("SELECT id,full_name FROM users WHERE username=? AND active=1 LIMIT 1",(actor["username"],),one=True) if actor else None
+        if not restored_actor:
+            restored_actor=q("SELECT id,full_name FROM users WHERE role='Admin' AND active=1 ORDER BY id LIMIT 1",one=True)
+        if restored_actor:
+            audit(restored_actor["id"],restored_actor["full_name"],"Restore Full Portal Archive",f"Full portal archive restored from {secure_filename(file.filename)}.")
+        flash("Full portal backup restored. Database, settings and uploaded portal files are back in place.","success")
+    except Exception as exc:
+        app.logger.exception("Full portal restore failed")
+        flash(f"Full portal restore failed safely: {exc}","danger")
+    finally:
+        shutil.rmtree(temp_root,ignore_errors=True)
+    return redirect(request.referrer or url_for("admin_dashboard"))
+
+
 @app.route("/backup/json")
 @login_required
 @admin_root_required
@@ -7119,15 +7339,6 @@ def backup_json_restore():
         conn.isolation_level=old_autocommit
     return redirect(request.referrer or url_for('admin_dashboard'))
 
-@app.route("/backup/download")
-@login_required
-@admin_root_required
-def backup_download():
-    if not DB_PATH.exists():
-        abort(404)
-    return send_file(DB_PATH, as_attachment=True, download_name="school_backup.sqlite3")
-
-
 @app.route("/backup/restore", methods=["POST"])
 @login_required
 @admin_root_required
@@ -7137,6 +7348,8 @@ def backup_restore():
         flash('Choose a backup file first.','danger'); return redirect(request.referrer or url_for('admin_dashboard'))
     if file.filename.lower().endswith('.json'):
         return backup_json_restore()
+    if file.filename.lower().endswith('.zip'):
+        return backup_full_restore()
     if not allowed_filename(file.filename):
         flash('Only .db, .sqlite or .sqlite3 database backups are allowed.','danger'); return redirect(request.referrer or url_for('admin_dashboard'))
     safe_name=secure_filename(file.filename)

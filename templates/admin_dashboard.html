@@ -320,19 +320,26 @@
       <tr><td>Employees</td><td><a class="btn btn-ghost mini" href="/export/employees/csv">CSV</a></td><td><a class="btn btn-ghost mini" href="/export/employees/docx">Word</a></td><td><a class="btn btn-ghost mini" href="/export/employees/pdf">PDF</a></td></tr>
       <tr><td>Attendance</td><td><a class="btn btn-ghost mini" href="/export/attendance/csv">CSV</a></td><td><a class="btn btn-ghost mini" href="/export/attendance/docx">Word</a></td><td><a class="btn btn-ghost mini" href="/export/attendance/pdf">PDF</a></td></tr>
       </tbody></table></div></section>
-<section id="backup-quick" class="panel glass" style="margin-top:14px"><div class="panel-head"><div><div class="eyebrow">Backup & restore</div><h3>One recovery workspace</h3><p class="muted">Full JSON preserves records/settings/assets and is the safest portable restore. SQLite remains available as a raw rollback copy; restore is performed through a temporary verified file.</p></div></div><div class="quick-actions"><a class="btn btn-primary" href="/backup/json">Full JSON backup</a><a class="btn btn-ghost" href="/backup/download">SQLite backup</a><form method="post" action="/backup/json/restore" enctype="multipart/form-data" class="quick-actions"><input type="file" name="json_backup" accept=".json" required><button class="btn btn-ghost">Restore JSON</button></form><span class="muted small">Use the Backup & restore panel below to restore either file type.</span></div></section>
+<section id="backup-quick" class="panel glass" style="margin-top:14px"><div class="panel-head"><div><div class="eyebrow">Backup & restore</div><h3>Full portal recovery</h3><p class="muted">The ZIP backup contains the portal database, settings, secret key and uploaded files so a restored copy returns to the saved state. JSON remains available for portable data-only exchange.</p></div></div><div class="quick-actions"><a class="btn btn-primary" href="/backup/download">Download full portal ZIP</a><a class="btn btn-ghost" href="/backup/json">Data-only JSON backup</a><a class="btn btn-ghost" href="/backup/sqlite-download">SQLite rollback copy</a></div></section>
 <section id="backup-panel" class="panel glass workspace-panel hidden">
       <div class="panel-head"><div><div class="eyebrow">Backup</div><h3>Restore and protect the site</h3></div></div>
       <div class="detail-card" style="margin-bottom:16px">
-        <h4>Download backup</h4>
-        <p class="muted">Keep a full copy so the school can be restored after any crash.</p>
-        <a class="btn btn-primary" href="{{ url_for('backup_download') }}">Download backup</a>
+        <h4>Download full portal</h4>
+        <p class="muted">Creates one ZIP containing all persistent portal contents: database, settings, uploaded assets and the signing secret.</p>
+        <a class="btn btn-primary" href="{{ url_for('backup_download') }}">Download full portal ZIP</a>
+      </div>
+      <div class="detail-card" style="margin-bottom:16px">
+        <h4>Restore full portal</h4>
+        <form class="stack-form" method="post" action="{{ url_for('backup_full_restore') }}" enctype="multipart/form-data">
+          <label><span>Full portal ZIP</span><input type="file" name="full_backup_file" accept=".zip" required></label>
+          <button class="btn btn-primary" type="submit" onclick="return confirm('Restore the entire portal from this ZIP? Current portal data will be replaced; a safety database copy will be kept.')">Restore full portal</button>
+        </form>
       </div>
       <div class="detail-card">
-        <h4>Restore backup</h4>
+        <h4>Legacy / data-only restore</h4>
         <form class="stack-form" method="post" action="{{ url_for('backup_restore') }}" enctype="multipart/form-data">
-          <label><span>Backup file</span><input type="file" name="backup_file" accept=".db,.sqlite,.sqlite3,.json" required></label>
-          <button class="btn btn-primary" type="submit">Restore backup</button>
+          <label><span>Backup file</span><input type="file" name="backup_file" accept=".db,.sqlite,.sqlite3,.json,.zip" required></label>
+          <button class="btn btn-ghost" type="submit">Restore selected legacy backup</button>
         </form>
       </div>
     </section>
