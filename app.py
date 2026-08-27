@@ -11,6 +11,7 @@ import os
 import sqlite3
 import uuid
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -178,6 +179,30 @@ def _quarantine_corrupt_db(path: Path) -> None:
         except OSError:
             pass
 
+
+def resilience_snapshot(force=False):
+    """Create periodic SQLite snapshots in persistent storage without disturbing requests."""
+    try:
+        if not DB_PATH.exists() or not PERSISTENT_STORAGE:
+            return
+        snap_dir=DATA_DIR / "resilience_backups"; snap_dir.mkdir(parents=True, exist_ok=True)
+        existing=sorted(snap_dir.glob("school-*.sqlite3"), key=lambda p:p.stat().st_mtime, reverse=True)
+        now=time.time()
+        if not force and existing and (now-existing[0].stat().st_mtime) < 6*3600:
+            return
+        stamp=datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        target=snap_dir/f"school-{stamp}.sqlite3"
+        src=sqlite3.connect(DB_PATH, timeout=30)
+        dst=sqlite3.connect(target, timeout=30)
+        try:
+            src.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            src.backup(dst)
+        finally:
+            dst.close(); src.close()
+        for old in sorted(snap_dir.glob("school-*.sqlite3"), key=lambda p:p.stat().st_mtime, reverse=True)[12:]:
+            old.unlink(missing_ok=True)
+    except Exception as exc:
+        app.logger.warning("Resilience snapshot skipped: %s", exc)
 
 def get_db() -> sqlite3.Connection:
     if "db" not in g:
@@ -1091,6 +1116,7 @@ def _init_db_once() -> None:
         );
         CREATE TABLE IF NOT EXISTS important_dates (id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,event_date TEXT NOT NULL,event_time TEXT,location TEXT,description TEXT,visible INTEGER NOT NULL DEFAULT 1,landing_visible INTEGER NOT NULL DEFAULT 1,created_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL);
         CREATE INDEX IF NOT EXISTS idx_important_dates_date ON important_dates(event_date,visible,landing_visible);
+        CREATE TABLE IF NOT EXISTS institution_contacts (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,role_title TEXT NOT NULL DEFAULT '',phone TEXT NOT NULL DEFAULT '',email TEXT NOT NULL DEFAULT '',link TEXT NOT NULL DEFAULT '',visible INTEGER NOT NULL DEFAULT 1,display_order INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,title TEXT NOT NULL,body TEXT NOT NULL,link TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,read_at TEXT,priority TEXT NOT NULL DEFAULT 'Normal',FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id,read_at,created_at);
         CREATE TABLE IF NOT EXISTS password_reset_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,expires_at TEXT NOT NULL,used_at TEXT,requested_ip TEXT,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
@@ -2281,6 +2307,19 @@ def public_about_sections(settings):
     except Exception:
         return []
 
+
+def public_contacts(limit=30):
+    try:
+        return q("SELECT * FROM institution_contacts WHERE visible=1 ORDER BY display_order,name LIMIT ?", (limit,))
+    except Exception:
+        return []
+
+def _contact_rows_for_admin(limit=100):
+    try:
+        return q("SELECT * FROM institution_contacts ORDER BY display_order,name LIMIT ?", (limit,))
+    except Exception:
+        return []
+
 @app.context_processor
 def auth_template_context():
     settings=school_settings()
@@ -2300,6 +2339,8 @@ def auth_template_context():
         "help_enabled": True,
         "parent_portal_enabled": parent_portal_enabled(),
         "portal_qr_data_uri": portal_qr_data_uri(),
+        "public_contacts": public_contacts(),
+        "admin_contacts": _contact_rows_for_admin(),
         "footer_settings": {
             "title": settings["footer_title"] or settings["school_name"],
             "text": settings["footer_text"] or "Institution portal for learning, communication, finance and school services.",
@@ -3003,12 +3044,37 @@ def student_entry(): return enter_role("Student")
 def parent_entry(): return enter_role("Parent")
 @app.route("/librarian")
 def librarian_entry(): return enter_role("Librarian")
+@app.route("/driver")
+def driver_entry(): return enter_role("Driver")
 
 
-@app.route("/communication")
-@login_required
+@app.route("/communication", methods=["GET", "POST"])
 def communication_center():
-    user=current_user(); users=q("SELECT id,full_name,username,role,workspace_type FROM users WHERE active=1 AND id!=? AND role!='System' ORDER BY full_name",(user['id'],)); inbox=q("SELECT m.*,u.full_name AS sender_name,u.role AS sender_role FROM communication_messages m JOIN users u ON u.id=m.sender_user_id WHERE m.recipient_user_id=? ORDER BY m.created_at DESC LIMIT 80",(user['id'],)); sent=q("SELECT m.*,u.full_name AS recipient_name,u.role AS recipient_role FROM communication_messages m JOIN users u ON u.id=m.recipient_user_id WHERE m.sender_user_id=? ORDER BY m.created_at DESC LIMIT 40",(user['id'],)); return render_template('communication.html',settings=school_settings(),actor_name=user['full_name'],role=user['role'],users=users,inbox=inbox,sent=sent)
+    user=current_user()
+    if not user:
+        person_type = "Parent / Guardian" if request.args.get("person") == "parent" else "Visitor"
+        if request.method == "POST":
+            person_type=(request.form.get("person_type") or "Visitor").strip()
+            if person_type not in {"Visitor","Parent / Guardian"}: person_type="Visitor"
+            name=(request.form.get("full_name") or "").strip()[:160]
+            phone=(request.form.get("phone") or "").strip()[:80]
+            email=(request.form.get("email") or "").strip()[:160]
+            child=(request.form.get("child_reference") or "").strip()[:160]
+            subject=(request.form.get("subject") or "").strip()[:160]
+            body=(request.form.get("message") or "").strip()[:5000]
+            if not name or not body:
+                return render_template("communication_guest.html", settings=school_settings(), error="Enter your name and message.", person_type=person_type), 400
+            execute("INSERT INTO communication_guest_requests(person_type,full_name,phone,email,child_reference,subject,message) VALUES(?,?,?,?,?,?,?)",(person_type,name,phone,email,child,subject,body))
+            admins=q("SELECT id FROM users WHERE active=1 AND role='Admin'")
+            summary=f"{person_type}: {name}" + (f" · {phone}" if phone else "") + (f" · {email}" if email else "") + (f" · child: {child}" if child else "")
+            for a in admins:
+                notify_user(a['id'], f"New public communication: {subject or 'General enquiry'}", summary + " — " + body[:180], "/admin/communication-requests", "High")
+            return render_template("communication_guest.html", settings=school_settings(), success="Your message has been sent to the school administration.", person_type=person_type)
+        return render_template("communication_guest.html", settings=school_settings(), person_type=person_type)
+    users=q("SELECT id,full_name,username,role,workspace_type FROM users WHERE active=1 AND id!=? AND role!='System' ORDER BY full_name",(user['id'],))
+    inbox=q("SELECT m.*,u.full_name AS sender_name,u.role AS sender_role FROM communication_messages m JOIN users u ON u.id=m.sender_user_id WHERE m.recipient_user_id=? ORDER BY m.created_at DESC LIMIT 80",(user['id'],))
+    sent=q("SELECT m.*,u.full_name AS recipient_name,u.role AS recipient_role FROM communication_messages m JOIN users u ON u.id=m.recipient_user_id WHERE m.sender_user_id=? ORDER BY m.created_at DESC LIMIT 40",(user['id'],))
+    return render_template('communication.html',settings=school_settings(),actor_name=user['full_name'],role=user['role'],users=users,inbox=inbox,sent=sent)
 
 @app.route("/communication/send",methods=['POST'])
 @login_required
@@ -4247,6 +4313,13 @@ def logout():
 @app.route("/favicon.ico")
 def favicon():
     return send_file(BASE_DIR / "static" / "icons" / "favicon.ico", mimetype="image/vnd.microsoft.icon", conditional=True, max_age=86400)
+
+@app.route("/visitor-qr.png")
+def visitor_qr_download():
+    payload=url_for("index", _external=True)
+    qr=qrcode.QRCode(version=2,box_size=8,border=3); qr.add_data(payload); qr.make(fit=True)
+    buf=io.BytesIO(); qr.make_image().save(buf,format="PNG"); buf.seek(0)
+    return send_file(buf,mimetype="image/png",as_attachment=True,download_name="school-visitor-portal-qr.png",max_age=0)
 
 
 @app.route("/sw.js")
@@ -6284,6 +6357,38 @@ def admin_institution_profile():
     flash("Institution profile and terminology saved.","success")
     return redirect(url_for("admin_dashboard"))
 
+@app.route("/admin/communication-requests")
+@login_required
+@role_required("Admin","ICT")
+def admin_communication_requests():
+    rows=q("SELECT * FROM communication_guest_requests ORDER BY id DESC LIMIT 200")
+    return render_template("admin_communication_requests.html", settings=school_settings(), actor_name=current_user()["full_name"], role=current_user()["role"], rows=rows)
+
+@app.route("/admin/contacts/save", methods=["POST"])
+@login_required
+@role_required("Admin")
+def admin_contacts_save():
+    names=request.form.getlist("contact_name")
+    roles=request.form.getlist("contact_role")
+    phones=request.form.getlist("contact_phone")
+    emails=request.form.getlist("contact_email")
+    links=request.form.getlist("contact_link")
+    visible=request.form.getlist("contact_visible")
+    # Rebuild only the public contacts table; old rows are removed after values are collected.
+    conn=get_db(); conn.execute("DELETE FROM institution_contacts")
+    for i,name in enumerate(names):
+        name=(name or '').strip()[:120]
+        if not name: continue
+        role=(roles[i] if i<len(roles) else '').strip()[:120]
+        phone=(phones[i] if i<len(phones) else '').strip()[:80]
+        email=(emails[i] if i<len(emails) else '').strip()[:160]
+        link=(links[i] if i<len(links) else '').strip()[:500]
+        shown = 1 if str(i) in set(visible) else 0
+        execute("INSERT INTO institution_contacts(name,role_title,phone,email,link,visible,display_order) VALUES(?,?,?,?,?,?,?)",(name,role,phone,email,link,shown,i))
+    audit(current_user()['id'],current_user()['full_name'],'Public Contacts','Public institutional contact directory updated.')
+    flash('Public contacts saved.','success')
+    return redirect(url_for('admin_dashboard')+'#public-contacts')
+
 @app.route("/admin/public-settings", methods=["POST"])
 @login_required
 @role_required("Admin")
@@ -7166,6 +7271,10 @@ with app.app_context():
     init_db()
     migrate_legacy_student_store()
     backfill_student_allocations()
+try:
+    resilience_snapshot(force=False)
+except Exception:
+    pass
 
 
 if __name__ == "__main__":
