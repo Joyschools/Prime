@@ -12,6 +12,7 @@ import sqlite3
 import uuid
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -70,8 +71,9 @@ PULSE_TIMEOUT_SECONDS = max(1, min(10, int(os.environ.get("PULSE_TIMEOUT_SECONDS
 PULSE_ALLOWED_CALLBACK_HOSTS = {h.strip().lower() for h in os.environ.get("PULSE_ALLOWED_CALLBACK_HOSTS", "").split(",") if h.strip()}
 ALLOWED_RESTORE_EXT = {"db", "sqlite", "sqlite3"}
 PUBLIC_ROLES = ("Teacher", "Student", "Parent", "Librarian", "Driver")
+PORTAL_SELECTION_ROLES = set(PUBLIC_ROLES) | {"Staff"}
 HIDDEN_ROLES = ("Admin", "ICT", "Finance")
-QR_LOGIN_ROLES = {"Admin", "ICT", "Finance", "Teacher", "Librarian"}
+QR_LOGIN_ROLES = {"Admin", "ICT", "Finance", "Teacher", "Librarian", "Driver"}
 QR_LOGIN_WORKSPACES = {"Teaching", "Driver", "Reception", "Guard", "Cook", "Other Staff"}
 E_LEARNING_ROLES = {"Admin", "ICT", "Teacher", "Student"}
 LIBRARY_ROLES = {"Admin", "ICT", "Librarian", "Teacher", "Student", "Parent"}
@@ -527,6 +529,29 @@ def _init_db_once() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(actor_id) REFERENCES users(id) ON DELETE SET NULL
             );
+
+            CREATE TABLE IF NOT EXISTS system_errors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                level TEXT NOT NULL DEFAULT 'ERROR',
+                source TEXT NOT NULL DEFAULT 'server',
+                method TEXT NOT NULL DEFAULT '',
+                path TEXT NOT NULL DEFAULT '',
+                endpoint TEXT NOT NULL DEFAULT '',
+                status_code INTEGER NOT NULL DEFAULT 500,
+                user_id INTEGER,
+                username TEXT NOT NULL DEFAULT '',
+                role TEXT NOT NULL DEFAULT '',
+                message TEXT NOT NULL DEFAULT '',
+                exception_type TEXT NOT NULL DEFAULT '',
+                traceback TEXT NOT NULL DEFAULT '',
+                user_agent TEXT NOT NULL DEFAULT '',
+                request_id TEXT NOT NULL DEFAULT '',
+                client_context TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_system_errors_created_at ON system_errors(created_at);
+            CREATE INDEX IF NOT EXISTS idx_system_errors_status ON system_errors(status_code,created_at);
 
             CREATE TABLE IF NOT EXISTS login_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
@@ -1222,6 +1247,8 @@ def _init_db_once() -> None:
         ensure_column(conn, "attendance_events", "accuracy REAL")
         conn.execute("CREATE TABLE IF NOT EXISTS attendance_absence_requests (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,absence_date TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Pending' CHECK(status IN ('Pending','Approved','Denied')),requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,reviewed_by INTEGER,reviewed_at TEXT,review_note TEXT,UNIQUE(user_id,absence_date),FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(reviewed_by) REFERENCES users(id) ON DELETE SET NULL)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_absence_date ON attendance_absence_requests(absence_date,status)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS support_expenses (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,item_name TEXT NOT NULL,quantity REAL NOT NULL DEFAULT 1,amount REAL NOT NULL,spent_at TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',evidence_path TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'Pending' CHECK(status IN ('Pending','Approved','Rejected')),reviewed_by INTEGER,reviewed_at TEXT,review_note TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(reviewed_by) REFERENCES users(id) ON DELETE SET NULL)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_support_expenses_status ON support_expenses(status,created_at)")
         conn.execute("CREATE TABLE IF NOT EXISTS staff_timetable (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 0 AND 6),start_time TEXT NOT NULL,end_time TEXT NOT NULL,title TEXT NOT NULL,location TEXT NOT NULL DEFAULT '',notes TEXT NOT NULL DEFAULT '',active INTEGER NOT NULL DEFAULT 1,created_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_timetable_user_day ON staff_timetable(user_id,day_of_week,start_time)")
         conn.execute("CREATE TABLE IF NOT EXISTS staff_reminders (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,role_scope TEXT NOT NULL DEFAULT 'All',title TEXT NOT NULL,due_at TEXT NOT NULL,notes TEXT NOT NULL DEFAULT '',priority TEXT NOT NULL DEFAULT 'Normal',completed INTEGER NOT NULL DEFAULT 0,created_by INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL)")
@@ -1301,6 +1328,29 @@ def _init_db_once() -> None:
         ensure_column(conn, "class_sessions", "library_item_id INTEGER")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_compulsory_subjects_class ON compulsory_subjects(class_name,active)")
         ensure_column(conn, "users", "workspace_type TEXT NOT NULL DEFAULT 'Teaching'")
+        ensure_column(conn, "users", "staff_category TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "ui_language TEXT NOT NULL DEFAULT 'en'")
+        ensure_column(conn, "users", "ui_theme_color TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "ui_accent_color TEXT NOT NULL DEFAULT ''")
+
+        # Diagnostics table is upgraded in-place so older school databases can read
+        # and retain the richer error records introduced by later portal versions.
+        ensure_column(conn, "system_errors", "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        ensure_column(conn, "system_errors", "level TEXT NOT NULL DEFAULT 'ERROR'")
+        ensure_column(conn, "system_errors", "source TEXT NOT NULL DEFAULT 'server'")
+        ensure_column(conn, "system_errors", "method TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "system_errors", "path TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "system_errors", "endpoint TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "system_errors", "status_code INTEGER NOT NULL DEFAULT 500")
+        ensure_column(conn, "system_errors", "user_id INTEGER")
+        ensure_column(conn, "system_errors", "username TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "system_errors", "role TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "system_errors", "message TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "system_errors", "exception_type TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "system_errors", "traceback TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "system_errors", "user_agent TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "system_errors", "request_id TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "system_errors", "client_context TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "school_settings", "offline_enabled INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "school_settings", "backup_reminder_time TEXT NOT NULL DEFAULT '16:00'")
         ensure_column(conn, "school_settings", "backup_auto_time TEXT NOT NULL DEFAULT '16:30'")
@@ -1316,7 +1366,9 @@ def _init_db_once() -> None:
         conn.execute("""CREATE TABLE IF NOT EXISTS theme_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, snapshot_type TEXT NOT NULL, settings_json TEXT NOT NULL, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL)""")
         conn.execute("INSERT OR IGNORE INTO finance_accounts(id, account_name, opening_balance) VALUES(1, 'Institution Operating Account', 0)")
         conn.execute("UPDATE users SET qr_access_token=lower(hex(randomblob(16))) WHERE role!='System' AND (qr_access_token IS NULL OR qr_access_token='')")
+        conn.execute("UPDATE users SET staff_category=CASE WHEN COALESCE(staff_category,'')!='' THEN staff_category WHEN workspace_type IN ('Driver','Reception','Guard','Cook','Other Staff') THEN 'Support Staff' WHEN role='Teacher' THEN 'Teaching Staff' ELSE role END WHERE role!='System'")
         conn.execute("UPDATE users SET qr_login_enabled=0 WHERE qr_login_enabled IS NULL")
+        conn.execute("UPDATE users SET qr_login_enabled=1 WHERE active=1 AND role IN ('Admin','ICT','Finance','Teacher','Librarian','Driver') AND qr_access_token IS NOT NULL AND qr_access_token!=''")
         if conn.execute("SELECT COUNT(*) FROM system_help").fetchone()[0] == 0:
             help_rows=[
                 ('Getting started','Getting Started','Use the navigation to open your workspace. Administrators manage people, institution settings, security, backups and permissions.','All',10),
@@ -1626,6 +1678,10 @@ def safe_q(sql: str, params: Iterable[Any] = (), one: bool = False, default=None
         return value or (default if default is not None else [])
     except Exception as exc:
         app.logger.exception("Non-fatal portal read failure: %s", exc)
+        try:
+            record_system_error(source='server', message='Non-fatal portal database read failure', error=exc, status_code=500, client_context=sql[:4000])
+        except Exception:
+            pass
         return default if default is not None else (None if one else [])
 
 
@@ -1743,6 +1799,51 @@ def audit(actor_id: int | None, actor_name: str, action: str, details: str) -> N
     )
 
 
+def record_system_error(source='server', message='', error=None, status_code=500, level='ERROR', request_id=None, client_context='', traceback_text=''):
+    """Persist diagnostics for the long term. SQLite is primary; an append-only JSONL archive is also written on the persistent volume."""
+    user=getattr(g,'user',None)
+    tb=str(traceback_text or '')[:30000]
+    et=''
+    if error is not None:
+        et=type(error).__name__
+        tb=''.join(traceback.format_exception(type(error),error,error.__traceback__))[:30000]
+    ua=(request.headers.get('User-Agent') or '')[:1000]
+    rid=(request_id or request.headers.get('X-Request-ID') or uuid.uuid4().hex)[:120]
+    username=(user['username'] if user else '') or ''
+    role=(user['role'] if user else '') or ''
+    uid=user['id'] if user else None
+    payload={
+        'created_at':(datetime.utcnow()+timedelta(hours=3)).isoformat(timespec='seconds')+'+03:00',
+        'level':str(level or 'ERROR')[:20],'source':str(source or 'server')[:40],
+        'path':getattr(request,'path',''),'method':getattr(request,'method',''),
+        'endpoint':str(request.endpoint or ''),'status_code':int(status_code or 0),
+        'user_id':uid,'username':username[:200],'role':role[:80],
+        'message':str(message or '')[:5000],'exception_type':et,'traceback':tb,
+        'request_id':rid,'user_agent':ua,'client_context':str(client_context or '')[:15000]
+    }
+    sqlite_ok=False
+    try:
+        execute("""INSERT INTO system_errors(created_at,level,source,method,path,endpoint,status_code,user_id,username,role,message,exception_type,traceback,user_agent,request_id,client_context)
+                   VALUES(datetime('now','+3 hours'),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (payload['level'],payload['source'],request.method,str(request.path)[:500],str(request.endpoint or '')[:200],payload['status_code'],uid,username[:200],role[:80],payload['message'],et,tb,ua,rid,payload['client_context']))
+        sqlite_ok=True
+    except Exception as log_exc:
+        try: app.logger.exception("Persistent system error logging failed: %s", log_exc)
+        except Exception: pass
+    # Never rotate this archive automatically: it is the long-term forensic trail.
+    try:
+        DATA_DIR.mkdir(parents=True,exist_ok=True)
+        archive=DATA_DIR/'system-errors-archive.jsonl'
+        with archive.open('a',encoding='utf-8') as fh:
+            fh.write(json.dumps(payload,ensure_ascii=False)+'\n')
+    except Exception:
+        if sqlite_ok:
+            try:
+                fallback=DATA_DIR/'system-errors.jsonl'
+                with fallback.open('a',encoding='utf-8') as fh: fh.write(json.dumps(payload,ensure_ascii=False)+'\n')
+            except Exception: pass
+    return rid
+
 def record_login_event(user, method='Password', latitude=None, longitude=None, accuracy=None):
     ip=request.headers.get('X-Forwarded-For', request.remote_addr or '')
     if ',' in ip: ip=ip.split(',')[0].strip()
@@ -1850,10 +1951,22 @@ def load_current_user() -> None:
                 session["user_id"] = contextual["id"]
                 session["active_portal_role"] = contextual["role"]
             return
+    # A newly authenticated session carries the exact ticket issued at login. If
+    # a stale browser cookie is still present for another account, trust the signed
+    # session identity instead of silently switching the person back to that stale
+    # account. This is especially important on a shared/admin phone used for staff QR.
+    ticket = request.cookies.get(_AUTH_TICKET_COOKIE, "")
+    session_ticket=session.get("auth_ticket")
+    if session.get("user_id") and session_ticket and session_ticket != ticket:
+        session_user=q("SELECT id, full_name, username, role, student_id, active, title, department, leadership_role, leadership_level, workspace_type, school_unit, school_location, position_code, staff_code, reception_enabled, qr_access_token, profile_photo FROM users WHERE id=? AND active=1 AND role!='System'",(session.get("user_id"),),one=True)
+        if session_user:
+            g.user=session_user
+            session.permanent=True
+            g.portal_context=None
+            return
     # Server-backed auth ticket is the primary identity source. The signed
     # Flask session remains a convenience layer, but losing it can never log
     # the person out as long as their account is still active.
-    ticket = request.cookies.get(_AUTH_TICKET_COOKIE, "")
     recovered = _user_from_auth_ticket(ticket)
     if recovered:
         g.user = recovered
@@ -1878,6 +1991,24 @@ def load_current_user() -> None:
             session["user_id"] = recovered["id"]
             g.portal_context = None
 
+
+def _client_error_logger_script():
+    return r'''<script>(function(){
+  if(window.__primeErrorLogger)return; window.__primeErrorLogger=1;
+  var KEY='prime_local_errors_v1', PATH='/api/system-errors/client';
+  function read(){try{return JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){return []}}
+  function save(o){try{var a=read();a.push(o);if(a.length>200)a=a.slice(-200);localStorage.setItem(KEY,JSON.stringify(a))}catch(e){}}
+  function send(o){o.request_id=(window.crypto&&window.crypto.randomUUID)?window.crypto.randomUUID():String(Date.now())+'-'+Math.random();try{if(navigator.sendBeacon){var b=new Blob([JSON.stringify(o)],{type:'application/json'});if(navigator.sendBeacon(PATH,b))return}}catch(e){}try{fetch(PATH,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o),keepalive:true}).then(function(r){if(!r.ok)save(o)}).catch(function(){save(o)})}catch(e){save(o)}}
+  function log(level,message,stack,status){send({level:level||'ERROR',message:String(message||'Browser error').slice(0,5000),stack:String(stack||'').slice(0,12000),status_code:Number(status||0),context:location.pathname+location.search,client_context:JSON.stringify({url:location.href,online:navigator.onLine,ua:navigator.userAgent})})}
+  window.__primeLogClientError=function(level,message,stack,status){log(level,message,stack,status)};
+  window.addEventListener('error',function(e){log('ERROR',e.message||'JavaScript error',e.error&&e.error.stack||'',0)});
+  window.addEventListener('unhandledrejection',function(e){var r=e.reason;log('ERROR',r&&r.message||String(r||'Unhandled promise rejection'),r&&r.stack||'',0)});
+  var oldFetch=window.fetch.bind(window);
+  window.fetch=function(){var a=arguments,target=String(a[0]&&a[0].url||a[0]||'');return oldFetch.apply(window,a).then(function(r){if(!r.ok&&target.indexOf(PATH)<0)log(r.status>=500?'ERROR':'WARN','HTTP '+r.status+' returned for '+target,'',r.status);return r}).catch(function(e){if(target.indexOf(PATH)<0)log('ERROR','Fetch failed: '+(e&&e.message||e),e&&e.stack||'',0);throw e})};
+  function flush(){var a=read();if(!a.length||!navigator.onLine)return;localStorage.removeItem(KEY);a.slice(0,40).forEach(function(o){try{send(o)}catch(e){save(o)}})}
+  window.addEventListener('online',flush); setTimeout(flush,500);
+  window.addEventListener('beforeunload',function(){read().slice(0,20).forEach(function(o){try{navigator.sendBeacon(PATH,new Blob([JSON.stringify(o)],{type:'application/json'}))}catch(e){}})});
+})();</script>'''
 @app.after_request
 def persist_auth_cookie(response):
     user = getattr(g, "user", None)
@@ -1885,7 +2016,12 @@ def persist_auth_cookie(response):
         # Keep a durable server-backed identity ticket independent of Flask
         # session mutations performed by unrelated Admin operations.
         ticket = request.cookies.get(_AUTH_TICKET_COOKIE, "")
-        if not _user_from_auth_ticket(ticket):
+        ticket_user = _user_from_auth_ticket(ticket) if ticket else None
+        if getattr(g, "portal_context", None) and flask_session.get("admin_impersonation"):
+            root_id=flask_session.get("user_id")
+            if root_id and (not ticket_user or ticket_user["id"] != root_id):
+                ticket = _issue_auth_ticket(root_id)
+        elif not ticket_user:
             ticket = _issue_auth_ticket(user["id"])
         response.set_cookie(_AUTH_TICKET_COOKIE, ticket, max_age=_AUTH_COOKIE_MAX_AGE, httponly=True, secure=app.config.get("SESSION_COOKIE_SECURE", False), samesite="Lax", path="/")
         # Do not replace the administrator's persistent auth cookie while a
@@ -1923,7 +2059,7 @@ def persist_auth_cookie(response):
             body=response.get_data(as_text=True)
             if 'id="prime-global-tools"' not in body and "</body>" in body:
                 shell="""<button id="prime-mobile-nav" class="prime-mobile-nav" type="button" aria-label="Open navigation" aria-expanded="false" title="Open navigation"><span class="icon-bars" aria-hidden="true"><i></i><i></i><i></i></span></button><div id="prime-mobile-menu" class="prime-mobile-menu"><a href="/dashboard">Dashboard</a><a href="/calendar">School calendar</a><a href="/notifications">Notifications</a><a href="/system-help">System help</a><a href="/logout">Logout</a></div><div id="prime-global-tools" class="prime-global-tools"><a class="prime-search-link" href="/system-search" aria-label="Search system" title="Search system"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg></a><a class="prime-bell" href="/notifications" aria-label="Notifications" title="Notifications"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg><b id="prime-notification-count" class="prime-count hidden"></b></a><button type="button" class="prime-shortcuts-btn" aria-label="Open shortcuts" onclick="document.getElementById('prime-shortcuts').classList.toggle('open')">☰</button><div id="prime-shortcuts" class="prime-shortcuts"><strong>Quick access</strong><a href="/calendar">Calendar</a><a href="/notifications">Notifications</a><a href="/online-classes">Live classes</a><a href="/groups">Groups</a><a href="/leadership">Leadership</a></div></div><button id="prime-mobile-text" class="prime-mobile-text" type="button" aria-label="Adjust text size" title="Adjust text size">Aa</button><div id="prime-text-sheet" class="prime-text-sheet" role="dialog" aria-modal="true" aria-label="Text size settings"><div class="prime-text-sheet-card"><div><strong>Text size</strong><span class="muted">Adjust this device only.</span></div><div class="prime-text-choices"><button type="button" data-prime-text="normal">Normal</button><button type="button" data-prime-text="large">Large</button><button type="button" data-prime-text="xlarge">Extra large</button></div><button type="button" class="btn btn-ghost btn-block" id="prime-text-close">Done</button></div></div><style>.prime-global-tools{position:fixed;right:18px;top:16px;z-index:5000;display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif}.prime-search-link,.prime-bell,.prime-shortcuts-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;text-decoration:none;border:1px solid color-mix(in srgb,var(--primary-blue,#3457d5) 35%,transparent);background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 8px 30px rgba(0,0,0,.18);cursor:pointer}.prime-search-link,.prime-bell{font-size:18px}.prime-bell span{color:inherit;font-size:18px;line-height:1}.prime-count{position:absolute;right:45px;top:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#dc143c;color:#fff;font:700 10px/17px system-ui;text-align:center}.prime-count.dot{width:8px;min-width:8px;height:8px;padding:0;line-height:8px;right:47px}.prime-count.hidden{display:none}.prime-shortcuts{display:none;position:absolute;right:0;top:48px;min-width:190px;padding:10px;border-radius:14px;background:var(--panel,#fff);border:1px solid color-mix(in srgb,var(--primary-blue,#3457d5) 20%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.22)}.prime-shortcuts.open{display:grid;gap:5px}.prime-shortcuts strong{padding:5px 8px}.prime-shortcuts a{padding:8px 10px;border-radius:9px;color:inherit;text-decoration:none}.prime-shortcuts a:hover{background:rgba(127,127,127,.12)}.prime-mobile-nav{display:none}.prime-mobile-nav.open{display:grid}.prime-mobile-text,.prime-text-sheet{display:none}body.auth-body .prime-global-tools,body.auth-body .prime-mobile-nav,body.auth-body .prime-mobile-menu,body.auth-body .prime-mobile-text{display:none}@media(max-width:820px){.prime-shortcuts-btn{display:none!important}.prime-mobile-nav{display:grid;place-items:center;position:fixed;left:12px;top:12px;width:46px;height:46px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:22px;cursor:pointer;z-index:5001}.prime-global-tools{right:12px;top:12px}.prime-mobile-text{display:grid;place-items:center;position:fixed;right:64px;top:12px;width:46px;height:46px;border-radius:12px;border:1px solid var(--text-border,var(--border));background:var(--panel,#fff);color:var(--primary-text,#152033);box-shadow:0 10px 28px rgba(0,0,0,.20);font-size:15px;font-weight:900;cursor:pointer;z-index:5001}.prime-text-sheet{position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:6000;align-items:flex-end;justify-content:center;padding:14px}.prime-text-sheet.open{display:flex}.prime-text-sheet-card{width:min(460px,100%);border:1px solid var(--text-border,var(--border));border-radius:20px 20px 14px 14px;background:var(--panel);box-shadow:0 -18px 50px rgba(0,0,0,.26);padding:18px;display:grid;gap:16px}.prime-text-sheet-card>div:first-child{display:grid;gap:4px}.prime-text-choices{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.prime-text-choices button{border:1px solid var(--text-border,var(--border));background:var(--panel-3);color:var(--primary-text);border-radius:12px;padding:12px 8px;font-weight:800;cursor:pointer}.prime-text-choices button.active{border-color:var(--primary-blue);box-shadow:0 0 0 3px rgba(16,163,127,.14)}}</style><script>(function(){var m=document.getElementById('prime-mobile-nav');if(m){if(document.getElementById('sidebarToggle')){m.remove();}else{m.addEventListener('click',function(e){e.stopPropagation();var hasSidebar=!!document.querySelector('.sidebar');document.body.classList.toggle(hasSidebar?'mobile-nav-open':'prime-smart-menu-open');});document.addEventListener('click',function(e){if(!m.contains(e.target)){document.body.classList.remove('mobile-nav-open','prime-smart-menu-open');}});}}var tb=document.getElementById('prime-mobile-text'),sheet=document.getElementById('prime-text-sheet'),close=document.getElementById('prime-text-close'),choices=document.querySelectorAll('[data-prime-text]');var saved=localStorage.getItem('prime_text_size')||'large';if(saved==='normal'||saved==='large'||saved==='xlarge')document.documentElement.dataset.primeText=saved;if(tb&&sheet){tb.addEventListener('click',function(){sheet.classList.add('open');});sheet.addEventListener('click',function(e){if(e.target===sheet)sheet.classList.remove('open');});close&&close.addEventListener('click',function(){sheet.classList.remove('open');});choices.forEach(function(b){b.classList.toggle('active',b.dataset.primeText===saved);b.addEventListener('click',function(){saved=b.dataset.primeText;localStorage.setItem('prime_text_size',saved);document.documentElement.dataset.primeText=saved;choices.forEach(function(x){x.classList.toggle('active',x.dataset.primeText===saved);});});});}fetch('/api/notifications').then(r=>r.json()).then(d=>{var n=document.getElementById('prime-notification-count');if(!n)return;var c=Number(d.count||0);if(c<=0){n.classList.add('hidden');return;}n.classList.remove('hidden');if(c>5){n.textContent='';n.classList.add('dot');}else{n.textContent=String(c);n.classList.remove('dot');}}).catch(function(){});})();</script>"""
-                response.set_data(body.replace("</body>",shell+"</body>",1))
+                response.set_data(body.replace("</body>", shell + _client_error_logger_script() + "</body>", 1))
         except Exception:
             pass
     response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=(self), geolocation=(self), display-capture=(self)")
@@ -2039,6 +2175,7 @@ def role_target(role: str) -> str:
         "Parent": url_for("parent_dashboard"),
         "Librarian": url_for("librarian_dashboard"),
         "Driver": url_for("driver_dashboard"),
+        "Staff": url_for("support_dashboard"),
     }[role]
 
 
@@ -2067,6 +2204,40 @@ def staff_code_for(user_role: str, workspace_type: str) -> str:
     prefix={"Teacher":"TCH","Driver":"DRV","Reception":"REC","Guard":"SEC","Cook":"CAT","Finance":"FIN","ICT":"ICT","Librarian":"LIB","Admin":"ADM"}.get(workspace_type if workspace_type in {"Driver","Reception","Guard","Cook"} else user_role,"STF")
     row=q("SELECT COUNT(*) AS c FROM users WHERE staff_code LIKE ?",(prefix+"-%",),one=True)
     return f"{prefix}-{int(row['c'] or 0)+1:03d}"
+
+def staff_category_for(user):
+    """Human-facing workforce category; stored role remains the security boundary."""
+    if not user:
+        return ''
+    explicit = str((user['staff_category'] if 'staff_category' in user.keys() else '') or '').strip()
+    if explicit:
+        return explicit
+    wt = str((user['workspace_type'] if 'workspace_type' in user.keys() else '') or '').strip()
+    role = str((user['role'] if 'role' in user.keys() else '') or '').strip()
+    if wt in {'Driver','Reception','Guard','Cook','Other Staff'}:
+        return 'Support Staff'
+    if role == 'Teacher':
+        return 'Teaching Staff'
+    return role or 'Staff'
+
+def account_role_label(user):
+    """Human-facing account role used by admin screens.
+
+    Keep the database security role stable while allowing the institution to
+    describe Teacher-authenticated support/leadership accounts accurately.
+    """
+    if not user:
+        return 'Staff'
+    role = str((user['role'] if 'role' in user.keys() else '') or '').strip()
+    if role in {'Admin','ICT','Finance','Librarian','Student','Parent','System'}:
+        return role
+    category = staff_category_for(user)
+    if category in {'Teaching Staff','Support Staff','Leadership','Professional / Office Staff'}:
+        return category
+    wt = str((user['workspace_type'] if 'workspace_type' in user.keys() else '') or '').strip()
+    if wt in {'Driver','Reception','Guard','Cook','Other Staff'}:
+        return 'Support Staff'
+    return role or category or 'Staff'
 
 def resolve_staff_token(raw_token: str):
     token=(raw_token or '').strip()
@@ -2116,8 +2287,11 @@ def record_reception_scan(action, token='', device_token='', full_name='', phone
 
 def specialized_dashboard_for(user) -> str:
     # One account -> one operational destination. Student linkage always wins
-    # over stale legacy role/workspace data.
+    # over stale legacy role/workspace data. Workspace-specific destinations
+    # are resolved before the broad stored role so Reception never falls back
+    # to a Teacher dashboard.
     role=(user.get("role") if hasattr(user, "get") else user["role"]) or ""
+    wt=workspace_type_for_user(user)
     try:
         if user.get("student_id"):
             linked = q("SELECT id FROM students WHERE id=? AND active=1", (user["student_id"],), one=True)
@@ -2125,11 +2299,16 @@ def specialized_dashboard_for(user) -> str:
                 role = "Student"
     except Exception:
         pass
-    if role in {"Admin","ICT","Finance","Teacher","Student","Parent","Librarian"}:
+    if role == "Student":
+        return role_target("Student")
+    # Workspace is authoritative for non-teaching workforce accounts. A Cook/Guard/
+    # Driver/Reception account must never fall through to the Teacher dashboard just
+    # because legacy data stored role='Teacher'.
+    if role not in {"Admin","ICT"} and wt == "Reception": return url_for("reception_dashboard")
+    if role not in {"Admin","ICT"} and wt == "Driver": return url_for("driver_dashboard")
+    if role not in {"Admin","ICT"} and wt in {"Guard","Cook","Other Staff","Support Staff"}: return url_for("support_dashboard")
+    if role in {"Admin","ICT","Finance","Teacher","Parent","Librarian"}:
         return role_target(role)
-    wt=workspace_type_for_user(user)
-    if wt=="Driver": return url_for("driver_dashboard")
-    if wt in {"Guard","Cook","Other Staff"}: return url_for("workforce_dashboard", kind=wt)
     # Unknown/legacy staff is sent to the generic dashboard dispatcher rather
     # than generating a Not Found page.
     return url_for("dashboard")
@@ -2165,7 +2344,7 @@ def selected_role_from_request(default=""):
     role = (request.args.get("role") or request.form.get("role") or default).strip()
     # E-Learning is a secure gateway label, not a stored user role. It may be
     # used only to select the dedicated learning login flow.
-    allowed = set(ALL_PORTAL_ROLES) | {"E-Learning", "Library"}
+    allowed = set(ALL_PORTAL_ROLES) | {"E-Learning", "Library", "Staff"}
     return role if role in allowed else default
 
 
@@ -2264,28 +2443,76 @@ def _rgba(hex_value, alpha):
     return f'rgba({r},{g},{b},{alpha})'
 
 
+
+def user_theme_style(settings=None, user=None) -> str:
+    """Return per-account visual overrides without mutating school-wide theme settings."""
+    settings=settings or school_settings(); user=user or current_user()
+    if not user: return ""
+    role=str(user["role"] or "")
+    wt=workspace_type_for_user(user)
+    defaults={
+        "Teacher": ("#f5fbff","#2563eb"),
+        "Student": ("#fffaf0","#e58a00"),
+        "Parent": ("#f8fafc","#0f766e"),
+        "Librarian": ("#f7f4ff","#7c3aed"),
+        "Driver": ("#f4fbf7","#15803d"),
+    }
+    if wt in {"Reception","Driver","Guard","Cook","Other Staff","Support Staff"} and role not in {"Admin","ICT"}:
+        bg,accent=("#f8fbf8","#15803d")
+    else: bg,accent=defaults.get(role,("#f7f9fc","#3457d5"))
+    bg=str(user["ui_theme_color"] or "").strip() if "ui_theme_color" in user.keys() else ""
+    accent_override=str(user["ui_accent_color"] or "").strip() if "ui_accent_color" in user.keys() else ""
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", accent_override): accent=accent_override
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", bg): bg=bg
+    # Keep text readable against a user-selected canvas.
+    text=_best_text(bg,"#101828",4.5)
+    return f"body.app-body{{--user-bg:{bg};--user-accent:{accent};background:var(--user-bg)!important;}} body.app-body .topbar,body.app-body .panel,body.app-body .mini-card,body.app-body .info-card{{border-top-color:color-mix(in srgb,var(--user-accent) 45%,transparent);}} body.app-body .topbar h1,body.app-body .topbar h2,body.app-body .panel h1,body.app-body .panel h2,body.app-body .panel h3{{color:{text};}} body.app-body .btn-primary{{background:var(--user-accent);border-color:var(--user-accent);}} body.app-body a{{--primary-blue:var(--user-accent);}}"
+
 def theme_style(settings=None) -> str:
     settings = settings or school_settings()
-    def esc(v):
-        return str(v).replace('<','').replace('>','').replace('"','').replace(';','')
-    # Authenticated workspaces use a restrained cool charcoal baseline. The public
-    # landing page owns its own red/cream/green palette and overrides this scope.
-    bg='#202123'; panel='#2b2d31'; panel3='#34363b'; sidebar='#252629'; header='#2b2d31'
-    text='#ececf1'; muted='#a8a8ad'
-    font_family=esc(settings['font_family'] or 'Inter')
-    heading_font=esc(settings['heading_font'] or settings['font_family'] or 'Inter')
+    def clean(v, fallback):
+        value=str(v or '').strip()
+        return value if re.fullmatch(r"#[0-9a-fA-F]{6}", value) else fallback
+    def distinct(bg, requested, fallback):
+        requested=clean(requested, fallback)
+        if _contrast_ratio(bg, requested) >= 1.18:
+            return requested
+        candidates=[clean(fallback, '#ffffff'), '#ffffff', '#101828']
+        return max(dict.fromkeys(candidates), key=lambda c:_contrast_ratio(bg,c))
+    bg=clean(settings['background_color'], '#202123')
+    panel=distinct(bg, settings['panel_color'], '#2b2d31')
+    panel3=distinct(panel, settings['background_color'], '#34363b')
+    sidebar=distinct(bg, settings['sidebar_color'], panel)
+    header=distinct(bg, settings['header_color'], panel)
+    text=_best_text(bg, clean(settings['text_color'], '#ececf1'), 4.5)
+    panel_text=_best_text(panel, clean(settings['text_color'], '#ececf1'), 4.5)
+    sidebar_text=_best_text(sidebar, clean(settings['text_color'], '#ececf1'), 4.5)
+    header_text=_best_text(header, clean(settings['text_color'], '#ececf1'), 4.5)
+    muted=_best_text(bg, clean(settings['muted_text_color'], '#a8a8ad'), 3.0)
+    input_text=_best_text(panel3, text, 4.5)
+    primary=distinct(bg, settings['primary_color'], '#3457d5')
+    accent=distinct(bg, settings['accent_color'], '#2457d6')
+    font_family=str(settings['font_family'] or 'Inter').replace('<','').replace('>','').replace(';','').replace('"','')
+    heading_font=str(settings['heading_font'] or settings['font_family'] or 'Inter').replace('<','').replace('>','').replace(';','').replace('"','')
+    radius=max(4,min(28,int(settings['radius_px'] or 12)))
+    button_radius=max(4,min(28,int(settings['button_radius_px'] or 10)))
     bg_path=str(settings.get('background_path','') or '').strip() if hasattr(settings,'get') else ''
-    bg_image=f"body.app-body{{background-image:linear-gradient(180deg,rgba(17,18,20,.72),rgba(17,18,20,.84)),url('/{bg_path}');background-size:cover;background-position:center;background-attachment:fixed;}}" if bg_path else ''
-    css=(f"body.app-body{{--bg:{bg};--bg-soft:#1b1c1e;--panel:{panel};--panel-2:#25272b;--panel-3:{panel3};"
-         f"--primary-navy:{text};--primary-blue:#8f929a;--deep-accent-blue:#a6a8ae;--cool-pale-blue:#2f3136;--soft-white:#f7f7f8;--white:#fff;"
-         f"--primary-text:{text};--muted-text:{muted};--panel-text:{text};--sidebar-text:{text};--header-text:{text};"
-         f"--text-soft:rgba(255,255,255,.05);--text-border:rgba(255,255,255,.12);--text-hover:rgba(255,255,255,.08);"
-         f"--input-text:#f1f1f3;--primary-button-text:#f7f7f8;--sidebar-bg:{sidebar};--header-bg:{header};"
-         f"--font:'{font_family}',Inter,system-ui,sans-serif;--heading-font:'{heading_font}',{font_family},Inter,sans-serif;}}" )
-    extra=settings['custom_css'] or ''
-    if len(extra)>12000 or re.search(r'@import|javascript:|expression\s*\(', extra, re.I):
-        extra=''
-    return css+bg_image+extra
+    bg_image=f"body.app-body{{background-image:linear-gradient(180deg,rgba(0,0,0,.28),rgba(0,0,0,.38)),url('/{bg_path}');background-size:cover;background-position:center;background-attachment:fixed;}}" if bg_path else ''
+    css=(f"body.app-body,body.auth-body:not(.landing-body){{--bg:{bg};--bg-soft:{distinct(bg, bg, '#1b1c1e')};--panel:{panel};--panel-2:{distinct(panel,bg,'#25272b')};--panel-3:{panel3};"
+         f"--primary-navy:{text};--primary-blue:{primary};--deep-accent-blue:{accent};--cool-pale-blue:{distinct(bg,accent,'#dbe7ff')};--soft-white:#f7f7f8;--white:#fff;"
+         f"--primary-text:{text};--muted-text:{muted};--panel-text:{panel_text};--sidebar-text:{sidebar_text};--header-text:{header_text};"
+         f"--text-soft:{_rgba(panel_text,.06)};--text-border:{_rgba(panel_text,.16)};--text-hover:{_rgba(panel_text,.10)};"
+         f"--input-text:{input_text};--primary-button-text:{_best_text(primary,panel_text,4.5)};--sidebar-bg:{sidebar};--header-bg:{header};"
+         f"--font:'{font_family}',Inter,system-ui,sans-serif;--heading-font:'{heading_font}',{font_family},Inter,sans-serif;--radius:{radius}px;--button-radius:{button_radius}px;}}" )
+    extra=str(settings['custom_css'] or '')
+    if len(extra)>12000 or re.search(r'@import|javascript:|expression\s*\(', extra, re.I): extra=''
+    # Hard guarantee against white-on-white (or dark-on-dark) content in common containers.
+    safety=(f"body.app-body .panel,body.app-body .topbar,body.app-body .sidebar,body.app-body .modal-card,body.auth-body:not(.landing-body) .auth-card,body.auth-body:not(.landing-body) .info-card{{color:var(--panel-text);}}"
+            f"body.app-body .panel h1,body.app-body .panel h2,body.app-body .panel h3,body.app-body .panel h4,body.app-body .topbar h1,body.app-body .topbar h2,body.app-body .sidebar h1,body.app-body .sidebar h2,body.auth-body:not(.landing-body) .info-card h2{{color:var(--panel-text);}}"
+            f"body.app-body .panel p,body.app-body .panel td,body.app-body .panel th,body.auth-body:not(.landing-body) .info-card p{{color:var(--panel-text);}}"
+            f"body.app-body a{{color:var(--primary-blue);}}body.app-body .muted{{color:var(--muted-text);}}"
+            f"body.app-body input,body.app-body select,body.app-body textarea{{color:var(--input-text);background:var(--panel-3);}}" )
+    return css+bg_image+safety+extra+user_theme_style(settings)
 
 def theme_preset_style(settings=None) -> str:
     settings=settings or school_settings()
@@ -2305,13 +2532,21 @@ def active_advertisements(limit=4):
 
 def landing_style(settings=None) -> str:
     settings=settings or school_settings()
+    def clean(v, fallback):
+        value=str(v or '').strip()
+        return value if re.fullmatch(r"#[0-9a-fA-F]{6}", value) else fallback
     ff=str(settings['landing_font_family'] or 'Inter').replace('<','').replace('>','').replace(';','').replace('"','')
     hf=str(settings['landing_heading_font'] or ff).replace('<','').replace('>','').replace(';','').replace('"','')
     width=max(900,min(1600,int(settings['landing_content_width'] or 1240)))
     cols=max(1,min(3,int(settings['landing_role_columns'] or 3)))
     hero=str(settings['landing_hero_layout'] or 'split')
     hero_css='grid-template-columns:minmax(0,1.55fr) minmax(260px,.65fr);' if hero=='split' else 'grid-template-columns:1fr;'
-    return f".landing-shell{{width:min({width}px,calc(100% - 48px));}} .landing-hero{{{hero_css}}} .role-grid{{grid-template-columns:repeat({cols},minmax(0,1fr));}} .landing-font-scope{{font-family:'{ff}',Inter,system-ui,sans-serif;}} .landing-heading-scope{{font-family:'{hf}',{ff},Inter,system-ui,sans-serif;}}"
+    bg=clean(settings['landing_background_color'] if 'landing_background_color' in settings.keys() else '#f5efe1', '#f5efe1')
+    panel=clean(settings['landing_panel_color'] if 'landing_panel_color' in settings.keys() else '#ffffff', '#ffffff')
+    text=_best_text(bg, clean(settings['landing_text_color'] if 'landing_text_color' in settings.keys() else '#17231d', '#17231d'), 4.5)
+    panel_text=_best_text(panel, text, 4.5)
+    accent=clean(settings['landing_accent_color'] if 'landing_accent_color' in settings.keys() else '#2457d6', '#2457d6')
+    return f".landing-shell{{width:min({width}px,calc(100% - 48px));}} .landing-hero{{{hero_css}}} .role-grid{{grid-template-columns:repeat({cols},minmax(0,1fr));}} .landing-font-scope{{font-family:'{ff}',Inter,system-ui,sans-serif;--landing-bg:{bg};--landing-panel:{panel};--landing-text:{text};--landing-panel-text:{panel_text};--landing-accent:{accent};}} .landing-heading-scope{{font-family:'{hf}',{ff},Inter,system-ui,sans-serif;}} .landing-body{{background-color:var(--landing-bg);color:var(--landing-text);}} .landing-body .landing-card,.landing-body .date-card,.landing-body .portal-entry-card,.landing-body .landing-deep-about-item{{color:var(--landing-panel-text);background:var(--landing-panel);}} .landing-body a{{color:{accent};}}"
 
 
 def current_landing_url() -> str:
@@ -2334,7 +2569,10 @@ def public_about_sections(settings):
             if not isinstance(item, dict):
                 continue
             title=str(item.get("title", "")).strip()[:160]
-            body=str(item.get("body", "")).strip()
+            # Store/display About copy as plain text with real line breaks. Older
+            # drafts may contain literal HTML <br> tags; normalize those back to
+            # newlines so they never appear visibly in the public story.
+            body=re.sub(r"<br\s*/?>", "\n", str(item.get("body", "")), flags=re.I).strip()
             image=str(item.get("image", "")).strip()[:600]
             caption=str(item.get("caption", "")).strip()[:300]
             layout=item.get("layout", "reading")
@@ -2390,7 +2628,7 @@ def auth_template_context():
     settings=school_settings()
     return {
         "current_user": current_user(), "school_settings": settings, "portal_title": settings["school_name"], "theme_color": settings["primary_color"], "all_roles": ALL_PORTAL_ROLES, "public_roles": PUBLIC_ROLES,
-        "theme_style": theme_style(settings), "theme_preset_style": theme_preset_style(settings), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(), "about_sections": public_about_sections(settings), "about_first_image": public_about_first_image(settings),
+        "theme_style": theme_style(settings), "user_theme_style": user_theme_style(settings), "theme_preset_style": theme_preset_style(settings), "ui_language": ((current_user()["ui_language"] if current_user() and "ui_language" in current_user().keys() else "en") or "en").lower(), "landing_style": landing_style(settings), "portal_landing_url": current_landing_url(), "about_sections": public_about_sections(settings), "about_first_image": public_about_first_image(settings),
         "active_adverts": active_advertisements(),
         "welcome_animation": bool(settings["welcome_animation_enabled"]), "welcome_animation_name": settings["welcome_animation_name"], "welcome_animation_duration_ms": int(settings["welcome_animation_duration_ms"] or 2200), "welcome_animation_style": settings["welcome_animation_style"] if "welcome_animation_style" in settings.keys() else "clean",
         "important_dates": important_dates(12, landing=request.path == '/'),
@@ -2427,6 +2665,7 @@ def workspace_for(role: str) -> str:
         "Parent": "Parent Dashboard",
         "Librarian": "Library Workspace",
         "Staff": "Staff Workspace",
+        "Support Staff": "Support Staff Workspace",
     }.get(role, "School Portal System")
 
 
@@ -2546,6 +2785,10 @@ def can_access_student(student_id: int, *, write: bool=False) -> bool:
     role=user["role"]
     if role in {"Admin", "ICT", "Finance", "Librarian"}:
         return not write or role in {"Admin", "ICT"}
+    if role == "Teacher":
+        direct=bool(q("SELECT 1 FROM student_teacher_assignments WHERE student_id=? AND teacher_user_id=? AND active=1 LIMIT 1", (student_id,user["id"]), one=True))
+        class_teacher=bool(q("SELECT 1 FROM class_teacher_assignments c JOIN students s ON s.grade=c.class_name WHERE c.teacher_user_id=? AND s.id=? AND s.active=1 LIMIT 1", (user["id"],student_id), one=True))
+        return direct or class_teacher
     if role == "Student":
         return bool(user["student_id"] == student_id and not write)
     if role == "Parent":
@@ -3068,14 +3311,22 @@ def login():
             execute("UPDATE users SET qr_login_enabled=1,last_password_login_at=CURRENT_TIMESTAMP,qr_access_token=COALESCE(NULLIF(qr_access_token,''),lower(hex(randomblob(16)))) WHERE id=?", (user["id"],))
             user=q("SELECT * FROM users WHERE id=?",(user["id"],),one=True)
         login_id=record_login_event(user,'Password')
+        # A browser may still carry the previous account's server-backed auth cookie.
+        # Revoke it and issue a fresh ticket for the identity that just passed the
+        # password check, then explicitly replace the cookie on the redirect. Without
+        # this, a teacher can appear to log in correctly and be silently rehydrated as
+        # the previous Admin account on the very next request.
+        old_ticket=request.cookies.get(_AUTH_TICKET_COOKIE, '')
+        _revoke_auth_ticket(old_ticket)
+        fresh_ticket=_issue_auth_ticket(user["id"])
         session.clear(); session.permanent=True
         session["user_id"]=user["id"]; session["active_portal_role"]=user["role"]; session["login_event_id"]=login_id; session["login_location_pending"]=1
-        session["auth_ticket"] = _issue_auth_ticket(user["id"])
-        if next_url:
-            return redirect(next_url)
-        if learning_login:
-            return redirect(url_for("online_classes"))
-        return redirect(specialized_dashboard_for(user))
+        session["auth_ticket"] = fresh_ticket
+        destination = next_url or (url_for("online_classes") if learning_login else specialized_dashboard_for(user))
+        response=redirect(destination)
+        response.set_cookie(_AUTH_TICKET_COOKIE, fresh_ticket, max_age=_AUTH_COOKIE_MAX_AGE, httponly=True, secure=app.config.get("SESSION_COOKIE_SECURE", False), samesite="Lax", path="/")
+        response.set_cookie(_AUTH_COOKIE, _auth_token_for(user["id"]), max_age=_AUTH_COOKIE_MAX_AGE, httponly=True, secure=app.config.get("SESSION_COOKIE_SECURE", False), samesite="Lax", path="/")
+        return response
     return render_template("login.html", portal_title=settings["school_name"], school_settings=settings, theme_color=settings["primary_color"], login_role=role, next_url=next_url, login_context=login_context, success=("Password reset successfully. You can now sign in with your new password." if request.args.get("reset")=="success" else None), setup_required=not auth_initialized(), e_learning_login=(role=="E-Learning"), library_login=(role=="Library"))
 
 
@@ -3553,7 +3804,10 @@ def teacher_roster():
 def performance_view():
     user=current_user(); leadership=(user['leadership_role'] or '').lower()
     if user['role'] not in {'Admin','ICT','Teacher'} and leadership not in {'dean','hod','deputy','deputy principal','deputy head','principal'}: abort(403)
-    classes=sorted({r['grade'] for r in q("SELECT DISTINCT grade FROM students WHERE active=1")})
+    if user['role']=='Teacher' and not (user['leadership_role'] or '').lower() in {'dean','hod','deputy','deputy principal','deputy head','principal'}:
+        classes=sorted(set([r['class_name'] for r in q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=?",(user['id'],))] + [r['class_name'] for r in q("SELECT class_name FROM teacher_assignments WHERE teacher_user_id=? AND active=1",(user['id'],))]))
+    else:
+        classes=sorted({r['grade'] for r in q("SELECT DISTINCT grade FROM students WHERE active=1")})
     selected=request.args.get('class_name','').strip() or (classes[0] if classes else '')
     selected_subject=request.args.get('subject','').strip()
     senior = user['role'] in {'Admin','ICT'} or leadership in {'dean','hod','deputy','deputy principal','deputy head','principal'}
@@ -3571,7 +3825,11 @@ def performance_view():
     subjects=q("SELECT DISTINCT subject FROM markbook_entries WHERE class_name=? ORDER BY subject",(selected,)) if selected else []
     if user['role']=='Teacher' and not senior and selected not in assigned_classes:
         subjects=[{'subject':x['subject']} for x in q("SELECT DISTINCT subject FROM teacher_assignments WHERE teacher_user_id=? AND class_name=? AND active=1 ORDER BY subject",(user['id'],selected))]
-    rows=markbook_class_summary(selected,selected_subject) if selected else []
+    allowed_ids=None
+    if user['role']=='Teacher' and not senior and selected:
+        allowed_rows=q("SELECT DISTINCT s.id FROM students s LEFT JOIN student_teacher_assignments sta ON sta.student_id=s.id AND sta.teacher_user_id=? AND sta.active=1 LEFT JOIN class_teacher_assignments cta ON cta.class_name=s.grade AND cta.teacher_user_id=? WHERE s.active=1 AND s.grade=? AND (sta.id IS NOT NULL OR cta.id IS NOT NULL)",(user['id'],user['id'],selected))
+        allowed_ids=[r['id'] for r in allowed_rows]
+    rows=markbook_class_summary(selected,selected_subject,allowed_ids) if selected else []
     return render_template('performance.html',settings=school_settings(),classes=classes,selected=selected,selected_subject=selected_subject,rows=rows,subjects=subjects,actor_name=user['full_name'],role=user['role'],leadership=user['leadership_role'],senior=senior)
 
 @app.route("/reception")
@@ -3650,7 +3908,7 @@ def reception_register_staff():
     name=request.form.get('full_name','').strip(); username=request.form.get('username','').strip().lower(); password=request.form.get('password','').strip()
     if not name or not username or len(password)<4: flash('Staff name, username and a temporary password are required.','danger'); return redirect(url_for('reception_dashboard'))
     if q("SELECT id FROM users WHERE lower(username)=?",(username,),one=True): flash('That username is already in use.','danger'); return redirect(url_for('reception_dashboard'))
-    code=staff_code_for(role,workspace); unit=request.form.get('school_unit','').strip() or school_settings()['school_name']; loc=request.form.get('school_location','').strip(); uid=execute("INSERT INTO users(full_name,username,password_hash,role,active,title,department,phone,gender,workspace_type,school_unit,school_location,reception_enabled,position_code,staff_code) VALUES(?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)",(name,username,generate_password_hash(password),role,request.form.get('title','').strip(),request.form.get('department','').strip(),request.form.get('phone','').strip(),request.form.get('gender','').strip(),workspace,unit,loc,1 if workspace=='Reception' else 0,code,code)); execute("UPDATE users SET qr_access_token=? WHERE id=?",(uuid.uuid4().hex,uid)); audit(actor['id'],actor['full_name'],'Reception staff registration',f'{name} registered with staff code {code}.'); flash(f'{name} registered. Staff code: {code}.','success'); return redirect(url_for('reception_dashboard'))
+    code=staff_code_for(role,workspace); unit=request.form.get('school_unit','').strip() or school_settings()['school_name']; loc=request.form.get('school_location','').strip(); uid=execute("INSERT INTO users(full_name,username,password_hash,role,active,title,department,phone,gender,workspace_type,school_unit,school_location,reception_enabled,position_code,staff_code) VALUES(?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)",(name,username,generate_password_hash(password),role,request.form.get('title','').strip(),request.form.get('department','').strip(),request.form.get('phone','').strip(),request.form.get('gender','').strip(),workspace,unit,loc,1 if workspace=='Reception' else 0,code,code)); execute("UPDATE users SET qr_access_token=?, qr_login_enabled=1 WHERE id=?",(uuid.uuid4().hex,uid)); audit(actor['id'],actor['full_name'],'Reception staff registration',f'{name} registered with staff code {code}.'); flash(f'{name} registered. Staff code: {code}.','success'); return redirect(url_for('reception_dashboard'))
 
 @app.route("/reception/face/enrol",methods=["POST"])
 @login_required
@@ -3688,8 +3946,10 @@ def reception_face_verify():
         matched_user=q("SELECT * FROM users WHERE student_id=? AND active=1 AND role='Student' ORDER BY id LIMIT 1",(best['sid'],),one=True)
     if not matched_user: return jsonify({'ok':False,'message':'The recognized person has no active system account.'}),403
     now=datetime.utcnow().isoformat(timespec='seconds')
-    execute("INSERT INTO attendance_events(user_id,action,method,event_at,source,device_note) VALUES(?,?,?,?,?,?)",(matched_user['id'],action, 'Face recognition', now,'online',f'face-distance={best_dist:.4f}'))
-    return jsonify({'ok':True,'name':matched_user['full_name'],'action':action,'event_at':now,'message':f'{matched_user["full_name"]} checked {"in" if action=="IN" else "out"} successfully.'})
+    result=record_account_attendance(matched_user,action,now,'online','Face recognition',None,None,None,f'face-distance={best_dist:.4f}','')
+    if not result.get('ok'):
+        return jsonify(result),409
+    return jsonify({'ok':True,'name':matched_user['full_name'],'action':action,'event_at':result['event_at'],'message':result['message']})
 
 @app.route("/reception/face/profiles")
 @login_required
@@ -3849,9 +4109,17 @@ def record_account_attendance(user,action,event_at=None,source='online',method='
             pass
     if attendance_day_is_closed(stamp): return {'ok':False,'message':f'Attendance for {attendance_date_from_value(stamp)} is closed by the school.','closed':True}
     location_label=_attendance_event_location(latitude,longitude,location_label)
-    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,accuracy,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(user['id'],action,method,'',stamp,source,latitude,longitude,accuracy,None,device_note,location_label))
+    note=str(device_note or '').strip()[:500]
+    if latitude is None or longitude is None:
+        note = ((note + ' · ') if note else '') + 'Location not captured by client.'
+    if not note or note.strip() in {'staff-qr','phone-camera'}:
+        note = ((note + ' · ') if note else '') + 'Device details were not supplied by client.'
+    ua=(request.headers.get('User-Agent') or '').strip()
+    if ua and 'Browser:' not in note:
+        note += ' Browser: ' + re.sub(r'\s+',' ',ua)[:220]
+    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,accuracy,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(user['id'],action,method,'',stamp,source,latitude,longitude,accuracy,None,note,location_label))
     position=user['title'] or user['role'] or 'Staff'
-    notify_users(attendance_admin_ids(),f'Attendance: {user["full_name"]} checked {"IN" if action=="IN" else "OUT"}',f'{user["full_name"]} ({position}) checked {"in" if action=="IN" else "out"} at {_local_iso(_parse_stored_event(stamp)) or stamp}. Location: {location_label or "Exact coordinates captured; address lookup unavailable"}.',url_for('admin_attendance'))
+    notify_users(attendance_admin_ids(),f'Attendance: {user["full_name"]} checked {"IN" if action=="IN" else "OUT"}',f'{user["full_name"]} ({position}) checked {"in" if action=="IN" else "out"} at {_local_iso(_parse_stored_event(stamp)) or stamp}. Location: {location_label or "Exact coordinates captured; address lookup unavailable"}.',url_for('admin_dashboard')+'#admin-overview-panel')
     return {'ok':True,'message':f'{user["full_name"]} checked {"in" if action=="IN" else "out"}.','action':action,'event_at':stamp,'location_label':location_label,'dashboard':specialized_dashboard_for(user)}
 
 @app.route("/attendance")
@@ -3885,10 +4153,10 @@ def attendance_record():
     stamp=event_at or datetime.utcnow().isoformat(timespec='seconds')
     if attendance_day_is_closed(stamp): return jsonify({'ok':False,'message':f'Attendance for {attendance_date_from_value(stamp)} is closed by the school.'}),409
     lat=request.form.get('latitude',type=float); lon=request.form.get('longitude',type=float); accuracy=request.form.get('accuracy',type=float)
-    resolved_location=_attendance_event_location(lat,lon,request.form.get('location_label','').strip())
-    execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,accuracy,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(current_user()['id'],action,'QR',token,stamp,request.form.get('source','online'),lat,lon,accuracy,request.form.get('speed_kph',type=float),request.form.get('device_note',''),resolved_location))
-    notify_users(attendance_admin_ids(),f'Attendance: {current_user()["full_name"]} checked {"IN" if action=="IN" else "OUT"}',f'{current_user()["full_name"]} checked {"in" if action=="IN" else "out"} at {_local_iso(_parse_stored_event(stamp)) or stamp}. Location: {resolved_location or "Exact coordinates captured; address lookup unavailable"}.',url_for('admin_attendance'))
-    return jsonify({'ok':True,'message':f'Checked {"in" if action=="IN" else "out"}.','event_at':stamp,'location_label':resolved_location})
+    result=record_account_attendance(current_user(),action,stamp,request.form.get('source','online'),'QR',lat,lon,accuracy,request.form.get('device_note',''),request.form.get('location_label','').strip())
+    if not result.get('ok'):
+        return jsonify(result), 409
+    return jsonify({'ok':True,'message':result['message'],'event_at':result['event_at'],'location_label':result.get('location_label',''),'user_id':current_user()['id'],'user_name':current_user()['full_name'],'role':current_user()['role']})
 
 @app.route("/attendance/sync",methods=['POST'])
 @login_required
@@ -3899,7 +4167,8 @@ def attendance_sync():
     for item in events[:100]:
         if item.get('token')!=office['token'] or str(item.get('action','')).upper() not in {'IN','OUT'}: continue
         if attendance_day_is_closed(item.get('event_at')): continue
-        execute("INSERT INTO attendance_events(user_id,action,method,office_token,event_at,source,latitude,longitude,accuracy,speed_kph,device_note,location_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(current_user()['id'],str(item['action']).upper(),'QR',office['token'],item.get('event_at') or None,'offline-sync',item.get('latitude'),item.get('longitude'),item.get('accuracy'),item.get('speed_kph'),item.get('device_note',''),_attendance_event_location(item.get('latitude'),item.get('longitude'),item.get('location_label','')))); saved+=1
+        result=record_account_attendance(current_user(),str(item['action']).upper(),item.get('event_at'),'offline-sync','QR',_payload_float(item,'latitude'),_payload_float(item,'longitude'),_payload_float(item,'accuracy'),item.get('device_note','offline qr'),item.get('location_label',''))
+        if result.get('ok'): saved+=1
     return jsonify({'ok':True,'saved':saved})
 
 
@@ -3907,7 +4176,7 @@ SYSTEM_SEARCH_INDEX = [
     {"title":"Home / QR attendance", "description":"Scan or manually record staff check-in and check-out", "url":"/admin-dashboard", "roles":{"Admin","ICT"}, "keywords":"home qr attendance check in check out login offline manual"},
     {"title":"View all employees", "description":"Staff directory, edit, add, delete and attendance history", "url":"/admin/employees", "roles":{"Admin","ICT"}, "keywords":"employees staff people users edit delete add attendance"},
     {"title":"View all learners", "description":"Student directory and learner records", "url":"/admin/learners", "roles":{"Admin","ICT"}, "keywords":"students learners pupils people access directory"},
-    {"title":"Attendance", "description":"Day, week, month, 3 months, 6 months, 8 months and year reports", "url":"/admin/attendance", "roles":{"Admin","ICT"}, "keywords":"attendance qr checkin checkout signed in signed out missed absence reports"},
+    {"title":"Staff attendance", "description":"Review staff check-in, check-out, location, capture and absence reasons", "url":"/notifications?attendance_range=day#staff-attendance", "roles":{"Admin","ICT"}, "keywords":"attendance qr checkin checkout signed in signed out missed absence reports staff notifications"},
     {"title":"Staff timetable", "description":"Schedules for teachers and relevant staff", "url":"/staff/timetable", "roles":{"Admin","ICT","Teacher","Finance","Driver","Reception","Librarian"}, "keywords":"timetable schedule staff teacher class time"},
     {"title":"Reminders", "description":"Operational reminders and due work", "url":"/staff/reminders", "roles":{"Admin","ICT","Teacher","Finance","Driver","Reception","Librarian"}, "keywords":"reminders tasks alerts due"},
     {"title":"School settings", "description":"School identity, admissions, fees and institution configuration", "url":"/admin-dashboard#settings-panel", "roles":{"Admin","ICT"}, "keywords":"settings school setting configuration fees admissions school name institution"},
@@ -3977,25 +4246,33 @@ def admin_attendance_live():
     local_today=_local_now_naive().date().isoformat()
     today_start,today_end=attendance_day_bounds_utc(local_today)
     rows=q("""
-        SELECT u.id,u.full_name,u.role,COALESCE(NULLIF(u.title,''),u.role) AS title,
+        SELECT u.id,u.full_name,u.role,COALESCE(NULLIF(u.title,''),u.role) AS title,u.department,u.staff_category,u.workspace_type,
                (SELECT a.event_at FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS sign_in_at,
                (SELECT a.event_at FROM attendance_events a WHERE a.user_id=u.id AND a.action='OUT' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at DESC,a.id DESC LIMIT 1) AS sign_out_at,
                (SELECT a.location_label FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? AND a.location_label!='' ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS location,
                (SELECT a.latitude FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS latitude,
                (SELECT a.longitude FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS longitude,
-               (SELECT a.accuracy FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS accuracy
+               (SELECT a.accuracy FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS accuracy,
+               (SELECT a.device_note FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS device_note
         FROM users u
         WHERE u.active=1 AND u.role NOT IN ('Student','Parent','System')
         ORDER BY u.full_name
-    """,(today_start,today_end,today_start,today_end,today_start,today_end,today_start,today_end,today_start,today_end))
+    """,(today_start,today_end,today_start,today_end,today_start,today_end,today_start,today_end,today_start,today_end,today_start,today_end,today_start,today_end))
     out=[]
+    day_closed=attendance_day_is_closed(local_today)
     for r in rows:
         item=dict(r)
         item['sign_in_local']=_local_iso(_parse_stored_event(item['sign_in_at'])) if item.get('sign_in_at') else None
         item['sign_out_local']=_local_iso(_parse_stored_event(item['sign_out_at'])) if item.get('sign_out_at') else None
-        # Role is always read from the staff account itself; never infer it from the scanner/admin account.
+        item['status_label'] = ('OUT' if item.get('sign_out_at') else 'IN') if item.get('sign_in_at') else ('Missed' if day_closed else 'Not signed in')
+        item['location_display']=item.get('location') or ((f"{float(item['latitude']):.5f}, {float(item['longitude']):.5f}") if item.get('latitude') is not None and item.get('longitude') is not None else 'Not captured')
+        item['capture_display']=item.get('device_note') or 'Device details not captured'
+        item['account_role_label']=item.get('staff_category') or item.get('role') or 'Staff'
+        # Role/category comes from the employee account; never infer it from the scanner/admin account.
         out.append(item)
-    return jsonify({'ok':True,'date':local_today,'rows':out})
+    response=jsonify({'ok':True,'date':local_today,'rows':out})
+    response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0'
+    return response
 
 @app.route('/admin/attendance/manual', methods=['POST'])
 @login_required
@@ -4016,7 +4293,7 @@ def admin_manual_attendance():
         return redirect(url_for('admin_dashboard'))
     result=record_account_attendance(target,action,stamp,'manual','Manual',None,None,None,note,location_label)
     if result.get('ok'):
-        notify_users(attendance_admin_ids(),f'Attendance: {target["full_name"]} checked {"IN" if action=="IN" else "OUT"}',f'Manual attendance recorded for {target["full_name"]}. Location: {location_label or "Not supplied"}.',url_for('admin_attendance'))
+        notify_users(attendance_admin_ids(),f'Attendance: {target["full_name"]} checked {"IN" if action=="IN" else "OUT"}',f'Manual attendance recorded for {target["full_name"]}. Location: {location_label or "Not supplied"}.',url_for('admin_dashboard')+'#admin-overview-panel')
         flash(f'{target["full_name"]} marked {"in" if action=="IN" else "out"}.','success')
     else:
         flash(result.get('message','Attendance could not be recorded.'),'danger')
@@ -4436,6 +4713,33 @@ def dashboard():
 # Legacy teacher implementation retained below for compatibility with existing
 # links/bookmarks; /dashboard itself is now only the role dispatcher.
 
+def admin_root_user():
+    uid=flask_session.get("user_id")
+    if not uid:
+        return None
+    return q("SELECT id,full_name,role,active FROM users WHERE id=? AND role='Admin' AND active=1 LIMIT 1", (uid,), one=True)
+
+def admin_root_required(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        actor=admin_root_user()
+        if not actor:
+            abort(403)
+        g.admin_actor=actor
+        return view(*args, **kwargs)
+    return wrapper
+
+@app.route("/admin/backup")
+@login_required
+@admin_root_required
+def admin_backup_center():
+    try:
+        settings = school_settings()
+    except Exception:
+        settings = {"school_name": "School Portal System"}
+    return render_template("admin_backup.html", settings=settings)
+
+
 @app.route("/admin/dashboard")
 @login_required
 @role_required("Admin")
@@ -4540,18 +4844,26 @@ def admin_dashboard():
     local_today=(datetime.utcnow()+KENYA_TZ_OFFSET).date().isoformat()
     today_start,today_end=attendance_day_bounds_utc(local_today)
     today_attendance=q("""
-        SELECT u.id,u.full_name,u.role,COALESCE(u.title,u.role) AS title,
+        SELECT u.id,u.full_name,u.role,COALESCE(u.title,u.role) AS title,u.department,u.staff_category,u.workspace_type,
                (SELECT a.event_at FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS sign_in_at,
                (SELECT a.event_at FROM attendance_events a WHERE a.user_id=u.id AND a.action='OUT' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at DESC,a.id DESC LIMIT 1) AS sign_out_at,
-               (SELECT a.location_label FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? AND a.location_label!='' ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS location
+               (SELECT a.location_label FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? AND a.location_label!='' ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS location,
+               (SELECT a.latitude FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS latitude,
+               (SELECT a.longitude FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS longitude,
+               (SELECT a.accuracy FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS accuracy,
+               (SELECT a.device_note FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS device_note
         FROM users u
         WHERE u.active=1 AND u.role NOT IN ('Student','Parent','System')
         ORDER BY u.full_name
-    """,(today_start,today_end,today_start,today_end,today_start,today_end))
+    """,(today_start,today_end,today_start,today_end,today_start,today_end,today_start,today_end,today_start,today_end,today_start,today_end,today_start,today_end))
     today_attendance=[dict(r) for r in today_attendance]
+    today_day_closed=attendance_day_is_closed(local_today)
     for r in today_attendance:
         r['sign_in_local']=_local_iso(_parse_stored_event(r['sign_in_at'])) if r.get('sign_in_at') else None
         r['sign_out_local']=_local_iso(_parse_stored_event(r['sign_out_at'])) if r.get('sign_out_at') else None
+        r['status_label'] = ('OUT' if r.get('sign_out_at') else 'IN') if r.get('sign_in_at') else ('Missed' if today_day_closed else 'Not signed in')
+        r['location_display']=r.get('location') or (f"{float(r['latitude']):.5f}, {float(r['longitude']):.5f}" if r.get('latitude') is not None and r.get('longitude') is not None else 'Not captured')
+        r['capture_display']=r.get('device_note') or 'Device details not captured'
     analytics_max_employee=max([int(r['c'] or 0) for r in categories['employees']] or [1])
     analytics_max_grade=max([int(r['c'] or 0) for r in categories['students']] or [1])
     analytics_max_payment=max([int(r['c'] or 0) for r in categories['payments']] or [1])
@@ -4591,6 +4903,7 @@ def admin_dashboard():
         archived_users=q("SELECT id, full_name, username, role, title, department, archived_at FROM users WHERE active=0 AND role!='System' ORDER BY archived_at DESC, full_name"),
         finance_closings=q("SELECT c.*,u.full_name AS submitted_name FROM finance_closings c JOIN users u ON u.id=c.submitted_by ORDER BY c.submitted_at DESC,c.id DESC LIMIT 20"),
         today_attendance=today_attendance,
+        today_day_closed=today_day_closed,
         local_today=local_today,
         analytics_max_employee=analytics_max_employee,
         analytics_max_grade=analytics_max_grade,
@@ -4600,12 +4913,111 @@ def admin_dashboard():
     )
 
 
-def safe_markbook_class_summary(class_name, subject=None):
+def markbook_class_summary(class_name, subject=None, student_ids=None):
+    """Compute weighted assessment averages and positions for one class/subject.
+    When student_ids is supplied, the result is restricted to that exact roster.
+    """
+    if not class_name:
+        return []
+    params=[class_name]
+    where=["m.class_name = ?", "s.active=1"]
+    if subject:
+        where.append("lower(trim(m.subject)) = lower(trim(?))")
+        params.append(subject)
+    if student_ids is not None:
+        ids=[int(x) for x in student_ids if str(x).isdigit()]
+        if not ids:
+            return []
+        where.append("s.id IN ("+','.join('?' for _ in ids)+")")
+        params.extend(ids)
+    rows=q(f"""SELECT m.student_id,s.full_name,s.admission_no,m.mark,m.max_mark,COALESCE(m.weight,100) AS weight
+              FROM markbook_entries m JOIN students s ON s.id=m.student_id
+              WHERE {' AND '.join(where)} ORDER BY s.full_name,m.created_at,m.id""",tuple(params))
+    grouped={}
+    for r in rows:
+        sid=r['student_id']; max_mark=float(r['max_mark'] or 0); mark=float(r['mark'] or 0); weight=float(r['weight'] or 100)
+        if max_mark <= 0 or weight <= 0: continue
+        item=grouped.setdefault(sid,{'student_id':sid,'full_name':r['full_name'],'admission_no':r['admission_no'],'weighted':0.0,'weights':0.0})
+        item['weighted'] += max(0.0,min(mark,max_mark))/max_mark*100.0*weight
+        item['weights'] += weight
+    result=[]
+    for item in grouped.values():
+        score=item['weighted']/item['weights'] if item['weights'] else 0.0
+        grade='A' if score>=80 else ('B' if score>=70 else ('C' if score>=60 else ('D' if score>=50 else 'E')))
+        result.append({'student_id':item['student_id'],'full_name':item['full_name'],'admission_no':item['admission_no'],'score':score,'grade':grade})
+    result.sort(key=lambda x:(-x['score'],x['full_name'].lower()))
+    last_score=None; position=0
+    for idx,row in enumerate(result,1):
+        if last_score is None or abs(row['score']-last_score)>1e-9: position=idx
+        row['position']=position; last_score=row['score']
+    return result
+
+
+def safe_markbook_class_summary(class_name, subject=None, student_ids=None):
     try:
-        return markbook_class_summary(class_name, subject)
+        return markbook_class_summary(class_name, subject, student_ids)
     except Exception as exc:
         app.logger.exception("Non-fatal teacher markbook read failure: %s", exc)
+        record_system_error(source='server', message='Teacher markbook summary failed', error=exc, status_code=500)
         return []
+
+
+@app.route("/teacher/markbook", methods=["POST"])
+@login_required
+def teacher_markbook_save():
+    user=current_user()
+    if user['role'] not in {'Teacher','Admin'}: abort(403)
+    class_name=request.form.get('class_name','').strip(); subject=request.form.get('subject','').strip(); assessment=request.form.get('assessment','').strip()
+    try: max_mark=float(request.form.get('max_mark') or 100); weight=float(request.form.get('weight') or 100)
+    except ValueError: abort(400, 'Invalid markbook settings.')
+    if not class_name or not subject or not assessment or max_mark<=0 or weight<=0: abort(400, 'Class, subject, assessment, maximum mark and weight are required.')
+    if user['role']=='Teacher':
+        class_teacher=bool(q("SELECT 1 FROM class_teacher_assignments WHERE teacher_user_id=? AND class_name=? LIMIT 1",(user['id'],class_name),one=True))
+        assigned=bool(q("SELECT 1 FROM teacher_assignments WHERE teacher_user_id=? AND class_name=? AND active=1 AND lower(trim(subject))=lower(trim(?)) LIMIT 1",(user['id'],class_name,subject),one=True))
+        if not (class_teacher or assigned): abort(403)
+    allowed = q("""SELECT DISTINCT s.id FROM students s
+                   LEFT JOIN student_teacher_assignments sta ON sta.student_id=s.id AND sta.teacher_user_id=? AND sta.active=1
+                   LEFT JOIN class_teacher_assignments cta ON cta.class_name=s.grade AND cta.teacher_user_id=?
+                   WHERE s.active=1 AND s.grade=? AND (sta.id IS NOT NULL OR cta.id IS NOT NULL)""",(user['id'],user['id'],class_name)) if user['role']=='Teacher' else q("SELECT id FROM students WHERE active=1 AND grade=?",(class_name,))
+    allowed_ids={int(r['id']) for r in allowed}
+    saved=0
+    for key,value in request.form.items():
+        if not key.startswith('mark_') or value in ('',None): continue
+        try: sid=int(key[5:]); mark=float(value)
+        except ValueError: continue
+        if sid not in allowed_ids or mark<0 or mark>max_mark: continue
+        existing=q("SELECT id FROM markbook_entries WHERE teacher_user_id=? AND student_id=? AND class_name=? AND lower(trim(subject))=lower(trim(?)) AND assessment=? ORDER BY id DESC LIMIT 1",(user['id'],sid,class_name,subject,assessment),one=True)
+        if existing:
+            execute("UPDATE markbook_entries SET mark=?,max_mark=?,weight=?,status='Submitted' WHERE id=?",(mark,max_mark,weight,existing['id']))
+        else:
+            execute("INSERT INTO markbook_entries(teacher_user_id,class_name,subject,student_id,assessment,mark,max_mark,status,weight) VALUES(?,?,?,?,?,?,?,?,?)",(user['id'],class_name,subject,sid,assessment,mark,max_mark,'Submitted',weight))
+        saved+=1
+    flash('Saved %d mark%s for %s.' % (saved, 's' if saved != 1 else '', assessment), 'success')
+    return redirect('/teacher/dashboard#markbook')
+
+
+@app.route("/teacher/markbook/summary")
+@login_required
+def teacher_markbook_summary():
+    user=current_user()
+    if user['role'] not in {'Teacher','Admin'}: abort(403)
+    class_name=request.args.get('class_name','').strip()
+    subject=request.args.get('subject','').strip()
+    student_ids=None
+    if user['role']=='Teacher':
+        classes=[r['class_name'] for r in q("SELECT class_name FROM class_teacher_assignments WHERE teacher_user_id=?",(user['id'],))]
+        classes += [r['class_name'] for r in q("SELECT class_name FROM teacher_assignments WHERE teacher_user_id=? AND active=1",(user['id'],))]
+        classes += [r['class_name'] for r in q("SELECT DISTINCT class_name FROM student_teacher_assignments WHERE teacher_user_id=? AND active=1",(user['id'],)) if r['class_name']]
+        if not class_name: class_name=sorted(set(classes))[0] if classes else ''
+        allowed_classes=set(classes)
+        if class_name not in allowed_classes: abort(403)
+        ids=q("""SELECT DISTINCT s.id FROM students s
+                LEFT JOIN student_teacher_assignments sta ON sta.student_id=s.id AND sta.teacher_user_id=? AND sta.active=1
+                LEFT JOIN class_teacher_assignments cta ON cta.class_name=s.grade AND cta.teacher_user_id=?
+                WHERE s.active=1 AND s.grade=? AND (sta.id IS NOT NULL OR cta.id IS NOT NULL)""",(user['id'],user['id'],class_name))
+        student_ids=[r['id'] for r in ids]
+    rows=safe_markbook_class_summary(class_name,subject,student_ids)
+    return render_template('performance.html',settings=school_settings(),classes=[class_name] if class_name else [],selected=class_name,selected_subject=subject,rows=rows,subjects=q("SELECT DISTINCT subject FROM markbook_entries WHERE class_name=? ORDER BY subject",(class_name,)) if class_name else [],actor_name=user['full_name'],role=user['role'],leadership=user['leadership_role'],senior=user['role'] in {'Admin','ICT'})
 
 
 @app.route("/teacher/dashboard")
@@ -4632,7 +5044,7 @@ def teacher_dashboard():
             FROM students s
             LEFT JOIN student_teacher_assignments sta ON sta.student_id=s.id AND sta.teacher_user_id=? AND sta.active=1
             LEFT JOIN class_teacher_assignments cta ON cta.class_name=s.grade AND cta.teacher_user_id=?
-            WHERE s.active=1 AND (s.grade IN ({placeholders}) OR sta.id IS NOT NULL OR cta.id IS NOT NULL)
+            WHERE s.active=1 AND (sta.id IS NOT NULL OR cta.id IS NOT NULL)
             ORDER BY s.grade,s.full_name""",(user["id"],user["id"],*classes))
     elif user["role"] in {"Admin","ICT"}:
         students=q("SELECT s.id,s.full_name,s.admission_no,s.grade,s.balance,s.fee_assessed_total,s.payment_status,CASE WHEN s.balance<=0 THEN 'Paid' WHEN s.fee_assessed_total>0 AND s.balance<s.fee_assessed_total THEN 'Partial' ELSE 'Unpaid' END AS payment_bucket,COUNT(ss.id) AS subject_count FROM students s LEFT JOIN student_subjects ss ON ss.student_id=s.id AND ss.status='Approved' WHERE s.active=1 GROUP BY s.id ORDER BY s.grade,s.full_name")
@@ -4642,11 +5054,19 @@ def teacher_dashboard():
     schemes=safe_q("SELECT * FROM scheme_of_work WHERE teacher_user_id=? ORDER BY updated_at DESC,id DESC LIMIT 8",(user['id'],)) if user['role']=='Teacher' else []
     summaries={}
     for cls in classes[:12]:
+        if user['role']=='Teacher':
+            allowed_rows=safe_q("""SELECT DISTINCT s.id FROM students s
+                LEFT JOIN student_teacher_assignments sta ON sta.student_id=s.id AND sta.teacher_user_id=? AND sta.active=1
+                LEFT JOIN class_teacher_assignments cta ON cta.class_name=s.grade AND cta.teacher_user_id=?
+                WHERE s.active=1 AND s.grade=? AND (sta.id IS NOT NULL OR cta.id IS NOT NULL)""",(user['id'],user['id'],cls))
+            allowed_ids=[r['id'] for r in allowed_rows]
+        else:
+            allowed_ids=None
         if cls in class_teacher_classes:
-            summaries[cls]=safe_markbook_class_summary(cls)
+            summaries[cls]=safe_markbook_class_summary(cls,None,allowed_ids)
         else:
             teacher_subject=safe_q("SELECT subject FROM teacher_assignments WHERE teacher_user_id=? AND class_name=? AND active=1 ORDER BY subject LIMIT 1",(user['id'],cls),one=True) if user['role']=='Teacher' else None
-            summaries[cls]=safe_markbook_class_summary(cls,teacher_subject['subject']) if teacher_subject else []
+            summaries[cls]=safe_markbook_class_summary(cls,teacher_subject['subject'],allowed_ids) if teacher_subject else []
     return render_template("teacher_dashboard_pro.html",settings=settings,school_settings=settings,actor_name=user["full_name"],role=user["role"],assignments=assignments,classes=classes,students=students,latest_marks=latest_marks,events=events,workspace_type=workspace_type_for_user(user),upcoming=upcoming,schemes=schemes,class_teacher_classes=class_teacher_classes,mark_summaries=summaries,nav_items=navigation_items("Teacher",settings))
 
 @app.route("/teacher/scheme-of-work", methods=["GET", "POST"])
@@ -4839,7 +5259,9 @@ def institution_save():
             for item in raw_sections:
                 if not isinstance(item,dict): continue
                 title=str(item.get("title","")).strip()[:160]
-                body=str(item.get("body","")).strip()
+                body=str(item.get("body","")).replace("\r\n","\n").replace("\r","\n")
+                body=re.sub(r"<br\s*/?>", "\n", body, flags=re.I)
+                body=re.sub(r"<[^>]+>", "", body).strip()
                 image=str(item.get("image","")).strip()[:600]
                 caption=str(item.get("caption","")).strip()[:300]
                 layout=item.get("layout","reading")
@@ -4863,13 +5285,24 @@ def institution_save():
         dest=UPLOAD_DIR/"institution"; dest.mkdir(exist_ok=True); fname=secure_filename(image.filename); out=dest/f"{uuid.uuid4().hex}-{fname}"; image.save(out); image_path="uploads/institution/"+out.name
     # Remove media explicitly marked by the editor, then attach new images/videos.
     try:
-        removed_by_section=json.loads(request.form.get("about_remove_media", "{}") or "{}")
-        if not isinstance(removed_by_section, dict): removed_by_section={}
+        raw_removed=json.loads(request.form.get("about_remove_media", "[]") or "[]")
+        # New editor sends a flat path list so section reordering cannot make
+        # removals point at the wrong image. Keep accepting the older indexed
+        # dictionary format for backward compatibility.
+        if isinstance(raw_removed, list):
+            removed_global={str(x) for x in raw_removed if str(x).strip()}
+            removed_by_section={}
+        elif isinstance(raw_removed, dict):
+            removed_global=set()
+            removed_by_section={str(k): set(str(x) for x in (v or []) if str(x).strip()) for k,v in raw_removed.items()}
+            for values in removed_by_section.values(): removed_global.update(values)
+        else:
+            removed_global=set(); removed_by_section={}
     except Exception:
-        removed_by_section={}
+        removed_global=set(); removed_by_section={}
     for i,item in enumerate(about_sections):
         media=list(item.get("media",[]))
-        removed=set(str(x) for x in (removed_by_section.get(str(i), []) or []) if str(x).strip())
+        removed=set(removed_by_section.get(str(i), set())) | removed_global
         if removed:
             kept=[]
             for m in media:
@@ -4992,6 +5425,73 @@ def ict_features():
     elections=1 if request.form.get("elections_enabled") else 0; library=1 if request.form.get("library_enabled") else 0
     execute("UPDATE school_settings SET elections_enabled=?, library_enabled=? WHERE id=1",(elections,library)); flash("Module visibility updated.","success"); return redirect(url_for("ict_dashboard") if current_user()["role"]=="ICT" else url_for("admin_dashboard"))
 
+
+@app.route("/support-dashboard")
+@login_required
+def support_dashboard():
+    user=current_user()
+    wt=workspace_type_for_user(user)
+    if user["role"] in {"Admin","ICT"}:
+        return redirect(role_target(user["role"]))
+    if wt not in {"Reception","Driver","Guard","Cook","Other Staff","Support Staff"}:
+        return redirect(specialized_dashboard_for(user))
+    settings=school_settings()
+    expenses=q("SELECT * FROM support_expenses WHERE user_id=? ORDER BY spent_at DESC,id DESC LIMIT 40",(user["id"],))
+    language=((user["ui_language"] if "ui_language" in user.keys() else "en") or "sw").lower()
+    return render_template("support_dashboard.html",settings=settings,actor_name=user["full_name"],role=user["role"],workspace_type=wt,expenses=expenses,language=language,today=_local_now_naive().strftime("%Y-%m-%d"))
+
+@app.route("/support/expenses", methods=["POST"])
+@login_required
+def support_expense_submit():
+    user=current_user(); wt=workspace_type_for_user(user)
+    if wt not in {"Reception","Driver","Guard","Cook","Other Staff","Support Staff"}: abort(403)
+    item=(request.form.get("item_name") or "").strip()[:160]
+    desc=(request.form.get("description") or "").strip()[:1000]
+    try: qty=max(0.01,float(request.form.get("quantity","1") or 1))
+    except Exception: qty=1
+    try: amount=max(0,float(str(request.form.get("amount","0") or 0).replace(",","")))
+    except Exception: amount=-1
+    spent=(request.form.get("spent_at") or _local_now_naive().strftime("%Y-%m-%d"))[:10]
+    evidence=request.files.get("evidence")
+    path=""
+    if evidence and evidence.filename:
+        ext=Path(evidence.filename).suffix.lower()
+        if ext not in {".png",".jpg",".jpeg",".webp",".pdf"}:
+            flash("Evidence must be an image or PDF.","danger"); return redirect(url_for("support_dashboard"))
+        dest=UPLOAD_DIR/"support_expenses"; dest.mkdir(exist_ok=True)
+        out=dest/f"{uuid.uuid4().hex}-{secure_filename(evidence.filename)}"; evidence.save(out); path="uploads/support_expenses/"+out.name
+    if not item or amount <= 0:
+        flash("Enter what was bought and the amount.","danger"); return redirect(url_for("support_dashboard"))
+    eid=execute("INSERT INTO support_expenses(user_id,item_name,quantity,amount,spent_at,description,evidence_path,status) VALUES(?,?,?,?,?,?,?,?)",(user["id"],item,qty,amount,spent,desc,path,"Pending"))
+    admins=[r["id"] for r in q("SELECT id FROM users WHERE active=1 AND role='Admin'")]
+    notify_users(admins,"Support spending needs review",f"{user['full_name']} submitted {item} · KES {amount:,.2f} for review.","/notifications#support-expenses","High")
+    audit(user["id"],user["full_name"],"Support spending submitted",f"#{eid} {item} · KES {amount:,.2f}")
+    flash("Submitted to Admin for review. It will not enter the financial records until approved.","success")
+    return redirect(url_for("support_dashboard"))
+
+@app.route("/admin/support-expenses/<int:expense_id>/review", methods=["POST"])
+@login_required
+@role_required("Admin")
+def review_support_expense(expense_id:int):
+    action=(request.form.get("decision") or "").strip().lower()
+    note=(request.form.get("review_note") or "").strip()[:1000]
+    row=q("SELECT * FROM support_expenses WHERE id=?",(expense_id,),one=True)
+    if not row: abort(404)
+    if row["status"]!="Pending":
+        flash("This spending request has already been reviewed.","warning"); return redirect(url_for("notifications_view"))
+    if action not in {"approve","reject"}: abort(400)
+    if action=="approve":
+        ref=f"SUP-{expense_id:06d}"
+        execute("INSERT INTO finance_ledger(entry_type,category,payee_user_id,amount,description,reference_no,status,posted_by,receipt_path) VALUES('Expense','Support Staff Spending',?,?,?,?,?,?,?)",(row["user_id"],row["amount"],f"{row['item_name']} (qty {row['quantity']:g}) — {row['description']}".strip(),ref,"Posted",current_user()["id"],row["evidence_path"]))
+        status="Approved"; message="approved"
+    else:
+        status="Rejected"; message="rejected"
+    execute("UPDATE support_expenses SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,review_note=? WHERE id=?",(status,current_user()["id"],note,expense_id))
+    notify_users([row["user_id"]],f"Support spending {message}",f"Your spending request for {row['item_name']} was {message} by Admin.{(' Note: '+note) if note else ''}","/support-dashboard","Normal")
+    audit(current_user()["id"],current_user()["full_name"],f"Support spending {message}",f"#{expense_id} {row['item_name']} · KES {row['amount']}")
+    flash(f"Spending request {message}.","success")
+    return redirect(url_for("notifications_view")+"#support-expenses")
+
 @app.route("/finance-dashboard")
 @login_required
 @role_required("Finance", "Admin")
@@ -5085,6 +5585,19 @@ def ict_settings():
     return redirect(url_for("ict_dashboard" if current_user()["role"]=="ICT" else "admin_dashboard"))
 
 
+def _remove_public_upload(path):
+    try:
+        raw=str(path or '').strip()
+        if not raw.startswith('uploads/'):
+            return
+        rel=Path(raw[len('uploads/'):])
+        base=UPLOAD_DIR.resolve()
+        target=(base/rel).resolve()
+        if base in target.parents and target.exists() and target.is_file():
+            target.unlink()
+    except Exception:
+        pass
+
 @app.route("/ict/landing-branding", methods=["POST"])
 @login_required
 @role_required("Admin", "ICT")
@@ -5109,8 +5622,11 @@ def ict_landing_branding():
     if vals["landing_hero_layout"] not in {"split","stacked"}: vals["landing_hero_layout"]="split"
     positions=[request.form.get(f"institution_image_{i}_position","50% 50%").strip()[:40] for i in (1,2,3)]
     paths=[]
+    current_settings=school_settings()
     landing_file=request.files.get("landing_background")
-    landing_path=school_settings()["landing_background_path"] or ""
+    landing_path=current_settings["landing_background_path"] or ""
+    if request.form.get("remove_landing_background") == "1" and not (landing_file and landing_file.filename):
+        _remove_public_upload(landing_path); landing_path=""
     if landing_file and landing_file.filename:
         ext=landing_file.filename.rsplit('.',1)[-1].lower() if '.' in landing_file.filename else ''
         if ext not in {"png","jpg","jpeg","webp"}:
@@ -5119,8 +5635,10 @@ def ict_landing_branding():
         out=folder/f"landing-bg-{uuid.uuid4().hex[:10]}.{ext}"; landing_file.save(out); landing_path="uploads/institution/"+out.name
     for i in (1,2,3):
         file=request.files.get(f"institution_image_{i}")
-        existing=school_settings()[f"institution_image_{i if i>1 else 1}_path"] if i>1 else school_settings()["institution_image_path"]
+        existing=current_settings[f"institution_image_{i if i>1 else 1}_path"] if i>1 else current_settings["institution_image_path"]
         path=existing or ""
+        if request.form.get(f"remove_institution_image_{i}") == "1" and not (file and file.filename):
+            _remove_public_upload(path); path=""
         if file and file.filename:
             ext=file.filename.rsplit('.',1)[-1].lower() if '.' in file.filename else ''
             if ext not in {"png","jpg","jpeg","webp"}:
@@ -5301,7 +5819,41 @@ def notifications_view():
         classes=sorted(set(own))
     elif user["role"] in {"Admin","ICT"}:
         classes=[r["grade"] for r in q("SELECT DISTINCT grade FROM students WHERE active=1 AND TRIM(COALESCE(grade,''))!='' ORDER BY grade")]
-    return render_template("notifications.html",settings=school_settings(),notifications=rows,actor_name=user["full_name"],role=user["role"],notification_recipients=recipients,notification_classes=classes)
+
+    # Attendance is intentionally reviewed here for Admin/ICT only. The older
+    # standalone staff-attendance screens remain as backend routes for compatibility,
+    # but are no longer part of the normal navigation or review flow.
+    attendance_rows=[]; absence_rows=[]; attendance_window='day'
+    if user["role"] in {"Admin","ICT"}:
+        allowed_ranges={'day':'Today','week':'This week','month':'This month','3m':'3 months','6m':'6 months','year':'This year'}
+        attendance_window=(request.args.get('attendance_range') or 'day').strip().lower()
+        if attendance_window not in allowed_ranges: attendance_window='day'
+        now_local=_local_now_naive()
+        if attendance_window=='day': start_date=end_date=now_local.date()
+        elif attendance_window=='week':
+            start_date=now_local.date()-timedelta(days=now_local.weekday()); end_date=start_date+timedelta(days=6)
+        elif attendance_window=='month':
+            start_date=now_local.date().replace(day=1); end_date=now_local.date()
+        elif attendance_window in {'3m','6m'}:
+            months=3 if attendance_window=='3m' else 6
+            start_date=(now_local.date().replace(day=1)-timedelta(days=months*31)).replace(day=1); end_date=now_local.date()
+        else:
+            start_date=now_local.date().replace(month=1,day=1); end_date=now_local.date()
+        start_utc=attendance_day_bounds_utc(start_date.isoformat())[0]; end_utc=attendance_day_bounds_utc(end_date.isoformat())[1]
+        attendance_rows=q("""SELECT a.id,a.user_id,a.action,a.event_at,a.method,a.source,a.latitude,a.longitude,a.accuracy,a.device_note,a.location_label,
+               u.full_name,u.role,COALESCE(NULLIF(u.title,''),u.role) AS title,u.staff_category,u.workspace_type,u.staff_code
+               FROM attendance_events a JOIN users u ON u.id=a.user_id
+               WHERE a.event_at>=? AND a.event_at<? AND u.active=1 AND u.role NOT IN ('Student','Parent','System')
+               ORDER BY a.event_at DESC,a.id DESC LIMIT 1000""",(start_utc,end_utc))
+        absence_rows=q("""SELECT ar.id,ar.user_id,ar.absence_date,ar.reason,ar.status,ar.requested_at,ar.reviewed_at,ar.review_note,u.full_name,u.role,
+               COALESCE(NULLIF(u.title,''),u.role) AS title,u.staff_category,u.workspace_type,u.staff_code
+               FROM attendance_absence_requests ar JOIN users u ON u.id=ar.user_id
+               WHERE ar.absence_date>=? AND ar.absence_date<=? AND u.active=1 AND u.role NOT IN ('Student','Parent','System')
+               ORDER BY ar.absence_date DESC,ar.id DESC LIMIT 500""",(start_date.isoformat(),end_date.isoformat()))
+    support_expenses=[]
+    if user["role"]=="Admin":
+        support_expenses=q("SELECT e.*,u.full_name AS staff_name FROM support_expenses e JOIN users u ON u.id=e.user_id WHERE e.status='Pending' ORDER BY e.created_at DESC,e.id DESC LIMIT 100")
+    return render_template("notifications.html",settings=school_settings(),notifications=rows,actor_name=user["full_name"],role=user["role"],notification_recipients=recipients,notification_classes=classes,attendance_rows=attendance_rows,absence_rows=absence_rows,attendance_window=attendance_window,support_expenses=support_expenses)
 
 @app.route("/notifications/read", methods=["POST"])
 @login_required
@@ -5751,6 +6303,13 @@ def profile():
         if not full_name:
             flash("Full name is required.", "danger")
         else:
+            ui_language=(request.form.get("ui_language") or (user["ui_language"] if "ui_language" in user.keys() else "en")).strip().lower()
+            if ui_language not in {"en","sw"}: ui_language="en"
+            color=(request.form.get("ui_theme_color") or "").strip()
+            accent=(request.form.get("ui_accent_color") or "").strip()
+            if not re.fullmatch(r"#[0-9a-fA-F]{6}",color): color=""
+            if not re.fullmatch(r"#[0-9a-fA-F]{6}",accent): accent=""
+
             if password:
                 if len(password) < 4:
                     flash("Password must be at least 4 characters.", "danger")
@@ -5767,11 +6326,12 @@ def profile():
                 out=folder/f"user-{user['id']}-{uuid.uuid4().hex[:12]}.{ext}"
                 photo.save(out)
                 execute("UPDATE users SET profile_photo=? WHERE id=?", ("uploads/profile_photos/"+out.name,user["id"]))
+            execute("UPDATE users SET ui_language=?, ui_theme_color=?, ui_accent_color=? WHERE id=?",(ui_language,color,accent,user["id"]))
             session["user_id"] = user["id"]
             audit(user["id"], full_name, "Profile Update", "Profile details, password and/or profile photo updated.")
             flash("Profile updated successfully.", "success")
             return redirect(url_for("profile"))
-    profile_user = q("SELECT id, full_name, username, role, created_at, profile_photo, student_id FROM users WHERE id = ?", (user["id"],), one=True)
+    profile_user = q("SELECT id, full_name, username, role, created_at, profile_photo, student_id, ui_language, ui_theme_color, ui_accent_color FROM users WHERE id = ?", (user["id"],), one=True)
     exam_card = q("SELECT id,qr_token,created_at FROM portal_documents WHERE document_type='Exam Card' AND student_id=? AND status='Valid' ORDER BY created_at DESC,id DESC LIMIT 1", (profile_user["student_id"],), one=True) if profile_user and profile_user["student_id"] else None
     return render_template("profile.html", profile_user=profile_user, workspace=workspace_for(profile_user["role"]), exam_card=exam_card)
 
@@ -5808,6 +6368,13 @@ def save_settings():
     return redirect(url_for("admin_dashboard"))
 
 
+def parse_money_input(raw, default=None):
+    """Accept normal human money entry such as 14,000 / 14000 / 14 000.00."""
+    value=str(raw or '').strip().replace(',', '').replace(' ', '')
+    if value=='': return default
+    try: return float(value)
+    except (TypeError,ValueError): return None
+
 @app.route("/admin/students/add", methods=["GET", "POST"])
 @login_required
 @role_required("Admin")
@@ -5843,24 +6410,18 @@ def add_student():
         return redirect(url_for("admin_dashboard") + "#admin-add-student")
 
     if fee_override:
-        try:
-            manual_fee=float(fee_override)
-            if manual_fee < 0:
-                raise ValueError
-        except (TypeError, ValueError):
-            flash("The exact fee total must be a valid amount of 0 or more. Example: 18500 or 18500.00. The student was not submitted.", "danger")
+        manual_fee=parse_money_input(fee_override)
+        if manual_fee is None or manual_fee < 0:
+            flash("The exact fee total must be a valid amount of 0 or more. You can type 14,000 or 14000.00. The student was not submitted.", "danger")
             return redirect(url_for("admin_dashboard") + "#admin-add-student")
 
     if uses_bus and not transport_zone:
         flash("School bus is set to Yes, but no transport zone was selected. Choose a transport zone or change School bus to No. The student was not submitted.", "danger")
         return redirect(url_for("admin_dashboard") + "#admin-add-student")
 
-    try:
-        meal_charge_value=float(request.form.get('meal_charge','0') or 0)
-        if meal_charge_value < 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        flash("Meal charge must be a valid amount of 0 or more, or leave it at 0 when meals are not being charged. The student was not submitted.", "danger")
+    meal_charge_value=parse_money_input(request.form.get('meal_charge','0'), default=0.0)
+    if meal_charge_value is None or meal_charge_value < 0:
+        flash("Meal charge must be a valid amount of 0 or more. You can type commas normally, e.g. 3,500.", "danger")
         return redirect(url_for("admin_dashboard") + "#admin-add-student")
 
     settings = school_settings()
@@ -5876,7 +6437,7 @@ def add_student():
         return redirect(url_for("admin_dashboard") + "#admin-add-student")
 
     fee = float(settings["school_fee"] or 0)
-    manual_fee=float(fee_override) if fee_override else None
+    manual_fee=parse_money_input(fee_override) if fee_override else None
     if manual_fee is not None:
         fee=manual_fee
     transport_charge=0.0
@@ -6065,8 +6626,8 @@ def student_profile(student_id:int):
     student=q("SELECT * FROM students WHERE id=?",(student_id,),one=True)
     if not student: abort(404)
     user=current_user(); role=user["role"]
-    if role in {"Student","Parent"} and not can_access_student(student_id): abort(403)
     if role not in {"Admin","ICT","Teacher","Finance","Librarian","Student","Parent"}: abort(403)
+    if not can_access_student(student_id): abort(403)
     guardians=q("""SELECT gu.id,gu.full_name,gu.username,gu.phone,gu.email,gl.relationship,gl.is_primary FROM guardian_links gl JOIN users gu ON gu.id=gl.guardian_user_id WHERE gl.student_id=? AND gl.active=1 ORDER BY gl.is_primary DESC,gu.full_name""",(student_id,))
     payments=q("SELECT p.*,u.full_name AS recorder FROM payments p LEFT JOIN users u ON u.id=p.recorded_by WHERE p.student_id=? ORDER BY p.created_at DESC,p.id DESC",(student_id,))
     records=q("SELECT r.*,u.full_name AS author,u.role AS author_role FROM student_records r JOIN users u ON u.id=r.author_user_id WHERE r.student_id=? AND (r.visible_to_parent=1 OR ? IN ('Admin','Teacher','ICT') OR r.author_user_id=?) ORDER BY r.created_at DESC,r.id DESC",(student_id,role,user["id"]))
@@ -6083,6 +6644,7 @@ def student_profile(student_id:int):
 def add_student_record(student_id:int):
     student=q("SELECT id,full_name FROM students WHERE id=?",(student_id,),one=True)
     if not student: abort(404)
+    if not can_access_student(student_id, write=True): abort(403)
     category=request.form.get('category','General').strip() or 'General'
     title=request.form.get('title','').strip(); content=request.form.get('content','').strip()
     if not title or not content:
@@ -6098,6 +6660,7 @@ def add_student_record(student_id:int):
 def toggle_student_record_visibility(student_id:int,record_id:int):
     row=q("SELECT * FROM student_records WHERE id=? AND student_id=?",(record_id,student_id),one=True)
     if not row: abort(404)
+    if not can_access_student(student_id, write=True): abort(403)
     visible=1 if request.form.get('visible_to_parent')=='1' else 0
     execute("UPDATE student_records SET visible_to_parent=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",(visible,record_id))
     audit(current_user()['id'],current_user()['full_name'],'Student Record Visibility',f"Record #{record_id} visibility set to {visible}.")
@@ -6108,8 +6671,19 @@ def toggle_student_record_visibility(student_id:int,record_id:int):
 @role_required("Admin","Teacher","ICT")
 def student_search():
     term=request.args.get('q','').strip()
-    rows=q("SELECT id,full_name,admission_no,grade,payment_status,balance,active FROM students WHERE full_name LIKE ? OR admission_no LIKE ? ORDER BY full_name LIMIT 100",(f'%{term}%',f'%{term}%')) if term else q("SELECT id,full_name,admission_no,grade,payment_status,balance,active FROM students WHERE active=1 ORDER BY full_name LIMIT 100")
+    if current_user()['role']=='Teacher':
+        like=f'%{term}%'
+        rows=q("""SELECT DISTINCT s.id,s.full_name,s.admission_no,s.grade,s.payment_status,s.balance,s.active
+                 FROM students s
+                 LEFT JOIN student_teacher_assignments sta ON sta.student_id=s.id AND sta.teacher_user_id=? AND sta.active=1
+                 LEFT JOIN class_teacher_assignments cta ON cta.class_name=s.grade AND cta.teacher_user_id=?
+                 WHERE s.active=1 AND (sta.id IS NOT NULL OR cta.id IS NOT NULL)
+                   AND (?='' OR s.full_name LIKE ? OR s.admission_no LIKE ?)
+                 ORDER BY s.full_name LIMIT 100""",(current_user()['id'],current_user()['id'],term,like,like))
+    else:
+        rows=q("SELECT id,full_name,admission_no,grade,payment_status,balance,active FROM students WHERE full_name LIKE ? OR admission_no LIKE ? ORDER BY full_name LIMIT 100",(f'%{term}%',f'%{term}%')) if term else q("SELECT id,full_name,admission_no,grade,payment_status,balance,active FROM students WHERE active=1 ORDER BY full_name LIMIT 100")
     return render_template('student_search.html',rows=rows,term=term,settings=school_settings(),role=current_user()['role'],actor_name=current_user()['full_name'])
+
 
 @app.route("/students/<int:student_id>/update", methods=["POST"])
 @login_required
@@ -6599,7 +7173,10 @@ def add_user():
     full_name=request.form.get("full_name", "").strip()
     username=request.form.get("username", "").strip().lower()
     password=request.form.get("password", "")
+    account_type=request.form.get("account_type", "").strip()
     role=request.form.get("role", "Teacher")
+    if account_type in {"Support Staff","Leadership","Teaching Staff"}: role="Teacher"
+    elif account_type in {"Librarian","Finance","ICT"}: role=account_type
     if role in {"Student", "Parent", "System"}:
         flash("Student and parent records are not staff accounts. Use the administrator-only student intake.", "warning")
         return redirect(request.referrer or url_for("admin_dashboard"))
@@ -6608,6 +7185,9 @@ def add_user():
     department=request.form.get("department", "").strip()
     workspace_type=request.form.get("workspace_type", "Teaching").strip() or "Teaching"
     if workspace_type not in {"Teaching","Driver","Reception","Guard","Cook","Other Staff"}: workspace_type="Teaching"
+    staff_category=request.form.get("staff_category", "").strip()
+    if not staff_category and account_type in {"Support Staff","Leadership","Teaching Staff"}: staff_category=account_type
+    if not staff_category: staff_category=("Support Staff" if workspace_type in {"Driver","Reception","Guard","Cook","Other Staff"} else ("Teaching Staff" if role=="Teacher" else role))
     student_id=request.form.get("student_id") or None
     allowed=set(ALL_PORTAL_ROLES) - {SYSTEM_ROLE, "Student", "Parent"}
     # ICT is a technical operator, not a privilege escalator.
@@ -6626,14 +7206,20 @@ def add_user():
         school_location=request.form.get("school_location","").strip()
         position_code=staff_code_for(role, workspace_type) if role not in {"Student","Parent","System"} else ""
         reception_enabled=1 if workspace_type==RECEPTION_WORKSPACE else 0
-        uid=execute("""INSERT INTO users(full_name, username, password_hash, role, student_id, active, title, department, phone, email, date_of_birth, gender, id_reference, address, emergency_contact, blood_group, medical_notes, accountability_notes, workspace_type, school_unit, school_location, reception_enabled, position_code, staff_code, qr_access_token, qr_login_enabled)
-                      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, lower(hex(randomblob(16))), 0)""",
-                   (full_name,username,generate_password_hash(password),role,student_id,title,department,request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),workspace_type,school_unit,school_location,reception_enabled,position_code,position_code))
+        uid=execute("""INSERT INTO users(full_name, username, password_hash, role, student_id, active, title, department, phone, email, date_of_birth, gender, id_reference, address, emergency_contact, blood_group, medical_notes, accountability_notes, workspace_type, staff_category, school_unit, school_location, reception_enabled, position_code, staff_code, qr_access_token, qr_login_enabled)
+                      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, lower(hex(randomblob(16))), 1)""",
+                   (full_name,username,generate_password_hash(password),role,student_id,title,department,request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),workspace_type,staff_category,school_unit,school_location,reception_enabled,position_code,position_code))
+        if staff_category == "Support Staff" or workspace_type in {"Driver","Reception","Guard","Cook","Other Staff"}: execute("UPDATE users SET ui_language='sw' WHERE id=?",(uid,))
         if leadership_role and role not in {"Student","Parent","System"}:
             execute("UPDATE users SET leadership_role=?,leadership_level=? WHERE id=?",(leadership_role,1 if leadership_role in {"Dean","Deputy","Deputy Principal","HOD","Head of Department"} else 0,uid))
         audit(actor["id"],actor["full_name"],"Add User",f"{full_name} ({username}) added as {role}; title={title or '—'}; department={department or '—'}.")
-    except sqlite3.IntegrityError:
-        flash("Username already exists or the supplied learner link is invalid.", "danger")
+    except sqlite3.IntegrityError as exc:
+        record_system_error(source='server', message='Staff account could not be registered because the database rejected the record', error=exc, status_code=400, client_context=f'POST /users/add username={username!r} role={role!r} workspace={workspace_type!r}')
+        flash("The staff account could not be saved. Check the highlighted details and try again.", "danger")
+        return redirect(request.referrer or url_for("admin_dashboard"))
+    except Exception as exc:
+        record_system_error(source='server', message='Unexpected failure while registering a staff account', error=exc, status_code=500, client_context=f'POST /users/add username={username!r} role={role!r} workspace={workspace_type!r}')
+        flash("The staff account was not saved because the server hit an unexpected error. The error has been recorded in System Errors.", "danger")
         return redirect(request.referrer or url_for("admin_dashboard"))
     flash("Account created successfully.", "success")
     return redirect(request.referrer or url_for("admin_dashboard"))
@@ -6663,6 +7249,64 @@ def admin_access_user(user_id: int):
     return redirect(target + "?" + urllib.parse.urlencode({"portal_context": context}))
 
 
+@app.route("/admin/people/reconcile", methods=["GET"])
+@login_required
+@role_required("Admin")
+def people_reconcile():
+    staff_rows=q("""SELECT u.id,u.full_name,u.username,u.role,u.workspace_type,u.student_id,u.title,u.department,
+                           COALESCE(s1.id,s2.id) AS matched_student_id,COALESCE(s1.admission_no,s2.admission_no) AS matched_admission,
+                           COALESCE(s1.grade,s2.grade) AS matched_grade,COALESCE(s1.full_name,s2.full_name) AS matched_student_name
+                    FROM users u
+                    LEFT JOIN students s1 ON s1.id=u.student_id AND s1.active=1
+                    LEFT JOIN students s2 ON s2.active=1 AND lower(trim(s2.full_name))=lower(trim(u.full_name))
+                    WHERE u.active=1 AND u.role NOT IN ('Student','Parent','System')
+                      AND (u.student_id IS NOT NULL OR s2.id IS NOT NULL)
+                    ORDER BY u.full_name""")
+    learner_rows=q("""SELECT u.id AS user_id,u.full_name,u.username,u.role,u.student_id,s.admission_no,s.grade
+                     FROM users u JOIN students s ON s.id=u.student_id
+                     WHERE u.active=1 AND u.role='Student' AND s.active=1 ORDER BY u.full_name""")
+    return render_template('people_reconcile.html',settings=school_settings(),actor_name=current_user()['full_name'],staff_rows=staff_rows,learner_rows=learner_rows)
+
+@app.route("/admin/people/reconcile/staff-to-student", methods=["POST"])
+@login_required
+@role_required("Admin")
+def reconcile_staff_to_student():
+    ids=[]
+    for raw in request.form.getlist('user_ids'):
+        try: ids.append(int(raw))
+        except (TypeError,ValueError): pass
+    moved=0; skipped=0
+    for uid in dict.fromkeys(ids):
+        u=q("SELECT * FROM users WHERE id=? AND active=1 AND role NOT IN ('Student','Parent','System')",(uid,),one=True)
+        if not u: skipped+=1; continue
+        st=q("SELECT id FROM students WHERE id=? AND active=1",(u['student_id'],),one=True) if u['student_id'] else q("SELECT id FROM students WHERE active=1 AND lower(trim(full_name))=lower(trim(?)) ORDER BY id DESC LIMIT 1",(u['full_name'],),one=True)
+        if not st: skipped+=1; continue
+        execute("UPDATE users SET role='Student',workspace_type='Student',student_id=?,title='Student',leadership_role='',leadership_level=0,reception_enabled=0 WHERE id=?",(st['id'],uid))
+        moved+=1
+    audit(current_user()['id'],current_user()['full_name'],'Bulk people reconciliation',f'Moved {moved} staff account(s) to matched learner account type; skipped {skipped}.')
+    flash(f'Moved {moved} matched staff account(s) to Students.' + (f' {skipped} skipped because no learner match was found.' if skipped else ''),'success' if moved else 'warning')
+    return redirect(url_for('people_reconcile'))
+
+@app.route("/admin/people/reconcile/student-to-staff", methods=["POST"])
+@login_required
+@role_required("Admin")
+def reconcile_student_to_staff():
+    ids=[]
+    for raw in request.form.getlist('user_ids'):
+        try: ids.append(int(raw))
+        except (TypeError,ValueError): pass
+    workspace=(request.form.get('workspace_type') or 'Teaching').strip()
+    if workspace not in {'Teaching','Driver','Reception','Guard','Cook','Other Staff'}: workspace='Teaching'
+    moved=0
+    for uid in dict.fromkeys(ids):
+        u=q("SELECT id,full_name,role FROM users WHERE id=? AND active=1 AND role='Student'",(uid,),one=True)
+        if not u: continue
+        execute("UPDATE users SET role='Teacher',workspace_type=?,staff_category=?,student_id=NULL,title=?,leadership_role='',leadership_level=0,reception_enabled=? WHERE id=?",(workspace,('Teaching Staff' if workspace=='Teaching' else 'Support Staff'),'Teacher' if workspace=='Teaching' else workspace,1 if workspace=='Reception' else 0,uid))
+        moved+=1
+    audit(current_user()['id'],current_user()['full_name'],'Bulk people reconciliation',f'Moved {moved} student login account(s) into {workspace} staff workspace.')
+    flash(f'Moved {moved} account(s) into {workspace}. The learner records themselves were kept intact for audit/history.','success' if moved else 'warning')
+    return redirect(url_for('people_reconcile'))
+
 @app.route("/users/<int:user_id>/edit", methods=["GET","POST"])
 @login_required
 def edit_user(user_id:int):
@@ -6672,7 +7316,11 @@ def edit_user(user_id:int):
     if not user or user["role"] in {SYSTEM_ROLE, "Student"}: abort(404)
     if actor["role"]=="ICT" and user["role"] in {"Admin","ICT"}: abort(403)
     if request.method=="POST":
+        account_type=request.form.get("account_type", "").strip()
         role=request.form.get("role",user["role"])
+        if account_type in {"Support Staff","Leadership","Teaching Staff"}: role="Teacher"
+        elif account_type in {"Librarian","Finance","ICT"}: role=account_type
+        elif account_type == "": account_type=account_role_label(user)
         if user["id"] == actor["id"] and role != actor["role"]:
             flash("The currently signed-in Administrator account cannot be changed into another role. Create or edit another account instead.", "warning")
             return redirect(url_for("edit_user", user_id=user_id))
@@ -6693,10 +7341,10 @@ def edit_user(user_id:int):
         if conflict:
             flash("Username already exists. Choose a different username.", "danger")
             return redirect(url_for("edit_user", user_id=user_id))
-        new_title=request.form.get("title","").strip(); leadership_role=request.form.get("leadership_role","").strip(); leadership_level=1 if leadership_role in {"Dean","Deputy","Deputy Principal","HOD","Head of Department"} else 0; school_unit=request.form.get("school_unit","").strip() or school_settings()["school_name"]; school_location=request.form.get("school_location","").strip(); reception_enabled=1 if workspace_type==RECEPTION_WORKSPACE else 0
+        new_title=request.form.get("title","").strip(); leadership_role=request.form.get("leadership_role","").strip(); staff_category=(account_type if account_type in {"Support Staff","Leadership","Teaching Staff","Professional / Office Staff"} else ("Support Staff" if workspace_type in {"Driver","Reception","Guard","Cook","Other Staff"} else ("Teaching Staff" if role=="Teacher" else role))); leadership_level=1 if leadership_role in {"Dean","Deputy","Deputy Principal","HOD","Head of Department"} else 0; school_unit=request.form.get("school_unit","").strip() or school_settings()["school_name"]; school_location=request.form.get("school_location","").strip(); reception_enabled=1 if workspace_type==RECEPTION_WORKSPACE else 0
         existing_code=user["position_code"] or user["staff_code"] or (staff_code_for(role,workspace_type) if role not in {"Student","Parent","System"} else "")
-        execute("""UPDATE users SET full_name=?, username=?, role=?, student_id=?, title=?, department=?, phone=?, email=?, date_of_birth=?, gender=?, id_reference=?, address=?, emergency_contact=?, blood_group=?, medical_notes=?, accountability_notes=?, workspace_type=?, school_unit=?, school_location=?, leadership_role=?, leadership_level=?, reception_enabled=?, position_code=?, staff_code=? WHERE id=?""",
-               (request.form.get("full_name","").strip(),new_username,role,student_id,new_title,request.form.get("department","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),workspace_type,school_unit,school_location,leadership_role,leadership_level,reception_enabled,existing_code,existing_code,user_id))
+        execute("""UPDATE users SET full_name=?, username=?, role=?, student_id=?, title=?, department=?, phone=?, email=?, date_of_birth=?, gender=?, id_reference=?, address=?, emergency_contact=?, blood_group=?, medical_notes=?, accountability_notes=?, workspace_type=?, staff_category=?, school_unit=?, school_location=?, leadership_role=?, leadership_level=?, reception_enabled=?, position_code=?, staff_code=? WHERE id=?""",
+               (request.form.get("full_name","").strip(),new_username,role,student_id,new_title,request.form.get("department","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("date_of_birth","").strip(),request.form.get("gender","").strip(),request.form.get("id_reference","").strip(),request.form.get("address","").strip(),request.form.get("emergency_contact","").strip(),request.form.get("blood_group","").strip(),request.form.get("medical_notes","").strip(),request.form.get("accountability_notes","").strip(),workspace_type,staff_category,school_unit,school_location,leadership_role,leadership_level,reception_enabled,existing_code,existing_code,user_id))
         if role=="Parent" and student_id:
             execute("INSERT OR IGNORE INTO guardian_links(guardian_user_id,student_id,relationship,is_primary) VALUES(?,?,?,?)",(user_id,student_id,request.form.get("relationship","Guardian").strip() or "Guardian",1))
         audit(actor["id"],actor["full_name"],"Edit User",f"Updated {user['username']} ({user['role']}) -> {request.form.get('username','').strip()} ({role}).")
@@ -6986,20 +7634,36 @@ def all_learners():
 @login_required
 @role_required("Admin","ICT")
 def all_employees():
-    today=(datetime.utcnow()+KENYA_TZ_OFFSET).date().isoformat()
+    today=_local_now_naive().date().isoformat()
     start_utc,end_utc=attendance_day_bounds_utc(today)
     rows=q("""
       SELECT u.*,
         (SELECT a.event_at FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS check_in_at,
         (SELECT a.event_at FROM attendance_events a WHERE a.user_id=u.id AND a.action='OUT' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at DESC,a.id DESC LIMIT 1) AS check_out_at,
-        (SELECT a.location_label FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? AND a.location_label!='' ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS check_in_location
+        (SELECT a.location_label FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS check_in_location,
+        (SELECT a.location_label FROM attendance_events a WHERE a.user_id=u.id AND a.action='OUT' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at DESC,a.id DESC LIMIT 1) AS check_out_location,
+        (SELECT a.device_note FROM attendance_events a WHERE a.user_id=u.id AND a.action='IN' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at ASC,a.id ASC LIMIT 1) AS check_in_device,
+        (SELECT a.device_note FROM attendance_events a WHERE a.user_id=u.id AND a.action='OUT' AND a.event_at>=? AND a.event_at<? ORDER BY a.event_at DESC,a.id DESC LIMIT 1) AS check_out_device,
+        (SELECT ar.status FROM attendance_absence_requests ar WHERE ar.user_id=u.id AND ar.absence_date=? ORDER BY ar.id DESC LIMIT 1) AS absence_status
       FROM users u WHERE u.role NOT IN ('Student','Parent','System') ORDER BY u.active DESC, u.full_name
-    """,(start_utc,end_utc,start_utc,end_utc,start_utc,end_utc))
+    """,(start_utc,end_utc,start_utc,end_utc,start_utc,end_utc,start_utc,end_utc,start_utc,end_utc,start_utc,end_utc,today))
+    school_day=school_day_status(_local_now_naive().date())
+    day_closed=attendance_day_is_closed(today)
     rows=[dict(r) for r in rows]
     for r in rows:
-        r['check_in_local']=_local_iso(_parse_stored_event(r.get('check_in_at'))) if r.get('check_in_at') else None
-        r['check_out_local']=_local_iso(_parse_stored_event(r.get('check_out_at'))) if r.get('check_out_at') else None
-    return render_template("directory.html", directory_type="Employees", rows=rows, settings=school_settings(), role=current_user()["role"], actor_name=current_user()["full_name"], guardian_map={}, today=today, add_mode=bool(request.args.get("add")), all_roles=ALL_PORTAL_ROLES, departments=q("SELECT id,name,category FROM departments WHERE active=1 ORDER BY name"))
+        cin=_parse_stored_event(r.get('check_in_at')); cout=_parse_stored_event(r.get('check_out_at'))
+        r['check_in_time']=(cin+KENYA_TZ_OFFSET).strftime('%I:%M %p').lstrip('0') if cin else ''
+        r['check_out_time']=(cout+KENYA_TZ_OFFSET).strftime('%I:%M %p').lstrip('0') if cout else ''
+        r['check_in_local']=_local_iso(cin) if cin else None; r['check_out_local']=_local_iso(cout) if cout else None
+        r['employee_category']=staff_category_for(r)
+        r['account_role_label']=account_role_label(r)
+        r['employee_kind']=str(r.get('workspace_type') or r.get('role') or 'Staff')
+        r['attendance_capture']='Location captured' if r.get('check_in_location') else ('Not captured — location/device data unavailable' if cin else '—')
+        if cin: r['missed_display']='No'
+        elif str(r.get('absence_status') or '').lower()=='approved': r['missed_display']='Excused'
+        elif day_closed and school_day.get('is_school_day'): r['missed_display']='Yes'
+        else: r['missed_display']='—'
+    return render_template("directory.html",directory_type="Employees",rows=rows,settings=school_settings(),role=current_user()["role"],actor_name=current_user()["full_name"],guardian_map={},today=today,add_mode=bool(request.args.get("add")),all_roles=ALL_PORTAL_ROLES,departments=q("SELECT id,name,category FROM departments WHERE active=1 ORDER BY name"),school_day=school_day)
 
 @app.route("/users/<int:user_id>/qr")
 @login_required
@@ -7153,21 +7817,104 @@ def _json_backup_payload(include_assets=True):
     settings=dict(q("SELECT * FROM school_settings WHERE id=1",one=True) or {})
     return {"format":"Prime Institution OS Full System JSON","version":2,"created_at":datetime.utcnow().isoformat(timespec='seconds')+'Z',"settings":settings,"tables":tables,"assets":assets,"notes":"Restore through Administration > Backup & Recovery. Password hashes are preserved; plaintext passwords and API keys are never exported."}
 
-def admin_root_user():
-    uid=flask_session.get("user_id")
-    if not uid:
-        return None
-    return q("SELECT id,full_name,role,active FROM users WHERE id=? AND role='Admin' AND active=1 LIMIT 1", (uid,), one=True)
+@app.route('/api/system-errors/client', methods=['POST'])
+def client_system_error():
+    data=request.get_json(silent=True) or {}
+    if not isinstance(data,dict): data={}
+    message=str(data.get('message') or 'Browser-reported error')[:5000]
+    raw_status=str(data.get('status_code') or '')
+    status=int(raw_status) if raw_status.isdigit() else 0
+    context=str(data.get('client_context') or data.get('context') or '')[:12000]
+    stack=str(data.get('stack') or '')[:30000]
+    if stack: context=(context+'\nCLIENT STACK:\n'+stack).strip()[:15000]
+    rid=record_system_error(source='browser',message=message,status_code=status,level=str(data.get('level') or 'ERROR')[:20],request_id=data.get('request_id'),client_context=context,traceback_text=stack)
+    return jsonify({'ok':True,'request_id':rid})
 
-def admin_root_required(view):
-    @wraps(view)
-    def wrapper(*args, **kwargs):
-        actor=admin_root_user()
-        if not actor:
-            abort(403)
-        g.admin_actor=actor
-        return view(*args, **kwargs)
-    return wrapper
+
+def _read_system_errors(day='', limit=500):
+    """Merge DB diagnostics with the durable archive without creating duplicate request entries."""
+    valid_day=day if re.fullmatch(r'\d{4}-\d{2}-\d{2}',day or '') else ''
+    # Repair old deployments lazily before selecting the richer schema. This keeps
+    # the Admin error page usable even when the database predates the diagnostics UI.
+    try:
+        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+            conn.row_factory = sqlite3.Row
+            cols={r[1] for r in conn.execute("PRAGMA table_info(system_errors)").fetchall()}
+            if not cols:
+                conn.execute("CREATE TABLE IF NOT EXISTS system_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, level TEXT NOT NULL DEFAULT 'ERROR', source TEXT NOT NULL DEFAULT 'server', method TEXT NOT NULL DEFAULT '', path TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', status_code INTEGER NOT NULL DEFAULT 500, user_id INTEGER, username TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', exception_type TEXT NOT NULL DEFAULT '', traceback TEXT NOT NULL DEFAULT '', user_agent TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', client_context TEXT NOT NULL DEFAULT '')")
+                conn.commit()
+            else:
+                migrations={
+                    'level':"TEXT NOT NULL DEFAULT 'ERROR'",'source':"TEXT NOT NULL DEFAULT 'server'",'method':"TEXT NOT NULL DEFAULT ''",'path':"TEXT NOT NULL DEFAULT ''",'endpoint':"TEXT NOT NULL DEFAULT ''",'status_code':"INTEGER NOT NULL DEFAULT 500",'user_id':'INTEGER','username':"TEXT NOT NULL DEFAULT ''",'role':"TEXT NOT NULL DEFAULT ''",'message':"TEXT NOT NULL DEFAULT ''",'exception_type':"TEXT NOT NULL DEFAULT ''",'traceback':"TEXT NOT NULL DEFAULT ''",'user_agent':"TEXT NOT NULL DEFAULT ''",'request_id':"TEXT NOT NULL DEFAULT ''",'client_context':"TEXT NOT NULL DEFAULT ''"}
+                for name,definition in migrations.items():
+                    if name not in cols:
+                        conn.execute(f"ALTER TABLE system_errors ADD COLUMN {name} {definition}")
+                conn.commit()
+    except Exception:
+        # The archive below remains usable even if the SQLite file is temporarily unavailable.
+        pass
+    try:
+        where='WHERE substr(created_at,1,10)=?' if valid_day else ''
+        params=[valid_day] if valid_day else []
+        sql=f"""SELECT id,created_at,level,source,method,path,endpoint,status_code,user_id,username,role,message,exception_type,traceback,user_agent,request_id,client_context
+                   FROM system_errors {where} ORDER BY created_at DESC,id DESC"""
+        rows=[dict(r) for r in q(sql,tuple(params))]
+    except Exception as exc:
+        record_system_error(source='server',message='System error ledger could not be read from SQLite',error=exc,status_code=500)
+        rows=[]
+    seen={(str(r.get('request_id') or ''),str(r.get('created_at') or ''),str(r.get('message') or '')) for r in rows if r.get('request_id')}
+    for archive_name in ('system-errors-archive.jsonl','system-errors.jsonl'):
+        archive=DATA_DIR/archive_name
+        if not archive.exists(): continue
+        try:
+            with archive.open('r',encoding='utf-8',errors='replace') as fh:
+                for line in fh:
+                    try: item=json.loads(line)
+                    except Exception: continue
+                    created=str(item.get('created_at',''))
+                    if valid_day and not created.startswith(valid_day): continue
+                    key=(str(item.get('request_id') or ''),created,str(item.get('message') or ''))
+                    if item.get('request_id') and key in seen: continue
+                    if item.get('request_id'): seen.add(key)
+                    item.setdefault('source','archive'); item.setdefault('level','ERROR'); item.setdefault('status_code',0)
+                    item['id']='archive-'+str(len(rows)+1)
+                    rows.append(item)
+        except OSError:
+            continue
+    rows.sort(key=lambda x:(str(x.get('created_at','')),str(x.get('id',''))),reverse=True)
+    return rows if limit is None else rows[:max(1,int(limit))]
+
+@app.route('/admin/errors')
+@login_required
+@admin_root_required
+def admin_errors():
+    day=(request.args.get('day') or '').strip()
+    try:
+        rows=_read_system_errors(day=day,limit=500)
+    except Exception as exc:
+        # The diagnostics screen must never become the thing that hides the diagnostics.
+        app.logger.exception("System error page failed while loading records: %s", exc)
+        rows=[]
+    actor=admin_root_user() or current_user()
+    try:
+        settings=school_settings()
+    except Exception as exc:
+        record_system_error(source='server', message='Admin diagnostics page could not load school settings', error=exc, status_code=500)
+        settings={'school_name':'School Portal System'}
+    return render_template('admin_errors.html',settings=settings,actor_name=(actor['full_name'] if actor else 'Administrator'),rows=rows,rows_json=json.dumps(rows,ensure_ascii=False,default=str),selected_day=day)
+
+@app.route('/admin/errors/data')
+@login_required
+@admin_root_required
+def admin_errors_data():
+    day=(request.args.get('day') or '').strip()
+    raw=(request.args.get('limit') or '500').strip().lower()
+    if raw=='all': limit=None
+    else:
+        try: limit=min(max(int(raw),1),50000)
+        except ValueError: limit=500
+    return jsonify({'ok':True,'rows':_read_system_errors(day=day,limit=limit)})
+
 
 def _full_portal_backup_name(prefix="prime-institution-full-portal"):
     return f"{prefix}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.zip"
@@ -7186,7 +7933,11 @@ def _backup_archive_paths():
         if any(part in excluded_dirs for part in rel.parts):
             continue
         rel_name=rel.as_posix()
+        # Never let a backup archive contain itself or its temporary SQLite snapshot.
+        # Both files live inside DATA_DIR while the ZIP is being constructed.
         if rel_name in {"school.db", "school.db-wal", "school.db-shm"}:
+            continue
+        if path.name.startswith(".full-backup-") or path.name.startswith(".full-db-snapshot-"):
             continue
         if any(str(path).endswith(suffix) for suffix in excluded_suffixes):
             continue
@@ -7233,7 +7984,12 @@ def _create_full_portal_backup_file():
 @login_required
 @admin_root_required
 def backup_download():
-    backup_path=_create_full_portal_backup_file()
+    try:
+        backup_path=_create_full_portal_backup_file()
+    except Exception as exc:
+        record_system_error(source="server", message=f"Full portal backup creation failed: {exc}", error=exc, status_code=500)
+        flash(f"Full portal backup could not be created: {exc}", "danger")
+        return redirect(request.referrer or url_for("admin_dashboard"))
     name=_full_portal_backup_name()
     @after_this_request
     def _cleanup(response):
@@ -7250,7 +8006,25 @@ def backup_download():
 def backup_sqlite_download():
     if not DB_PATH.exists():
         abort(404)
-    return send_file(DB_PATH,as_attachment=True,download_name="school_backup.sqlite3")
+    snapshot=DATA_DIR / f".download-db-{uuid.uuid4().hex}.sqlite3"
+    try:
+        source=sqlite3.connect(DB_PATH, timeout=30)
+        try:
+            with sqlite3.connect(snapshot, timeout=30) as dest:
+                source.backup(dest)
+        finally:
+            source.close()
+        @after_this_request
+        def _cleanup(response):
+            try: snapshot.unlink(missing_ok=True)
+            except OSError: pass
+            return response
+        return send_file(snapshot,as_attachment=True,download_name="school_backup.sqlite3",mimetype="application/vnd.sqlite3")
+    except Exception as exc:
+        snapshot.unlink(missing_ok=True)
+        record_system_error(source="server", message=f"SQLite backup download failed: {exc}", error=exc, status_code=500)
+        flash(f"SQLite backup could not be created: {exc}", "danger")
+        return redirect(request.referrer or url_for("admin_dashboard"))
 
 
 def _validate_full_backup_zip(file_storage):
@@ -7484,8 +8258,18 @@ def api_student(student_id: int):
     return jsonify({"student": dict(student), "payments": [dict(p) for p in payments]})
 
 
+@app.errorhandler(400)
+def bad_request(error):
+    record_system_error(source='server', message=str(error) or 'Bad request', error=error, status_code=400)
+    return ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Prime Portal</title>"
+            "<link rel='stylesheet' href='/static/css/style.css'></head><body class='auth-body'><main class='auth-shell'><section class='auth-card glass'>"
+            "<div class='eyebrow'>Request error</div><h1>That action was not accepted</h1><p class='muted'>The portal recorded the failed request so it can be investigated.</p>"
+            "<div class='quick-actions'><a class='btn btn-primary' href='/dashboard'>My workspace</a></div></section></main></body></html>"), 400
+
+
 @app.errorhandler(403)
-def forbidden(_):
+def forbidden(error):
+    record_system_error(source='server', message='Forbidden request', error=error, status_code=403)
     return ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Prime Portal</title>"
             "<link rel='stylesheet' href='/static/css/style.css'></head><body class='auth-body'>"
             "<main class='auth-shell'><section class='auth-card glass'><div class='eyebrow'>Access</div><h1>That area is restricted</h1>"
@@ -7494,9 +8278,19 @@ def forbidden(_):
             "</section></main></body></html>"), 403
 
 
+@app.errorhandler(405)
+def method_not_allowed(error):
+    record_system_error(source='server', message='Method not allowed', error=error, status_code=405)
+    return ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Prime Portal</title>"
+            "<link rel='stylesheet' href='/static/css/style.css'></head><body class='auth-body'><main class='auth-shell'><section class='auth-card glass'>"
+            "<div class='eyebrow'>Request error</div><h1>That action is not available here</h1><p class='muted'>The failed action has been recorded for diagnostics.</p>"
+            "<div class='quick-actions'><a class='btn btn-primary' href='/dashboard'>My workspace</a></div></section></main></body></html>"), 405
+
+
 @app.errorhandler(500)
 def internal_error(error):
     app.logger.exception("Unhandled Prime application error: %s", error)
+    record_system_error(source='server', message='Unhandled application exception', error=error, status_code=500)
     role=(session.get("active_portal_role") or "").strip()
     target={"Admin":"/admin/dashboard","ICT":"/ict-dashboard","Finance":"/finance-dashboard",
             "Teacher":"/teacher/dashboard","Student":"/student/dashboard","Parent":"/parent-dashboard",
@@ -7518,7 +8312,8 @@ def unexpected_error(error):
 
 
 @app.errorhandler(404)
-def not_found(_):
+def not_found(error):
+    record_system_error(source='server', message='Page not found', error=error, status_code=404)
     return ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Prime Portal</title>"
             "<link rel='stylesheet' href='/static/css/style.css'></head><body class='auth-body'><main class='auth-shell'><section class='auth-card glass'>"
             "<div class='eyebrow'>Prime Portal</div><h1>Page not found</h1><p class='muted'>That destination is unavailable, but the school portal is still online.</p>"
@@ -7527,7 +8322,8 @@ def not_found(_):
 
 
 @app.errorhandler(413)
-def too_large(_):
+def too_large(error):
+    record_system_error(source='server', message='Request payload too large', error=error, status_code=413)
     return ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Prime Portal</title>"
             "<link rel='stylesheet' href='/static/css/style.css'></head><body class='auth-body'><main class='auth-shell'><section class='auth-card glass'>"
             "<div class='eyebrow'>Upload</div><h1>File too large</h1><p class='muted'>The upload was not accepted. Your session is safe.</p>"
